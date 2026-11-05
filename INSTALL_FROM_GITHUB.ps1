@@ -1,74 +1,183 @@
-# Experimental build: installs the compatibility adapter and the original core.
-# Windows PowerShell 5.1+; no automatic execution or ACL changes.
+# One installer/updater for the experimental GAYClient build (Windows PowerShell 5.1+).
+# The downloaded manifest checks transfer consistency, not publisher authenticity.
 param(
-    [string]$Destination = (Join-Path $env:LOCALAPPDATA 'GAYClient-Repair')
+    [string]$Destination = 'D:\GAYClient-Repair'
 )
 $ErrorActionPreference = 'Stop'
-# This branch must be published to GitHub before the installer can download it.
 $archiveUrl = 'https://codeload.github.com/Aksolot0l/tets/zip/refs/heads/arena/5d11f1ec-tets'
-$files = @(
-    @{ Source = 'client.exe'; Destination = 'client.exe'; Size = 4702208; SHA256 = 'e0f90e9aa78e417f0337acbb8f84162e27b9fb9396cf2c22af5950a16db11b19' },
-    @{ Source = 'GAYClientInternal.dll'; Destination = 'GAYClientCore.dll'; Size = 4228404; SHA256 = 'f74a42c4aedd1c9d1f0c92200e9c7e977d800ab686d108114b2711c0c81835c5' },
-    @{ Source = 'repair/GAYClientInternal.dll'; Destination = 'GAYClientInternal.dll'; Size = 152064; SHA256 = '7a722966f891c85f913a9d46caf63cf98bf3ee6984cbb54c13b9a1944caf9b34' },
-    @{ Source = 'repair/ENABLE_ACCESS.cmd'; Destination = 'ENABLE_ACCESS.cmd'; Size = 1440; SHA256 = 'c106b456540d9c373cd9e968081245091515e46cf9c8a92dcd22843f011439a0' },
-    @{ Source = 'repair/RESTORE_ACCESS.cmd'; Destination = 'RESTORE_ACCESS.cmd'; Size = 769; SHA256 = '5d3ef1a0a75f30a7e35a8c67213d8357659718c1c79a2489646f2f846b410eb6' }
-)
-Write-Warning 'This is an EXPERIMENTAL build. It has not been tested in Windows or Minecraft.'
-Write-Warning 'The original core DLL does not match the old SHA256SUMS.txt. Hashes below only identify repository files, not their trustworthiness.'
-Write-Host "Destination: $Destination"
-if ((Read-Host 'Download and install this experimental build? Type YES to continue') -cne 'YES') {
-    Write-Host 'Cancelled; no files were installed.'
+$expectedFiles = @{
+    'client.exe' = 'client.exe'
+    'GAYClientInternal.dll' = 'GAYClientCore.dll'
+    'repair/GAYClientInternal.dll' = 'GAYClientInternal.dll'
+    'repair/ENABLE_ACCESS.cmd' = 'ENABLE_ACCESS.cmd'
+    'repair/RESTORE_ACCESS.cmd' = 'RESTORE_ACCESS.cmd'
+}
+
+Write-Host 'GAYClient installer / updater'
+Write-Warning 'This build is experimental and the original core does not match the old SHA256SUMS.txt.'
+Write-Warning 'The GitHub manifest and files come from the same branch; their hashes do not prove publisher authenticity.'
+Write-Warning 'The installer grants ALL APPLICATION PACKAGES read/execute access to both DLLs, saving the original ACLs first.'
+Write-Host "Install or update folder: $Destination"
+if ((Read-Host 'Close Minecraft and client.exe first. Type YES to continue') -cne 'YES') {
+    Write-Host 'Cancelled; no changes made.'
     exit 0
 }
-$zipPath = Join-Path ([IO.Path]::GetTempPath()) ("gayclient-" + [Guid]::NewGuid().ToString('N') + '.zip')
+
+$zipPath = Join-Path ([IO.Path]::GetTempPath()) ('gayclient-' + [Guid]::NewGuid().ToString('N') + '.zip')
 $stage = $null
 $zip = $null
+$keepStage = $false
+$changes = New-Object 'System.Collections.Generic.List[object]'
+
+function Find-ArchiveEntry($archive, [string]$relativeName) {
+    $found = @($archive.Entries | Where-Object {
+        $name = $_.FullName
+        $i = $name.IndexOf('/')
+        $i -gt 0 -and $name.Substring($i + 1) -ceq $relativeName
+    })
+    if ($found.Count -ne 1) { throw "Missing or duplicate archive file: $relativeName" }
+    return $found[0]
+}
+
+function Set-DllAccess([string]$directory) {
+    $dlls = @(
+        (Join-Path $directory 'GAYClientInternal.dll'),
+        (Join-Path $directory 'GAYClientCore.dll')
+    )
+    $backups = @(
+        (Join-Path $directory 'GAYClientInternal.acl.local.txt'),
+        (Join-Path $directory 'GAYClientCore.acl.local.txt')
+    )
+    $hasFirst = Test-Path -LiteralPath $backups[0] -PathType Leaf
+    $hasSecond = Test-Path -LiteralPath $backups[1] -PathType Leaf
+    if ($hasFirst -ne $hasSecond) { throw 'Only one ACL backup exists. No permissions were changed; inspect the backups before continuing.' }
+    if (-not $hasFirst) {
+        try {
+            for ($i = 0; $i -lt 2; $i++) {
+                & icacls.exe $dlls[$i] /save $backups[$i]
+                if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $backups[$i] -PathType Leaf)) {
+                    throw "Could not back up permissions for $($dlls[$i])."
+                }
+            }
+        } catch {
+            foreach ($backup in $backups) { if (Test-Path -LiteralPath $backup -PathType Leaf) { Remove-Item -LiteralPath $backup -Force } }
+            throw
+        }
+    } else {
+        Write-Host 'Keeping the existing ACL backups.'
+    }
+    try {
+        foreach ($dll in $dlls) {
+            & icacls.exe $dll /grant '*S-1-15-2-1:(RX)'
+            if ($LASTEXITCODE -ne 0) { throw "Could not grant permissions for $dll." }
+        }
+    } catch {
+        Write-Warning 'Permission change failed. Attempting to restore both original ACLs; backups will be kept.'
+        foreach ($backup in $backups) {
+            & icacls.exe $directory /restore $backup
+            if ($LASTEXITCODE -ne 0) { Write-Warning "Could not restore: $backup" }
+        }
+        throw
+    }
+}
+
 try {
+    if (@(Get-Process -Name 'Minecraft.Windows','client' -ErrorAction SilentlyContinue).Count -gt 0) {
+        throw 'Minecraft or client.exe is still running. Close them and run the installer again.'
+    }
     $destinationPath = [IO.Path]::GetFullPath($Destination).TrimEnd('\', '/')
-    if ([string]::IsNullOrWhiteSpace($destinationPath) -or (Test-Path -LiteralPath $destinationPath)) {
-        throw "Destination already exists or is invalid: $destinationPath. Choose a new folder."
-    }
     $parent = [IO.Path]::GetDirectoryName($destinationPath)
-    if ([string]::IsNullOrWhiteSpace($parent) -or -not (Test-Path -LiteralPath $parent -PathType Container)) {
-        throw "Parent directory must exist: $parent"
-    }
+    if ([string]::IsNullOrWhiteSpace($destinationPath) -or [string]::IsNullOrWhiteSpace($parent) -or
+        -not (Test-Path -LiteralPath $parent -PathType Container)) { throw 'The destination or its parent directory is invalid.' }
+    $existing = Test-Path -LiteralPath $destinationPath
+    if ($existing -and -not (Test-Path -LiteralPath $destinationPath -PathType Container)) { throw 'Destination exists but is not a folder.' }
     $stage = Join-Path $parent ('.gayclient-install-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $stage | Out-Null
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    Write-Host 'Downloading repair branch from GitHub...'
+    Write-Host 'Downloading from GitHub...'
     Invoke-WebRequest -Uri $archiveUrl -OutFile $zipPath -UseBasicParsing -TimeoutSec 120
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [IO.Compression.ZipFile]::OpenRead($zipPath)
+    $manifestEntry = Find-ArchiveEntry $zip 'repair/install-manifest.json'
+    if ($manifestEntry.Length -gt 65536) { throw 'Manifest is too large.' }
+    $reader = [IO.StreamReader]::new($manifestEntry.Open(), [Text.Encoding]::UTF8)
+    try { $manifest = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+    $files = @($manifest.files)
+    if ($manifest.schema -ne 1 -or $files.Count -ne $expectedFiles.Count) { throw 'Unsupported manifest.' }
+    $seen = @{}
     foreach ($file in $files) {
-        # Permit exactly one top-level archive directory and never extract paths from the archive.
-        $matching = @($zip.Entries | Where-Object {
-            $name = $_.FullName
-            $separator = $name.IndexOf('/')
-            $separator -gt 0 -and $name.Substring($separator + 1) -ceq $file.Source
-        })
-        if ($matching.Count -ne 1 -or $matching[0].Length -ne $file.Size) {
-            throw "Missing, duplicate, or unexpected file in archive: $($file.Source)"
-        }
-        $outPath = Join-Path $stage $file.Destination
-        $inputStream = $matching[0].Open()
+        $src = [string]$file.source; $dst = [string]$file.destination
+        if (-not $expectedFiles.ContainsKey($src) -or $expectedFiles[$src] -cne $dst -or $seen.ContainsKey($dst)) { throw 'Unexpected or duplicate manifest path.' }
+        $seen[$dst] = $true
+        if ($file.size -lt 1 -or $file.size -gt 67108864 -or $file.sha256 -cnotmatch '^[0-9a-f]{64}$') { throw "Invalid manifest entry: $src" }
+        foreach ($hash in @($file.previousSha256)) { if ($hash -cnotmatch '^[0-9a-f]{64}$') { throw "Invalid previous hash: $src" } }
+        $entry = Find-ArchiveEntry $zip $src
+        if ($entry.Length -ne $file.size) { throw "Unexpected file size: $src" }
+        $outPath = Join-Path $stage $dst
+        $inputStream = $entry.Open()
         try {
             $outputStream = [IO.File]::Open($outPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
             try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose() }
         } finally { $inputStream.Dispose() }
-        $hash = (Get-FileHash -LiteralPath $outPath -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($hash -cne $file.SHA256) { throw "SHA-256 mismatch for $($file.Source); no files installed." }
+        if ((Get-FileHash -LiteralPath $outPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $file.sha256) { throw "SHA-256 mismatch: $src" }
     }
     $zip.Dispose(); $zip = $null
-    [IO.Directory]::Move($stage, $destinationPath)
-    $stage = $null
-    Write-Host "Installed to: $destinationPath"
-    Write-Host 'The program was not started and permissions were not changed.'
-    Write-Host 'If AppContainer cannot access the DLLs, see ENABLE_ACCESS.cmd and RESTORE_ACCESS.cmd in that folder.'
+    if ($existing) {
+        # Validate the whole existing installation before touching any file.
+        foreach ($file in $files) {
+            $target = Join-Path $destinationPath $file.destination
+            if (Test-Path -LiteralPath $target) {
+                $item = Get-Item -LiteralPath $target -Force
+                if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Not a regular file: $target" }
+                $hash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
+                if ($hash -cne $file.sha256 -and @($file.previousSha256) -notcontains $hash) {
+                    throw "Existing file has an unknown version; it was not overwritten: $target"
+                }
+            }
+        }
+        try {
+            foreach ($file in $files) {
+                $target = Join-Path $destinationPath $file.destination
+                $source = Join-Path $stage $file.destination
+                if (Test-Path -LiteralPath $target -PathType Leaf) {
+                    $hash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
+                    if ($hash -ceq $file.sha256) { continue }
+                    $backup = Join-Path $stage ('backup-' + $file.destination)
+                    # ReplaceFile preserves the target's ACL; retain a byte backup for rollback.
+                    [IO.File]::Replace($source, $target, $backup)
+                    $changes.Add(@{ Target = $target; Backup = $backup; New = $false })
+                } else {
+                    [IO.File]::Move($source, $target)
+                    $changes.Add(@{ Target = $target; Backup = $null; New = $true })
+                }
+            }
+        } catch {
+            Write-Warning 'File update failed. Attempting to roll back changed files.'
+            for ($i = $changes.Count - 1; $i -ge 0; $i--) {
+                $change = $changes[$i]
+                try {
+                    if ($change.New) { [IO.File]::Delete($change.Target) }
+                    else { [IO.File]::Replace($change.Backup, $change.Target, $null) }
+                } catch {
+                    $keepStage = $true
+                    Write-Warning "Rollback failed for $($change.Target). Backups kept in $stage"
+                }
+            }
+            throw
+        }
+    } else {
+        [IO.Directory]::Move($stage, $destinationPath)
+        $stage = $null
+    }
+    Write-Host "Files installed / updated: $destinationPath"
+    Set-DllAccess $destinationPath
+    Write-Host 'Done. Start Minecraft and then client.exe from this folder.'
+    Write-Host 'Your other files and local ACL backups were not deleted.'
 } catch {
-    Write-Error "Installation failed: $($_.Exception.Message)" -ErrorAction Continue
+    Write-Error "Installer stopped: $($_.Exception.Message)" -ErrorAction Continue
     exit 1
 } finally {
     if ($null -ne $zip) { $zip.Dispose() }
-    if ($null -ne $stage -and (Test-Path -LiteralPath $stage)) { Remove-Item -LiteralPath $stage -Recurse -Force }
+    if (-not $keepStage -and $null -ne $stage -and (Test-Path -LiteralPath $stage)) { Remove-Item -LiteralPath $stage -Recurse -Force }
     if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
 }

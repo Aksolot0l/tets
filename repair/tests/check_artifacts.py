@@ -1,19 +1,29 @@
-"""Static artifact and legacy-ABI checks; does not replace Windows testing."""
+"""Static artifact/ABI checks; does not replace Windows installer testing."""
 import hashlib
+import json
 from pathlib import Path
 import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
-installer = (ROOT / 'INSTALL_FROM_GITHUB.ps1').read_text()
-entries = re.findall(r"Source = '([^']+)'; Destination = '([^']+)'; Size = (\d+); SHA256 = '([0-9a-f]{64})'", installer)
-assert len(entries) == 5, f'expected five installer entries, found {len(entries)}'
-assert len({x[1] for x in entries}) == len(entries), 'duplicate destination'
-for source, dest, size, expected in entries:
-    data = (ROOT / source).read_bytes()
-    assert len(data) == int(size), f'{source} size mismatch'
-    assert hashlib.sha256(data).hexdigest() == expected, f'{source} hash mismatch'
-    print(f'{source} -> {dest}: OK')
+manifest = json.loads((ROOT / 'repair/install-manifest.json').read_text())
+assert manifest['schema'] == 1
+expected = {
+    'client.exe': 'client.exe',
+    'GAYClientInternal.dll': 'GAYClientCore.dll',
+    'repair/GAYClientInternal.dll': 'GAYClientInternal.dll',
+    'repair/ENABLE_ACCESS.cmd': 'ENABLE_ACCESS.cmd',
+    'repair/RESTORE_ACCESS.cmd': 'RESTORE_ACCESS.cmd',
+}
+files = manifest['files']
+assert len(files) == len(expected)
+assert {item['source']: item['destination'] for item in files} == expected
+for item in files:
+    data = (ROOT / item['source']).read_bytes()
+    assert len(data) == item['size'], f"{item['source']}: size mismatch"
+    assert hashlib.sha256(data).hexdigest() == item['sha256'], f"{item['source']}: hash mismatch"
+    assert all(re.fullmatch(r'[0-9a-f]{64}', h) for h in item['previousSha256'])
+    print(f"{item['source']} -> {item['destination']}: OK")
 
 exports = subprocess.check_output(['objdump', '-p', str(ROOT / 'GAYClientInternal.dll')], text=True)
 required = ['MH_Initialize', 'MH_CreateHook', 'MH_QueueEnableHook', 'MH_ApplyQueued',
@@ -28,5 +38,6 @@ for name in required:
     assert re.search(r'\]\s+' + re.escape(name) + r'\s*$', exports, re.M), f'missing export {name}'
 print(f'{len(required)} expected legacy exports: OK')
 header = (ROOT / 'repair/vendor/imgui/imgui.h').read_text()
+assert '#define IMGUI_VERSION       "1.1' not in header  # avoid accidental old major versions
 assert '#define IMGUI_VERSION       "1.91.9b"' in header
 print('ImGui header version: OK')
