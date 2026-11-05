@@ -9,6 +9,10 @@
 #include <dxgi1_2.h>
 #include <cstdio>
 #include "imgui.h"
+#include "settings.h"
+#include "pointer_mapping.h"
+
+static_assert(offsetof(ag::Settings, uiScale) == 192, "legacy Settings ABI changed");
 
 using PresentFn = HRESULT (STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
 using Present1Fn = HRESULT (STDMETHODCALLTYPE*)(IDXGISwapChain1*, UINT, UINT, const DXGI_PRESENT_PARAMETERS*);
@@ -22,6 +26,10 @@ using GetIOFn = ImGuiIO& (*)();
 using UpdateFn = void (*)(void*, const void*, bool, bool);
 using BridgeInitFn = void (*)();
 using BridgeActiveFn = void (*)(bool);
+using AddFontFn = ImFont* (*)(float, bool);
+using PointerFn = bool (*)(float&, float&, float&, float&);
+using FindWindowFn = HWND (*)(bool);
+using SettingsCtorFn = void (*)(ag::Settings*);
 
 static HMODULE selfModule = nullptr;
 static HMODULE core = nullptr;
@@ -32,6 +40,11 @@ static NewFrameFn realNewFrame = nullptr;
 static RendererInitFn rendererInit = nullptr;
 static GetIOFn getIO = nullptr;
 static UpdateFn realUpdate = nullptr;
+static PointerFn realPointer = nullptr;
+static FindWindowFn findGameWindow = nullptr;
+static SettingsCtorFn realSettingsCtor = nullptr;
+static AddFontFn addFont = nullptr;
+static HWND pointerWindow = nullptr;
 static thread_local bool insidePresent = false;
 static thread_local bool seenInput = false;
 static thread_local ID3D11Device* frameDevice = nullptr;
@@ -50,6 +63,13 @@ template<class T> static void release(T*& p) { if (p) { p->Release(); p = nullpt
 static void patchedNewFrame() {
     ImGuiIO& io = getIO();
     if (!io.BackendRendererUserData && frameDevice && frameContext) {
+        // The legacy bootstrap creates a context but never installs its bundled
+        // Cyrillic font. Load it before DX11 builds the atlas on the first frame.
+        if (io.Fonts && io.Fonts->Fonts.Size == 0) {
+            ImFont* font = addFont(16.0f, false);
+            if (font) io.FontDefault = font;
+            else log("could not load embedded Cyrillic font");
+        }
         if (!rendererInit(frameDevice, frameContext)) log("ImGui DX11 initialization failed");
     }
     io.DisplaySize = ImVec2(static_cast<float>(frameWidth), static_cast<float>(frameHeight));
@@ -70,6 +90,30 @@ static void patchedUpdate(void* input, const void* settings, bool targetFocused,
         seenInput = true;
     }
     realUpdate(input, settings, targetFocused, appFocused);
+}
+
+// Use coordinates relative to the actual client area, not the UWP screen /
+// non-client origin. All Win32 values are obtained on the same thread, so
+// Windows DPI virtualization affects cursor and client rectangle consistently.
+// If these APIs are unavailable in AppContainer, retain the legacy UWP input.
+static bool patchedPointer(float& x, float& y, float& w, float& h) {
+    if (!pointerWindow || !IsWindow(pointerWindow)) pointerWindow = findGameWindow(true);
+    RECT client{};
+    POINT position{};
+    if (pointerWindow && GetClientRect(pointerWindow, &client) && GetCursorPos(&position) &&
+        ScreenToClient(pointerWindow, &position) &&
+        client_pointer(static_cast<float>(position.x - client.left),
+                       static_cast<float>(position.y - client.top),
+                       static_cast<float>(client.right - client.left),
+                       static_cast<float>(client.bottom - client.top), x, y, w, h)) return true;
+    return realPointer(x, y, w, h);
+}
+
+// Increase the default only. A saved profile may supply its own scale and the
+// user can still change it in Settings -> UI Scale.
+static void patchedSettingsCtor(ag::Settings* settings) {
+    realSettingsCtor(settings);
+    settings->uiScale = 1.20f;
 }
 
 static void draw(IDXGISwapChain* chain, UINT flags) {
@@ -163,23 +207,31 @@ static DWORD WINAPI bootstrap(void*) {
     auto bridgeActive = symbol<BridgeActiveFn>("_ZN2ag17SetUwpInputActiveEb");
     void* newFrameTarget = reinterpret_cast<void*>(GetProcAddress(core, "_Z23ImGui_ImplDX11_NewFramev"));
     void* updateTarget = reinterpret_cast<void*>(GetProcAddress(core, "_ZN2ag10InputState6UpdateERKNS_8SettingsEbb"));
+    void* pointerTarget = reinterpret_cast<void*>(GetProcAddress(core, "_ZN2ag10UwpPointerERfS0_S0_S0_"));
+    void* settingsTarget = reinterpret_cast<void*>(GetProcAddress(core, "_ZN2ag8SettingsC1Ev"));
+    findGameWindow = symbol<FindWindowFn>("_ZN2ag19FindMinecraftWindowEb");
+    addFont = symbol<AddFontFn>("_ZN2ag15AddEmbeddedFontEfb");
     legacyPresent = symbol<LegacyPresentFn>("_Z11PresentHookP14IDXGISwapChainjj");
     rendererInit = symbol<RendererInitFn>("_Z19ImGui_ImplDX11_InitP12ID3D11DeviceP19ID3D11DeviceContext");
     getIO = symbol<GetIOFn>("_ZN5ImGui5GetIOEv");
-    if (!mhInit || !mhCreate || !mhQueueEnable || !mhApply || !mhDisable || !bridgeInit || !bridgeActive || !newFrameTarget || !updateTarget || !legacyPresent || !rendererInit || !getIO) { log("legacy DLL exports do not match expected version"); return 1; }
+    if (!mhInit || !mhCreate || !mhQueueEnable || !mhApply || !mhDisable || !bridgeInit || !bridgeActive || !newFrameTarget || !updateTarget || !pointerTarget || !settingsTarget || !findGameWindow || !addFont || !legacyPresent || !rendererInit || !getIO) { log("legacy DLL exports do not match expected version"); return 1; }
     void* present = nullptr; void* present1 = nullptr;
     if (!findSwapChainMethods(present, present1)) return 1;
     if (mhInit() != 0) { log("MinHook initialization failed"); return 1; }
     if (mhCreate(newFrameTarget, reinterpret_cast<void*>(&patchedNewFrame), reinterpret_cast<void**>(&realNewFrame)) != 0 ||
         mhCreate(updateTarget, reinterpret_cast<void*>(&patchedUpdate), reinterpret_cast<void**>(&realUpdate)) != 0 ||
+        mhCreate(pointerTarget, reinterpret_cast<void*>(&patchedPointer), reinterpret_cast<void**>(&realPointer)) != 0 ||
+        mhCreate(settingsTarget, reinterpret_cast<void*>(&patchedSettingsCtor), reinterpret_cast<void**>(&realSettingsCtor)) != 0 ||
         mhCreate(present, reinterpret_cast<void*>(&hookPresent), reinterpret_cast<void**>(&realPresent)) != 0 ||
         mhCreate(present1, reinterpret_cast<void*>(&hookPresent1), reinterpret_cast<void**>(&realPresent1)) != 0) { log("hook creation failed"); return 1; }
     QueryPerformanceFrequency(&frequency);
     bridgeInit();
     bridgeActive(true);
     if (mhQueueEnable(newFrameTarget) || mhQueueEnable(updateTarget) ||
+        mhQueueEnable(pointerTarget) || mhQueueEnable(settingsTarget) ||
         mhQueueEnable(present) || mhQueueEnable(present1) || mhApply()) {
-        mhDisable(present1); mhDisable(present); mhDisable(updateTarget); mhDisable(newFrameTarget);
+        mhDisable(present1); mhDisable(present); mhDisable(settingsTarget);
+        mhDisable(pointerTarget); mhDisable(updateTarget); mhDisable(newFrameTarget);
         log("hook enable failed; attempted to disable hooks"); return 1;
     }
     log("hooks enabled");

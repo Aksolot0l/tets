@@ -9,7 +9,7 @@ $archiveUrl = 'https://codeload.github.com/Aksolot0l/tets/zip/refs/heads/arena/5
 $files = @(
     @{ Source = 'client.exe'; Destination = 'client.exe'; Size = 4702208; SHA256 = 'e0f90e9aa78e417f0337acbb8f84162e27b9fb9396cf2c22af5950a16db11b19' },
     @{ Source = 'GAYClientInternal.dll'; Destination = 'GAYClientCore.dll'; Size = 4228404; SHA256 = 'f74a42c4aedd1c9d1f0c92200e9c7e977d800ab686d108114b2711c0c81835c5' },
-    @{ Source = 'repair/GAYClientInternal.dll'; Destination = 'GAYClientInternal.dll'; Size = 151040; SHA256 = 'b0a7d82f2ea68e02fd66067242fa34ecdf18a82fa15b95e8a7f6f8d4fb190754' },
+    @{ Source = 'repair/GAYClientInternal.dll'; Destination = 'GAYClientInternal.dll'; Size = 152064; SHA256 = '7a722966f891c85f913a9d46caf63cf98bf3ee6984cbb54c13b9a1944caf9b34' },
     @{ Source = 'repair/ENABLE_ACCESS.cmd'; Destination = 'ENABLE_ACCESS.cmd'; Size = 1440; SHA256 = 'c106b456540d9c373cd9e968081245091515e46cf9c8a92dcd22843f011439a0' },
     @{ Source = 'repair/RESTORE_ACCESS.cmd'; Destination = 'RESTORE_ACCESS.cmd'; Size = 769; SHA256 = '5d3ef1a0a75f30a7e35a8c67213d8357659718c1c79a2489646f2f846b410eb6' }
 )

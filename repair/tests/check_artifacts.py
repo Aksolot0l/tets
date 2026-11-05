@@ -21,7 +21,9 @@ required = ['MH_Initialize', 'MH_CreateHook', 'MH_QueueEnableHook', 'MH_ApplyQue
             '_Z23ImGui_ImplDX11_NewFramev',
             '_Z19ImGui_ImplDX11_InitP12ID3D11DeviceP19ID3D11DeviceContext',
             '_ZN5ImGui5GetIOEv', '_ZN2ag10InputState6UpdateERKNS_8SettingsEbb',
-            '_ZN2ag19InitializeUwpBridgeEv', '_ZN2ag17SetUwpInputActiveEb']
+            '_ZN2ag19InitializeUwpBridgeEv', '_ZN2ag17SetUwpInputActiveEb',
+            '_ZN2ag10UwpPointerERfS0_S0_S0_', '_ZN2ag8SettingsC1Ev',
+            '_ZN2ag19FindMinecraftWindowEb', '_ZN2ag15AddEmbeddedFontEfb']
 for name in required:
     assert re.search(r'\]\s+' + re.escape(name) + r'\s*$', exports, re.M), f'missing export {name}'
 print(f'{len(required)} expected legacy exports: OK')
