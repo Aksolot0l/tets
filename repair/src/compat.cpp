@@ -12,9 +12,12 @@
 #include "settings.h"
 #include "pointer_mapping.h"
 #include "uwp_extra.h"
+#include "page_scroll.h"
+#include <array>
 #include <cstring>
 
 static_assert(offsetof(ag::Settings, uiScale) == 192, "legacy Settings ABI changed");
+static_assert(sizeof(std::array<bool, 256>) == 256, "legacy watched key ABI changed");
 
 using PresentFn = HRESULT (STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
 using Present1Fn = HRESULT (STDMETHODCALLTYPE*)(IDXGISwapChain1*, UINT, UINT, const DXGI_PRESENT_PARAMETERS*);
@@ -34,6 +37,8 @@ using FindWindowFn = HWND (*)(bool);
 using SettingsCtorFn = void (*)(ag::Settings*);
 using TickFn = HRESULT (*)(void*);
 using AddWheelFn = void (*)(ImGuiIO*, float, float);
+using WatchedKeysFn = void (*)(const std::array<bool, 256>&);
+using KeyDownFn = bool (*)(int);
 
 static HMODULE selfModule = nullptr;
 static HMODULE core = nullptr;
@@ -50,6 +55,10 @@ static SettingsCtorFn realSettingsCtor = nullptr;
 static AddFontFn addFont = nullptr;
 static TickFn realTick = nullptr;
 static AddWheelFn addWheel = nullptr;
+static WatchedKeysFn realWatchedKeys = nullptr;
+static KeyDownFn keyDown = nullptr;
+static bool pageKeysReady = false;
+static PageScrollRepeat pageScroll;
 static HWND pointerWindow = nullptr;
 static thread_local bool insidePresent = false;
 static thread_local bool seenInput = false;
@@ -83,6 +92,9 @@ static void patchedNewFrame() {
     int wheelX = 0, wheelY = 0;
     TakeUwpWheel(wheelX, wheelY);
     if (pointerInUse && (wheelX || wheelY)) addWheel(&io, wheelX / 120.0f, wheelY / 120.0f);
+    const float pageWheel = pageScroll.step(pointerInUse && pageKeysReady,
+        pageKeysReady && keyDown(VK_PRIOR), pageKeysReady && keyDown(VK_NEXT), GetTickCount64());
+    if (pageWheel != 0.0f) addWheel(&io, 0.0f, pageWheel);
     LARGE_INTEGER now{};
     QueryPerformanceCounter(&now);
     if (lastFrame.QuadPart && frequency.QuadPart && now.QuadPart > lastFrame.QuadPart) {
@@ -100,6 +112,15 @@ static void patchedUpdate(void* input, const void* settings, bool targetFocused,
         seenInput = true;
     }
     realUpdate(input, settings, targetFocused, appFocused);
+}
+
+// Request only two additional keys from the existing UWP polling bridge.
+// No key or wheel activity is stored on disk.
+static void patchedWatchedKeys(const std::array<bool, 256>& requested) {
+    auto keys = requested;
+    keys[VK_PRIOR] = true;
+    keys[VK_NEXT] = true;
+    realWatchedKeys(keys);
 }
 
 // Use coordinates relative to the actual client area, not the UWP screen /
@@ -231,6 +252,8 @@ static DWORD WINAPI bootstrap(void*) {
     void* updateTarget = reinterpret_cast<void*>(GetProcAddress(core, "_ZN2ag10InputState6UpdateERKNS_8SettingsEbb"));
     void* pointerTarget = reinterpret_cast<void*>(GetProcAddress(core, "_ZN2ag10UwpPointerERfS0_S0_S0_"));
     void* settingsTarget = reinterpret_cast<void*>(GetProcAddress(core, "_ZN2ag8SettingsC1Ev"));
+    void* watchedTarget = reinterpret_cast<void*>(GetProcAddress(core, "_ZN2ag17UwpSetWatchedKeysERKSt5arrayIbLy256EE"));
+    keyDown = symbol<KeyDownFn>("_ZN2ag10UwpKeyDownEi");
     findGameWindow = symbol<FindWindowFn>("_ZN2ag19FindMinecraftWindowEb");
     addFont = symbol<AddFontFn>("_ZN2ag15AddEmbeddedFontEfb");
     addWheel = symbol<AddWheelFn>("_ZN7ImGuiIO18AddMouseWheelEventEff");
@@ -253,6 +276,10 @@ static DWORD WINAPI bootstrap(void*) {
         mhCreate(settingsTarget, reinterpret_cast<void*>(&patchedSettingsCtor), reinterpret_cast<void**>(&realSettingsCtor)) != 0 ||
         mhCreate(present, reinterpret_cast<void*>(&hookPresent), reinterpret_cast<void**>(&realPresent)) != 0 ||
         mhCreate(present1, reinterpret_cast<void*>(&hookPresent1), reinterpret_cast<void**>(&realPresent1)) != 0) { log("hook creation failed"); return 1; }
+    bool pageKeyHook = watchedTarget && keyDown &&
+        mhCreate(watchedTarget, reinterpret_cast<void*>(&patchedWatchedKeys), reinterpret_cast<void**>(&realWatchedKeys)) == 0;
+    pageKeysReady = pageKeyHook;
+    if (!pageKeyHook) log("PageUp/PageDown fallback unavailable");
     if (tickHook && mhCreate(tickTarget, reinterpret_cast<void*>(&patchedTick), reinterpret_cast<void**>(&realTick)) != 0) {
         tickHook = false;
         log("UWP input hook unavailable; using legacy input only");
@@ -261,9 +288,9 @@ static DWORD WINAPI bootstrap(void*) {
     bridgeInit();
     bridgeActive(true);
     if (mhQueueEnable(newFrameTarget) || mhQueueEnable(updateTarget) ||
-        mhQueueEnable(pointerTarget) || mhQueueEnable(settingsTarget) || (tickHook && mhQueueEnable(tickTarget)) ||
+        mhQueueEnable(pointerTarget) || mhQueueEnable(settingsTarget) || (pageKeyHook && mhQueueEnable(watchedTarget)) || (tickHook && mhQueueEnable(tickTarget)) ||
         mhQueueEnable(present) || mhQueueEnable(present1) || mhApply()) {
-        mhDisable(present1); mhDisable(present); if (tickHook) mhDisable(tickTarget); mhDisable(settingsTarget);
+        mhDisable(present1); mhDisable(present); if (tickHook) mhDisable(tickTarget); if (pageKeyHook) mhDisable(watchedTarget); mhDisable(settingsTarget);
         mhDisable(pointerTarget); mhDisable(updateTarget); mhDisable(newFrameTarget);
         log("hook enable failed; attempted to disable hooks"); return 1;
     }

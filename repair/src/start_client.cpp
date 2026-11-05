@@ -7,6 +7,33 @@
 #include <cstdio>
 #include <cwchar>
 #include <cstdint>
+#include <cstdarg>
+
+static void logLine(const char* format, ...) {
+    char line[512]{};
+    va_list args; va_start(args, format);
+    int count = std::vsnprintf(line, sizeof(line) - 2, format, args);
+    va_end(args);
+    if (count < 0) return;
+    size_t length = static_cast<size_t>(count);
+    if (length > sizeof(line) - 3) length = sizeof(line) - 3;
+    while (length && (line[length - 1] == '\n' || line[length - 1] == '\r')) --length;
+    line[length++] = '\r'; line[length++] = '\n';
+    wchar_t logPath[32768]{};
+    DWORD n = GetModuleFileNameW(nullptr, logPath, 32768);
+    if (!n || n >= 32768) return;
+    wchar_t* slash = wcsrchr(logPath, L'\\');
+    if (!slash || static_cast<size_t>(slash - logPath) + 18 >= 32768) return;
+    wcscpy(slash + 1, L"START_CLIENT.log");
+    HANDLE file = CreateFileW(logPath, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                              nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    DWORD written = 0; WriteFile(file, line, static_cast<DWORD>(length), &written, nullptr);
+    CloseHandle(file);
+}
+static void showError(const wchar_t* text) {
+    MessageBoxW(nullptr, text, L"GAYClient", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+}
 
 static bool ownPath(wchar_t* out, size_t capacity, const wchar_t* name) {
     DWORD n = GetModuleFileNameW(nullptr, out, static_cast<DWORD>(capacity));
@@ -52,9 +79,9 @@ static InjectResult inject(DWORD pid, const wchar_t* dll) {
     // Do not load another adapter with the same module name from a different folder.
     if (remoteModule(pid, L"GAYClientInternal.dll")) {
         if (remoteModule(pid, L"GAYClientInternal.dll", dll)) {
-            std::puts("This overlay DLL is already loaded."); return InjectResult::Success;
+            logLine("This overlay DLL is already loaded."); return InjectResult::Success;
         }
-        std::puts("Another overlay DLL is already loaded. Restart Minecraft first.");
+        logLine("Another overlay DLL is already loaded. Restart Minecraft first.");
         return InjectResult::Stop;
     }
     HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
@@ -62,32 +89,32 @@ static InjectResult inject(DWORD pid, const wchar_t* dll) {
     HMODULE loadModule = nullptr;
     if (!load || !GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                                      reinterpret_cast<LPCWSTR>(load), &loadModule)) {
-        std::printf("Cannot locate LoadLibraryW (%lu).\n", GetLastError()); return InjectResult::Retry;
+        logLine("Cannot locate LoadLibraryW (%lu).\n", GetLastError()); return InjectResult::Retry;
     }
     wchar_t modulePath[32768]{};
     DWORD len = GetModuleFileNameW(loadModule, modulePath, 32768);
-    if (!len || len >= 32768) { std::puts("Cannot determine the system module path."); return InjectResult::Retry; }
+    if (!len || len >= 32768) { logLine("Cannot determine the system module path."); return InjectResult::Retry; }
     const wchar_t* name = wcsrchr(modulePath, L'\\'); name = name ? name + 1 : modulePath;
     uintptr_t otherBase = remoteModule(pid, name);
-    if (!otherBase) { std::printf("Cannot inspect game modules (%lu).\n", GetLastError()); return InjectResult::Retry; }
+    if (!otherBase) { logLine("Cannot inspect game modules (%lu).\n", GetLastError()); return InjectResult::Retry; }
     uintptr_t offset = reinterpret_cast<uintptr_t>(load) - reinterpret_cast<uintptr_t>(loadModule);
     auto remoteLoad = reinterpret_cast<LPTHREAD_START_ROUTINE>(otherBase + offset);
     HANDLE process = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION |
                                  PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, pid);
-    if (!process) { std::printf("Cannot open Minecraft PID %lu (%lu).\n", pid, GetLastError()); return InjectResult::Retry; }
+    if (!process) { logLine("Cannot open Minecraft PID %lu (%lu).\n", pid, GetLastError()); return InjectResult::Retry; }
     BOOL wow64 = FALSE;
-    if (!IsWow64Process(process, &wow64) || wow64) { std::puts("Minecraft must be a 64-bit process."); CloseHandle(process); return InjectResult::Stop; }
+    if (!IsWow64Process(process, &wow64) || wow64) { logLine("Minecraft must be a 64-bit process."); CloseHandle(process); return InjectResult::Stop; }
     SIZE_T size = (wcslen(dll) + 1) * sizeof(wchar_t);
     void* memory = VirtualAllocEx(process, nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-    if (!memory) { std::printf("Cannot allocate in game (%lu).\n", GetLastError()); CloseHandle(process); return InjectResult::Retry; }
+    if (!memory) { logLine("Cannot allocate in game (%lu).\n", GetLastError()); CloseHandle(process); return InjectResult::Retry; }
     SIZE_T written = 0;
     if (!WriteProcessMemory(process, memory, dll, size, &written) || written != size) {
-        std::printf("Cannot write DLL path (%lu).\n", GetLastError());
+        logLine("Cannot write DLL path (%lu).\n", GetLastError());
         VirtualFreeEx(process, memory, 0, MEM_RELEASE); CloseHandle(process); return InjectResult::Retry;
     }
     HANDLE thread = CreateRemoteThread(process, nullptr, 0, remoteLoad, memory, 0, nullptr);
     if (!thread) {
-        std::printf("Cannot start loading thread (%lu).\n", GetLastError());
+        logLine("Cannot start loading thread (%lu).\n", GetLastError());
         VirtualFreeEx(process, memory, 0, MEM_RELEASE); CloseHandle(process); return InjectResult::Retry;
     }
     DWORD result = WaitForSingleObject(thread, 20000);
@@ -96,53 +123,62 @@ static InjectResult inject(DWORD pid, const wchar_t* dll) {
     // Never free the path while a timed-out remote thread may still be reading it.
     if (finished) VirtualFreeEx(process, memory, 0, MEM_RELEASE);
     CloseHandle(thread); CloseHandle(process);
-    if (!finished) { std::puts("Loading thread timed out; not retrying automatically."); return InjectResult::Stop; }
-    if (!exitCode) { std::puts("Minecraft could not load the DLL. Check access permissions."); return InjectResult::Retry; }
-    std::puts("DLL load returned successfully. The overlay initialization still needs to succeed.");
+    if (!finished) { logLine("Loading thread timed out; not retrying automatically."); return InjectResult::Stop; }
+    if (!exitCode) { logLine("Minecraft could not load the DLL. Check access permissions."); return InjectResult::Retry; }
+    logLine("DLL load returned successfully. The overlay initialization still needs to succeed.");
     return InjectResult::Success;
 }
-int main() {
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+    HANDLE guard = CreateMutexW(nullptr, FALSE, L"Local\\GAYClientAutoLaunch.v1");
+    if (!guard) { showError(L"Не удалось запустить автозагрузчик."); return 1; }
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        CloseHandle(guard); showError(L"Автозагрузчик уже запущен. Закройте клиент перед повторным запуском."); return 1;
+    }
     wchar_t client[32768]{}, dll[32768]{};
     if (!ownPath(client, 32768, L"client.exe") || !ownPath(dll, 32768, L"GAYClientInternal.dll") ||
         !isFile(client) || !isFile(dll)) {
-        std::puts("Keep START_CLIENT.exe next to client.exe and GAYClientInternal.dll.");
-        std::puts("Press Enter to close."); std::getchar(); return 1;
+        logLine("Keep START_CLIENT.exe next to client.exe and GAYClientInternal.dll.");
+        showError(L"Не найдены файлы клиента или DLL. Проверьте папку установки."); CloseHandle(guard); return 1;
     }
     STARTUPINFOW startup{}; startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
     if (!CreateProcessW(client, nullptr, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process)) {
-        std::printf("Cannot start client.exe (%lu). Press Enter to close.\n", GetLastError()); std::getchar(); return 1;
+        logLine("Cannot start client.exe (%lu).", GetLastError()); showError(L"Не удалось запустить client.exe. Подробности в START_CLIENT.log."); CloseHandle(guard); return 1;
     }
     CloseHandle(process.hThread);
-    std::puts("Client started. In the client, start Minecraft normally.");
-    std::puts("This window watches for the game and loads the DLL automatically. Keep it open.");
+    logLine("Client started. In the client, start Minecraft normally.");
+    logLine("Waiting for the game; automatic loader runs until the client closes.");
     bool done = false; DWORD previousPid = 0; unsigned attempts = 0;
     ULONGLONG firstSeen = 0, nextAttempt = 0;
     while (WaitForSingleObject(process.hProcess, 1000) == WAIT_TIMEOUT) {
         bool multiple = false; DWORD pid = uniqueGamePid(multiple);
-        if (multiple) { std::puts("Multiple Minecraft processes found; close extras and restart the client."); break; }
+        if (multiple) { logLine("Multiple Minecraft processes found; close extras and restart the client."); showError(L"Найдено несколько процессов Minecraft. Закройте лишние и перезапустите клиент."); break; }
         if (!pid) { previousPid = 0; done = false; attempts = 0; continue; }
         ULONGLONG now = GetTickCount64();
         if (pid != previousPid) {
             previousPid = pid; done = false; attempts = 0; firstSeen = now; nextAttempt = now + 10000;
-            std::printf("Minecraft detected (PID %lu); waiting for startup...\n", pid);
+            logLine("Minecraft detected (PID %lu); waiting for startup...\n", pid);
         }
         if (!done && now >= nextAttempt && now - firstSeen >= 10000) {
             ++attempts;
-            std::puts("Loading overlay...");
+            logLine("Loading overlay...");
             InjectResult result = inject(pid, dll);
-            if (result == InjectResult::Success || result == InjectResult::Stop) done = true;
+            if (result == InjectResult::Success || result == InjectResult::Stop) {
+                done = true;
+                if (result == InjectResult::Stop) showError(L"Не удалось автоматически загрузить DLL. Перезапустите Minecraft и клиент. Подробности в START_CLIENT.log.");
+            }
             else if (attempts >= 3) {
                 done = true;
-                std::puts("Automatic loading failed. Close this client and retry, or load manually.");
+                logLine("Automatic loading failed. Close this client and retry, or load manually.");
+                showError(L"Не удалось автоматически загрузить DLL. Проверьте доступ к файлам и повторите запуск. Подробности в START_CLIENT.log.");
             } else {
-                std::puts("Game may still be starting; retrying in five seconds.");
+                logLine("Game may still be starting; retrying in five seconds.");
                 nextAttempt = GetTickCount64() + 5000;
             }
         }
     }
     CloseHandle(process.hProcess);
-    std::puts("Client closed. Press Enter to close this window.");
-    std::getchar();
+    logLine("Automatic loader stopped.");
+    CloseHandle(guard);
     return 0;
 }

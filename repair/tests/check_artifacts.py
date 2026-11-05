@@ -35,10 +35,15 @@ required = ['MH_Initialize', 'MH_CreateHook', 'MH_QueueEnableHook', 'MH_ApplyQue
             '_ZN2ag19InitializeUwpBridgeEv', '_ZN2ag17SetUwpInputActiveEb',
             '_ZN2ag10UwpPointerERfS0_S0_S0_', '_ZN2ag8SettingsC1Ev',
             '_ZN2ag19FindMinecraftWindowEb', '_ZN2ag15AddEmbeddedFontEfb',
-            '_ZN7ImGuiIO18AddMouseWheelEventEff']
+            '_ZN7ImGuiIO18AddMouseWheelEventEff',
+            '_ZN2ag17UwpSetWatchedKeysERKSt5arrayIbLy256EE', '_ZN2ag10UwpKeyDownEi']
 for name in required:
     assert re.search(r'\]\s+' + re.escape(name) + r'\s*$', exports, re.M), f'missing export {name}'
 print(f'{len(required)} expected legacy exports: OK')
+launcher = subprocess.check_output(['objdump', '-p', str(ROOT / 'repair/START_CLIENT.exe')], text=True)
+assert re.search(r'Subsystem\s+0*2\s+\(Windows GUI\)', launcher), 'launcher is not Windows GUI subsystem'
+assert 'getchar' not in (ROOT / 'repair/src/start_client.cpp').read_text()
+print('launcher GUI subsystem and no console wait: OK')
 header = (ROOT / 'repair/vendor/imgui/imgui.h').read_text()
 assert '#define IMGUI_VERSION       "1.1' not in header  # avoid accidental old major versions
 assert '#define IMGUI_VERSION       "1.91.9b"' in header
