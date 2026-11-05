@@ -35,8 +35,8 @@ f74a42c4aedd1c9d1f0c92200e9c7e977d800ab686d108114b2711c0c81835c5
 
 Установка с GitHub:
 - INSTALL_FROM_GITHUB.ps1 скачивает экспериментальные файлы из ветки
-  arena/5d11f1ec-tets после её публикации на GitHub. Пока ветка не опубликована,
-  скачивание не сработает.
+  arena/5d11f1ec-tets. Ветка опубликована отдельно от main; инструкция и хеши
+  относятся именно к этой экспериментальной сборке.
 - Сохраните скрипт на компьютер и выполните в PowerShell:
   powershell -NoProfile -ExecutionPolicy Bypass -File "путь\INSTALL_FROM_GITHUB.ps1"
 - Для другого каталога добавьте `-Destination "C:\путь\к\новой папке"`;
