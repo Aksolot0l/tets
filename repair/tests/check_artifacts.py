@@ -36,7 +36,10 @@ required = ['MH_Initialize', 'MH_CreateHook', 'MH_QueueEnableHook', 'MH_ApplyQue
             '_ZN2ag10UwpPointerERfS0_S0_S0_', '_ZN2ag8SettingsC1Ev',
             '_ZN2ag19FindMinecraftWindowEb', '_ZN2ag15AddEmbeddedFontEfb',
             '_ZN7ImGuiIO18AddMouseWheelEventEff',
-            '_ZN2ag17UwpSetWatchedKeysERKSt5arrayIbLy256EE', '_ZN2ag10UwpKeyDownEi']
+            '_ZN2ag17UwpSetWatchedKeysERKSt5arrayIbLy256EE', '_ZN2ag10UwpKeyDownEi',
+            '_ZN5ImGui15TextUnformattedEPKcS1_', '_ZN2ag12DrawClickGuiERNS_7RuntimeE',
+            '_ZN2ag7Runtime9SetModuleENS_8ModuleIdEb', '_ZN5ImGui5BeginEPKcPbi',
+            '_ZN5ImGui3EndEv', '_ZN5ImGui8CheckboxEPKcPb', '_ZN5ImGui16SetNextWindowPosERK6ImVec2iS2_']
 for name in required:
     assert re.search(r'\]\s+' + re.escape(name) + r'\s*$', exports, re.M), f'missing export {name}'
 print(f'{len(required)} expected legacy exports: OK')
@@ -44,7 +47,9 @@ launcher = subprocess.check_output(['objdump', '-p', str(ROOT / 'repair/client.e
 assert re.search(r'Subsystem\s+0*2\s+\(Windows GUI\)', launcher), 'client is not Windows GUI subsystem'
 exports = subprocess.check_output(['objdump', '-p', str(ROOT / 'repair/GAYClientLauncher.dll')], text=True)
 assert re.search(r'\]\s+GAYClientAutoloadImport\s*$', exports, re.M)
-print('client GUI subsystem and autoload DLL export: OK')
+overlay = subprocess.check_output(['objdump', '-p', str(ROOT / 'repair/GAYClientInternal.dll')], text=True)
+assert re.search(r'\]\s+GAYClientConnectWheel\s*$', overlay, re.M)
+print('client GUI subsystem and autoload/wheel DLL exports: OK')
 header = (ROOT / 'repair/vendor/imgui/imgui.h').read_text()
 assert '#define IMGUI_VERSION       "1.1' not in header  # avoid accidental old major versions
 assert '#define IMGUI_VERSION       "1.91.9b"' in header

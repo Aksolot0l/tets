@@ -8,6 +8,14 @@
 #include <cwchar>
 #include <cstdint>
 #include <cstdarg>
+#include <atomic>
+#include "wheel_bridge.h"
+
+static HINSTANCE loaderModule = nullptr;
+static HANDLE wheelMapping = nullptr;
+static WheelBridge* wheelView = nullptr;
+static std::atomic<DWORD> foregroundGamePid{0};
+static std::atomic<bool> wheelHookReady{false};
 
 static void logLine(const char* format, ...) {
     char line[512]{};
@@ -35,6 +43,57 @@ static void showError(const wchar_t* text) {
     MessageBoxW(nullptr, text, L"GAYClient", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
 }
 
+struct WindowSearch { DWORD pid; bool found; };
+static BOOL CALLBACK findGameChild(HWND window, LPARAM param) {
+    auto* search = reinterpret_cast<WindowSearch*>(param);
+    DWORD pid = 0; GetWindowThreadProcessId(window, &pid);
+    if (pid == search->pid) { search->found = true; return FALSE; }
+    return TRUE;
+}
+static bool gameIsForeground(DWORD pid) {
+    HWND foreground = GetForegroundWindow();
+    if (!foreground || !pid) return false;
+    DWORD windowPid = 0; GetWindowThreadProcessId(foreground, &windowPid);
+    if (windowPid == pid) return true;
+    WindowSearch search{pid, false};
+    EnumChildWindows(foreground, findGameChild, reinterpret_cast<LPARAM>(&search));
+    return search.found;
+}
+// This desktop-wide hook ignores everything except wheel events while the
+// selected Minecraft window is foreground. It never suppresses or logs input.
+static LRESULT CALLBACK mouseHook(int code, WPARAM message, LPARAM data) {
+    if (code == HC_ACTION && wheelView && (message == WM_MOUSEWHEEL || message == WM_MOUSEHWHEEL) &&
+        gameIsForeground(foregroundGamePid.load(std::memory_order_relaxed))) {
+        const auto* input = reinterpret_cast<const MSLLHOOKSTRUCT*>(data);
+        LONG delta = static_cast<short>(HIWORD(input->mouseData));
+        // Win32 positive horizontal means right; ImGui positive means left.
+        if (message == WM_MOUSEHWHEEL) delta = -delta;
+        InterlockedExchangeAdd(message == WM_MOUSEWHEEL ? &wheelView->vertical : &wheelView->horizontal, delta);
+    }
+    return CallNextHookEx(nullptr, code, message, data);
+}
+static DWORD WINAPI wheelHookThread(void*) {
+    HHOOK hook = SetWindowsHookExW(WH_MOUSE_LL, mouseHook, loaderModule, 0);
+    if (!hook) { logLine("Wheel hook could not start (%lu).", GetLastError()); return 1; }
+    wheelHookReady.store(true, std::memory_order_release);
+    logLine("Wheel input bridge started; only Minecraft foreground wheel events are forwarded.");
+    MSG message{};
+    while (GetMessageW(&message, nullptr, 0, 0) > 0) { TranslateMessage(&message); DispatchMessageW(&message); }
+    UnhookWindowsHookEx(hook);
+    return 0;
+}
+static bool startWheelBridge() {
+    wheelMapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(WheelBridge), nullptr);
+    if (!wheelMapping) return false;
+    wheelView = static_cast<WheelBridge*>(MapViewOfFile(wheelMapping, FILE_MAP_WRITE, 0, 0, sizeof(WheelBridge)));
+    if (!wheelView) { CloseHandle(wheelMapping); wheelMapping = nullptr; return false; }
+    wheelView->magic = kWheelMagic; wheelView->version = 1;
+    wheelView->horizontal = wheelView->vertical = 0;
+    HANDLE worker = CreateThread(nullptr, 0, wheelHookThread, nullptr, 0, nullptr);
+    if (!worker) { UnmapViewOfFile(wheelView); wheelView = nullptr; CloseHandle(wheelMapping); wheelMapping = nullptr; return false; }
+    CloseHandle(worker);
+    return true;
+}
 static bool ownPath(wchar_t* out, size_t capacity, const wchar_t* name) {
     DWORD n = GetModuleFileNameW(nullptr, out, static_cast<DWORD>(capacity));
     if (!n || n >= capacity) return false;
@@ -74,6 +133,41 @@ static uintptr_t remoteModule(DWORD pid, const wchar_t* moduleName, const wchar_
     CloseHandle(snapshot);
     return address;
 }
+// Install an unnamed mapping in Minecraft by duplicating only a read handle.
+// Resolve the export RVA without executing the adapter in the launcher process.
+static bool connectWheelBridge(DWORD pid, const wchar_t* dll) {
+    if (!wheelMapping || !wheelHookReady.load(std::memory_order_acquire)) return false;
+    HMODULE image = LoadLibraryExW(dll, nullptr, DONT_RESOLVE_DLL_REFERENCES);
+    if (!image) { logLine("Cannot inspect wheel bridge export (%lu).", GetLastError()); return false; }
+    FARPROC fn = GetProcAddress(image, "GAYClientConnectWheel");
+    uintptr_t offset = fn ? reinterpret_cast<uintptr_t>(fn) - reinterpret_cast<uintptr_t>(image) : 0;
+    FreeLibrary(image);
+    if (!fn || !offset) { logLine("Wheel bridge export is unavailable."); return false; }
+    uintptr_t remoteBase = remoteModule(pid, L"GAYClientInternal.dll", dll);
+    if (!remoteBase) { logLine("Wheel bridge could not find loaded overlay module."); return false; }
+    HANDLE process = OpenProcess(PROCESS_DUP_HANDLE | PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
+                                 PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, pid);
+    if (!process) { logLine("Wheel bridge could not open game (%lu).", GetLastError()); return false; }
+    HANDLE remoteHandle = nullptr;
+    if (!DuplicateHandle(GetCurrentProcess(), wheelMapping, process, &remoteHandle, FILE_MAP_READ, FALSE, 0)) {
+        logLine("Wheel bridge could not duplicate mapping (%lu).", GetLastError()); CloseHandle(process); return false;
+    }
+    HANDLE thread = CreateRemoteThread(process, nullptr, 0,
+        reinterpret_cast<LPTHREAD_START_ROUTINE>(remoteBase + offset), remoteHandle, 0, nullptr);
+    if (!thread) {
+        DWORD error = GetLastError(); HANDLE local = nullptr;
+        if (DuplicateHandle(process, remoteHandle, GetCurrentProcess(), &local, 0, FALSE,
+                            DUPLICATE_CLOSE_SOURCE | DUPLICATE_SAME_ACCESS) && local) CloseHandle(local);
+        CloseHandle(process); logLine("Wheel bridge could not start in game (%lu).", error); return false;
+    }
+    const DWORD wait = WaitForSingleObject(thread, 5000);
+    DWORD result = 0;
+    const bool ok = wait == WAIT_OBJECT_0 && GetExitCodeThread(thread, &result) && result == 1;
+    CloseHandle(thread); CloseHandle(process);
+    logLine(ok ? "Wheel bridge connected." : "Wheel bridge could not connect to the overlay.");
+    return ok;
+}
+
 enum class InjectResult { Success, Retry, Stop };
 static InjectResult inject(DWORD pid, const wchar_t* dll) {
     // Do not load another adapter with the same module name from a different folder.
@@ -140,11 +234,13 @@ static DWORD WINAPI loaderThread(void*) {
         showError(L"Не найдена DLL клиента. Проверьте папку установки."); CloseHandle(guard); return 1;
     }
     logLine("Client started. Waiting for Minecraft.");
+    if (!startWheelBridge()) logLine("Wheel input bridge unavailable; retaining UWP input.");
     bool done = false; DWORD previousPid = 0; unsigned attempts = 0;
     ULONGLONG firstSeen = 0, nextAttempt = 0;
     while (true) {
         Sleep(1000);
         bool multiple = false; DWORD pid = uniqueGamePid(multiple);
+        foregroundGamePid.store(multiple ? 0 : pid, std::memory_order_relaxed);
         if (multiple) { logLine("Multiple Minecraft processes found; close extras and restart the client."); showError(L"Найдено несколько процессов Minecraft. Закройте лишние и перезапустите клиент."); break; }
         if (!pid) { previousPid = 0; done = false; attempts = 0; continue; }
         ULONGLONG now = GetTickCount64();
@@ -158,6 +254,7 @@ static DWORD WINAPI loaderThread(void*) {
             InjectResult result = inject(pid, dll);
             if (result == InjectResult::Success || result == InjectResult::Stop) {
                 done = true;
+                if (result == InjectResult::Success) connectWheelBridge(pid, dll);
                 if (result == InjectResult::Stop) showError(L"Не удалось автоматически загрузить DLL. Перезапустите Minecraft и клиент. Подробности в client-autoload.log.");
             }
             else if (attempts >= 3) {
@@ -180,6 +277,7 @@ extern "C" __declspec(dllexport) void GAYClientAutoloadImport() {}
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
+        loaderModule = module;
         DisableThreadLibraryCalls(module);
         HANDLE thread = CreateThread(nullptr, 0, loaderThread, nullptr, 0, nullptr);
         if (!thread) return FALSE; // Let Windows report a startup failure instead of silently doing nothing.

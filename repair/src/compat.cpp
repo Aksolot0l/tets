@@ -13,6 +13,10 @@
 #include "pointer_mapping.h"
 #include "uwp_extra.h"
 #include "page_scroll.h"
+#include "wheel_bridge.h"
+#include "wheel_counter.h"
+#include "coordinates_115.h"
+#include <atomic>
 #include <array>
 #include <cstring>
 
@@ -39,6 +43,13 @@ using TickFn = HRESULT (*)(void*);
 using AddWheelFn = void (*)(ImGuiIO*, float, float);
 using WatchedKeysFn = void (*)(const std::array<bool, 256>&);
 using KeyDownFn = bool (*)(int);
+using TextFn = void (*)(const char*, const char*);
+using DrawGuiFn = void (*)(void*);
+using SetModuleFn = void (*)(void*, ag::ModuleId, bool);
+using BeginFn = bool (*)(const char*, bool*, int);
+using EndFn = void (*)();
+using CheckboxFn = bool (*)(const char*, bool*);
+using SetNextPosFn = void (*)(const ImVec2&, int, const ImVec2&);
 
 static HMODULE selfModule = nullptr;
 static HMODULE core = nullptr;
@@ -59,6 +70,15 @@ static WatchedKeysFn realWatchedKeys = nullptr;
 static KeyDownFn keyDown = nullptr;
 static bool pageKeysReady = false;
 static PageScrollRepeat pageScroll;
+static TextFn realText = nullptr;
+static DrawGuiFn realDrawGui = nullptr;
+static SetModuleFn setModule = nullptr;
+static BeginFn guiBegin = nullptr;
+static EndFn guiEnd = nullptr;
+static CheckboxFn guiCheckbox = nullptr;
+static SetNextPosFn guiSetNextPos = nullptr;
+static std::atomic<const WheelBridge*> externalWheel{nullptr};
+static SRWLOCK externalWheelLock = SRWLOCK_INIT;
 static HWND pointerWindow = nullptr;
 static thread_local bool insidePresent = false;
 static thread_local bool seenInput = false;
@@ -73,6 +93,100 @@ static void log(const char* text) { OutputDebugStringA("GAYClient repair: "); Ou
 
 template<typename T> static T symbol(const char* name) { return reinterpret_cast<T>(GetProcAddress(core, name)); }
 template<class T> static void release(T*& p) { if (p) { p->Release(); p = nullptr; } }
+
+// Receives an anonymous read-only mapping handle duplicated by our launcher.
+// It contains wheel counters only; there is no keyboard or cursor recording.
+extern "C" __declspec(dllexport) DWORD WINAPI GAYClientConnectWheel(void* remoteHandle) {
+    HANDLE handle = static_cast<HANDLE>(remoteHandle);
+    if (!handle) return 0;
+    auto* view = static_cast<const WheelBridge*>(MapViewOfFile(handle, FILE_MAP_READ, 0, 0, sizeof(WheelBridge)));
+    CloseHandle(handle);
+    if (!view) return 0;
+    if (view->magic != kWheelMagic || view->version != 1) { UnmapViewOfFile(view); return 0; }
+    // Reconnection is supported if the GUI is restarted while the game stays open.
+    AcquireSRWLockExclusive(&externalWheelLock);
+    const WheelBridge* old = externalWheel.exchange(view, std::memory_order_acq_rel);
+    if (old) UnmapViewOfFile(old);
+    ReleaseSRWLockExclusive(&externalWheelLock);
+    return 1;
+}
+static bool takeExternalWheel(int& x, int& y) {
+    AcquireSRWLockShared(&externalWheelLock);
+    const WheelBridge* view = externalWheel.load(std::memory_order_acquire);
+    if (!view) { ReleaseSRWLockShared(&externalWheelLock); return false; }
+    // The producer uses InterlockedExchangeAdd; aligned 32-bit reads are atomic
+    // on Windows x64. Modular differences handle signed counter wraparound.
+    static const WheelBridge* lastView = nullptr;
+    static WheelCounter counter;
+    if (lastView != view) { lastView = view; counter.reset(); }
+    counter.take(static_cast<std::uint32_t>(view->horizontal), static_cast<std::uint32_t>(view->vertical), x, y);
+    ReleaseSRWLockShared(&externalWheelLock);
+    return true;
+}
+
+static bool readGameBytes(std::uint64_t address, void* output, size_t length) {
+    SIZE_T received = 0;
+    return address && ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(address),
+                                        output, length, &received) && received == length;
+}
+static bool supportedGame(std::uint64_t& base) {
+    HMODULE game = GetModuleHandleW(nullptr);
+    if (!game) return false;
+    wchar_t path[32768]{};
+    DWORD n = GetModuleFileNameW(game, path, 32768);
+    if (!n || n >= 32768) return false;
+    const wchar_t* name = wcsrchr(path, L'\\');
+    if (_wcsicmp(name ? name + 1 : path, L"Minecraft.Windows.exe") != 0) return false;
+    base = reinterpret_cast<std::uint64_t>(game);
+    IMAGE_DOS_HEADER dos{}; IMAGE_NT_HEADERS64 nt{};
+    if (!readGameBytes(base, &dos, sizeof(dos)) || dos.e_magic != IMAGE_DOS_SIGNATURE ||
+        dos.e_lfanew <= 0 || dos.e_lfanew > 0x10000 ||
+        !readGameBytes(base + dos.e_lfanew, &nt, sizeof(nt))) return false;
+    return nt.Signature == IMAGE_NT_SIGNATURE && nt.FileHeader.Machine == IMAGE_FILE_MACHINE_AMD64 &&
+           nt.FileHeader.TimeDateStamp == 0x5976da7b && nt.OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC &&
+           nt.OptionalHeader.SizeOfImage > 0x019431e0 + sizeof(std::uint64_t);
+}
+static void patchedText(const char* text, const char* textEnd) {
+    constexpr char placeholder[] = "XYZ: unavailable";
+    bool isCoords = text && (textEnd ? (textEnd >= text && static_cast<size_t>(textEnd - text) == sizeof(placeholder) - 1 &&
+                                          std::memcmp(text, placeholder, sizeof(placeholder) - 1) == 0)
+                                     : std::strcmp(text, placeholder) == 0);
+    if (isCoords) {
+        // Cache briefly, but never display an old position if the read fails.
+        static ULONGLONG next = 0;
+        static bool supported = false, valid = false;
+        static Position115 position{};
+        ULONGLONG now = GetTickCount64();
+        if (now >= next) {
+            next = now + 100;
+            std::uint64_t base = 0;
+            supported = supportedGame(base);
+            valid = supported && readPosition115(base, readGameBytes, position);
+        }
+        if (valid) {
+            char formatted[96]{};
+            std::snprintf(formatted, sizeof(formatted), "XYZ (test): %.1f %.1f %.1f", position.x, position.y, position.z);
+            realText(formatted, nullptr); return;
+        }
+        realText(supported ? "XYZ: not ready (enter world)" : "XYZ: unsupported game build", nullptr);
+        return;
+    }
+    realText(text, textEnd);
+}
+static void patchedDrawGui(void* runtime) {
+    realDrawGui(runtime);
+    // Exact legacy build layout, verified against the original binary.
+    if (!runtime || !*(reinterpret_cast<unsigned char*>(runtime) + 0x551)) return;
+    auto* settings = reinterpret_cast<ag::Settings*>(reinterpret_cast<unsigned char*>(runtime) + 0x48);
+    bool enabled = settings->enabled[static_cast<size_t>(ag::ModuleId::Coordinates)];
+    guiSetNextPos(ImVec2(18.0f, 235.0f), ImGuiCond_FirstUseEver, ImVec2(0, 0));
+    const int flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                      ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse;
+    if (guiBegin("##coordinate_switch_115", nullptr, flags)) {
+        if (guiCheckbox("Coordinates (test)", &enabled)) setModule(runtime, ag::ModuleId::Coordinates, enabled);
+    }
+    guiEnd();
+}
 
 // Called from legacy drawMarker, while its own render lock is held. The ImGui
 // context is created there immediately before this function is first called.
@@ -91,6 +205,9 @@ static void patchedNewFrame() {
     io.DisplaySize = ImVec2(static_cast<float>(frameWidth), static_cast<float>(frameHeight));
     int wheelX = 0, wheelY = 0;
     TakeUwpWheel(wheelX, wheelY);
+    // Prefer the external wheel-only bridge when connected; otherwise use UWP.
+    // Do not add both, or one physical wheel movement could scroll twice.
+    takeExternalWheel(wheelX, wheelY);
     if (pointerInUse && (wheelX || wheelY)) addWheel(&io, wheelX / 120.0f, wheelY / 120.0f);
     const float pageWheel = pageScroll.step(pointerInUse && pageKeysReady,
         pageKeysReady && keyDown(VK_PRIOR), pageKeysReady && keyDown(VK_NEXT), GetTickCount64());
@@ -254,6 +371,13 @@ static DWORD WINAPI bootstrap(void*) {
     void* settingsTarget = reinterpret_cast<void*>(GetProcAddress(core, "_ZN2ag8SettingsC1Ev"));
     void* watchedTarget = reinterpret_cast<void*>(GetProcAddress(core, "_ZN2ag17UwpSetWatchedKeysERKSt5arrayIbLy256EE"));
     keyDown = symbol<KeyDownFn>("_ZN2ag10UwpKeyDownEi");
+    void* textTarget = reinterpret_cast<void*>(GetProcAddress(core, "_ZN5ImGui15TextUnformattedEPKcS1_"));
+    void* drawGuiTarget = reinterpret_cast<void*>(GetProcAddress(core, "_ZN2ag12DrawClickGuiERNS_7RuntimeE"));
+    setModule = symbol<SetModuleFn>("_ZN2ag7Runtime9SetModuleENS_8ModuleIdEb");
+    guiBegin = symbol<BeginFn>("_ZN5ImGui5BeginEPKcPbi");
+    guiEnd = symbol<EndFn>("_ZN5ImGui3EndEv");
+    guiCheckbox = symbol<CheckboxFn>("_ZN5ImGui8CheckboxEPKcPb");
+    guiSetNextPos = symbol<SetNextPosFn>("_ZN5ImGui16SetNextWindowPosERK6ImVec2iS2_");
     findGameWindow = symbol<FindWindowFn>("_ZN2ag19FindMinecraftWindowEb");
     addFont = symbol<AddFontFn>("_ZN2ag15AddEmbeddedFontEfb");
     addWheel = symbol<AddWheelFn>("_ZN7ImGuiIO18AddMouseWheelEventEff");
@@ -276,6 +400,10 @@ static DWORD WINAPI bootstrap(void*) {
         mhCreate(settingsTarget, reinterpret_cast<void*>(&patchedSettingsCtor), reinterpret_cast<void**>(&realSettingsCtor)) != 0 ||
         mhCreate(present, reinterpret_cast<void*>(&hookPresent), reinterpret_cast<void**>(&realPresent)) != 0 ||
         mhCreate(present1, reinterpret_cast<void*>(&hookPresent1), reinterpret_cast<void**>(&realPresent1)) != 0) { log("hook creation failed"); return 1; }
+    bool coordHooks = textTarget && drawGuiTarget && setModule && guiBegin && guiEnd && guiCheckbox && guiSetNextPos &&
+        mhCreate(textTarget, reinterpret_cast<void*>(&patchedText), reinterpret_cast<void**>(&realText)) == 0 &&
+        mhCreate(drawGuiTarget, reinterpret_cast<void*>(&patchedDrawGui), reinterpret_cast<void**>(&realDrawGui)) == 0;
+    if (!coordHooks) log("coordinate display hooks unavailable");
     bool pageKeyHook = watchedTarget && keyDown &&
         mhCreate(watchedTarget, reinterpret_cast<void*>(&patchedWatchedKeys), reinterpret_cast<void**>(&realWatchedKeys)) == 0;
     pageKeysReady = pageKeyHook;
@@ -289,8 +417,10 @@ static DWORD WINAPI bootstrap(void*) {
     bridgeActive(true);
     if (mhQueueEnable(newFrameTarget) || mhQueueEnable(updateTarget) ||
         mhQueueEnable(pointerTarget) || mhQueueEnable(settingsTarget) || (pageKeyHook && mhQueueEnable(watchedTarget)) || (tickHook && mhQueueEnable(tickTarget)) ||
+        (coordHooks && (mhQueueEnable(textTarget) || mhQueueEnable(drawGuiTarget))) ||
         mhQueueEnable(present) || mhQueueEnable(present1) || mhApply()) {
-        mhDisable(present1); mhDisable(present); if (tickHook) mhDisable(tickTarget); if (pageKeyHook) mhDisable(watchedTarget); mhDisable(settingsTarget);
+        mhDisable(present1); mhDisable(present); if (coordHooks) { mhDisable(textTarget); mhDisable(drawGuiTarget); }
+        if (tickHook) mhDisable(tickTarget); if (pageKeyHook) mhDisable(watchedTarget); mhDisable(settingsTarget);
         mhDisable(pointerTarget); mhDisable(updateTarget); mhDisable(newFrameTarget);
         log("hook enable failed; attempted to disable hooks"); return 1;
     }
