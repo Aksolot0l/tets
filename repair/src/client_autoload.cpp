@@ -1,5 +1,5 @@
-// Optional companion launcher: start the unchanged GUI and load the bundled
-// adapter once a Minecraft.Windows.exe process appears. Windows x64 only.
+// Autoload companion DLL, imported by the patched original client.exe.
+// It runs inside the GUI process: no second EXE or console is started.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -23,8 +23,8 @@ static void logLine(const char* format, ...) {
     DWORD n = GetModuleFileNameW(nullptr, logPath, 32768);
     if (!n || n >= 32768) return;
     wchar_t* slash = wcsrchr(logPath, L'\\');
-    if (!slash || static_cast<size_t>(slash - logPath) + 18 >= 32768) return;
-    wcscpy(slash + 1, L"START_CLIENT.log");
+    if (!slash || static_cast<size_t>(slash - logPath) + 24 >= 32768) return;
+    wcscpy(slash + 1, L"client-autoload.log");
     HANDLE file = CreateFileW(logPath, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
                               nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) return;
@@ -128,29 +128,22 @@ static InjectResult inject(DWORD pid, const wchar_t* dll) {
     logLine("DLL load returned successfully. The overlay initialization still needs to succeed.");
     return InjectResult::Success;
 }
-int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+static DWORD WINAPI loaderThread(void*) {
     HANDLE guard = CreateMutexW(nullptr, FALSE, L"Local\\GAYClientAutoLaunch.v1");
-    if (!guard) { showError(L"Не удалось запустить автозагрузчик."); return 1; }
+    if (!guard) { showError(L"Не удалось запустить автозагрузку."); return 1; }
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        CloseHandle(guard); showError(L"Автозагрузчик уже запущен. Закройте клиент перед повторным запуском."); return 1;
+        CloseHandle(guard); showError(L"Автозагрузка уже запущена в другом окне клиента."); return 1;
     }
-    wchar_t client[32768]{}, dll[32768]{};
-    if (!ownPath(client, 32768, L"client.exe") || !ownPath(dll, 32768, L"GAYClientInternal.dll") ||
-        !isFile(client) || !isFile(dll)) {
-        logLine("Keep START_CLIENT.exe next to client.exe and GAYClientInternal.dll.");
-        showError(L"Не найдены файлы клиента или DLL. Проверьте папку установки."); CloseHandle(guard); return 1;
+    wchar_t dll[32768]{};
+    if (!ownPath(dll, 32768, L"GAYClientInternal.dll") || !isFile(dll)) {
+        logLine("Keep GAYClientInternal.dll next to client.exe.");
+        showError(L"Не найдена DLL клиента. Проверьте папку установки."); CloseHandle(guard); return 1;
     }
-    STARTUPINFOW startup{}; startup.cb = sizeof(startup);
-    PROCESS_INFORMATION process{};
-    if (!CreateProcessW(client, nullptr, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process)) {
-        logLine("Cannot start client.exe (%lu).", GetLastError()); showError(L"Не удалось запустить client.exe. Подробности в START_CLIENT.log."); CloseHandle(guard); return 1;
-    }
-    CloseHandle(process.hThread);
-    logLine("Client started. In the client, start Minecraft normally.");
-    logLine("Waiting for the game; automatic loader runs until the client closes.");
+    logLine("Client started. Waiting for Minecraft.");
     bool done = false; DWORD previousPid = 0; unsigned attempts = 0;
     ULONGLONG firstSeen = 0, nextAttempt = 0;
-    while (WaitForSingleObject(process.hProcess, 1000) == WAIT_TIMEOUT) {
+    while (true) {
+        Sleep(1000);
         bool multiple = false; DWORD pid = uniqueGamePid(multiple);
         if (multiple) { logLine("Multiple Minecraft processes found; close extras and restart the client."); showError(L"Найдено несколько процессов Minecraft. Закройте лишние и перезапустите клиент."); break; }
         if (!pid) { previousPid = 0; done = false; attempts = 0; continue; }
@@ -165,20 +158,32 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
             InjectResult result = inject(pid, dll);
             if (result == InjectResult::Success || result == InjectResult::Stop) {
                 done = true;
-                if (result == InjectResult::Stop) showError(L"Не удалось автоматически загрузить DLL. Перезапустите Minecraft и клиент. Подробности в START_CLIENT.log.");
+                if (result == InjectResult::Stop) showError(L"Не удалось автоматически загрузить DLL. Перезапустите Minecraft и клиент. Подробности в client-autoload.log.");
             }
             else if (attempts >= 3) {
                 done = true;
                 logLine("Automatic loading failed. Close this client and retry, or load manually.");
-                showError(L"Не удалось автоматически загрузить DLL. Проверьте доступ к файлам и повторите запуск. Подробности в START_CLIENT.log.");
+                showError(L"Не удалось автоматически загрузить DLL. Проверьте доступ к файлам и повторите запуск. Подробности в client-autoload.log.");
             } else {
                 logLine("Game may still be starting; retrying in five seconds.");
                 nextAttempt = GetTickCount64() + 5000;
             }
         }
     }
-    CloseHandle(process.hProcess);
     logLine("Automatic loader stopped.");
     CloseHandle(guard);
     return 0;
+}
+
+// Imported by the patched EXE to ensure the Windows loader starts this DLL.
+extern "C" __declspec(dllexport) void GAYClientAutoloadImport() {}
+
+BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID) {
+    if (reason == DLL_PROCESS_ATTACH) {
+        DisableThreadLibraryCalls(module);
+        HANDLE thread = CreateThread(nullptr, 0, loaderThread, nullptr, 0, nullptr);
+        if (!thread) return FALSE; // Let Windows report a startup failure instead of silently doing nothing.
+        CloseHandle(thread);
+    }
+    return TRUE;
 }

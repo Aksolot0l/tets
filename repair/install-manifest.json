@@ -2,11 +2,20 @@
   "schema": 1,
   "files": [
     {
-      "source": "client.exe",
-      "destination": "client.exe",
-      "size": 4702208,
-      "sha256": "e0f90e9aa78e417f0337acbb8f84162e27b9fb9396cf2c22af5950a16db11b19",
+      "source": "repair/GAYClientLauncher.dll",
+      "destination": "GAYClientLauncher.dll",
+      "size": 150528,
+      "sha256": "f96bfdf8788b85bad0ffc5b6632dbc8d792c3e487da00ed82aa6b82d85026afc",
       "previousSha256": []
+    },
+    {
+      "source": "repair/client.exe",
+      "destination": "client.exe",
+      "size": 4703232,
+      "sha256": "1230ca6952be96a418f684b99aace91bcb298c39329964b095191e2b820b3d57",
+      "previousSha256": [
+        "e0f90e9aa78e417f0337acbb8f84162e27b9fb9396cf2c22af5950a16db11b19"
+      ]
     },
     {
       "source": "GAYClientInternal.dll",
@@ -39,15 +48,6 @@
       "size": 769,
       "sha256": "5d3ef1a0a75f30a7e35a8c67213d8357659718c1c79a2489646f2f846b410eb6",
       "previousSha256": []
-    },
-    {
-      "source": "repair/START_CLIENT.exe",
-      "destination": "START_CLIENT.exe",
-      "size": 157184,
-      "sha256": "15ba3b333c4f1c8247b9fb6100bb5fa99aedfd1463cdcf83a02adc4dbc19856b",
-      "previousSha256": [
-        "c6b302f4829e668eca81d24bed1fb9fb2498a9fae20e4e78a5a0c035c08e67ba"
-      ]
     }
   ]
 }

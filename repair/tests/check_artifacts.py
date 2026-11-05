@@ -9,12 +9,12 @@ ROOT = Path(__file__).resolve().parents[2]
 manifest = json.loads((ROOT / 'repair/install-manifest.json').read_text())
 assert manifest['schema'] == 1
 expected = {
-    'client.exe': 'client.exe',
+    'repair/client.exe': 'client.exe',
+    'repair/GAYClientLauncher.dll': 'GAYClientLauncher.dll',
     'GAYClientInternal.dll': 'GAYClientCore.dll',
     'repair/GAYClientInternal.dll': 'GAYClientInternal.dll',
     'repair/ENABLE_ACCESS.cmd': 'ENABLE_ACCESS.cmd',
     'repair/RESTORE_ACCESS.cmd': 'RESTORE_ACCESS.cmd',
-    'repair/START_CLIENT.exe': 'START_CLIENT.exe',
 }
 files = manifest['files']
 assert len(files) == len(expected)
@@ -40,10 +40,11 @@ required = ['MH_Initialize', 'MH_CreateHook', 'MH_QueueEnableHook', 'MH_ApplyQue
 for name in required:
     assert re.search(r'\]\s+' + re.escape(name) + r'\s*$', exports, re.M), f'missing export {name}'
 print(f'{len(required)} expected legacy exports: OK')
-launcher = subprocess.check_output(['objdump', '-p', str(ROOT / 'repair/START_CLIENT.exe')], text=True)
-assert re.search(r'Subsystem\s+0*2\s+\(Windows GUI\)', launcher), 'launcher is not Windows GUI subsystem'
-assert 'getchar' not in (ROOT / 'repair/src/start_client.cpp').read_text()
-print('launcher GUI subsystem and no console wait: OK')
+launcher = subprocess.check_output(['objdump', '-p', str(ROOT / 'repair/client.exe')], text=True)
+assert re.search(r'Subsystem\s+0*2\s+\(Windows GUI\)', launcher), 'client is not Windows GUI subsystem'
+exports = subprocess.check_output(['objdump', '-p', str(ROOT / 'repair/GAYClientLauncher.dll')], text=True)
+assert re.search(r'\]\s+GAYClientAutoloadImport\s*$', exports, re.M)
+print('client GUI subsystem and autoload DLL export: OK')
 header = (ROOT / 'repair/vendor/imgui/imgui.h').read_text()
 assert '#define IMGUI_VERSION       "1.1' not in header  # avoid accidental old major versions
 assert '#define IMGUI_VERSION       "1.91.9b"' in header

@@ -6,12 +6,12 @@ param(
 $ErrorActionPreference = 'Stop'
 $archiveUrl = 'https://codeload.github.com/Aksolot0l/tets/zip/refs/heads/arena/5d11f1ec-tets'
 $expectedFiles = @{
-    'client.exe' = 'client.exe'
+    'repair/client.exe' = 'client.exe'
+    'repair/GAYClientLauncher.dll' = 'GAYClientLauncher.dll'
     'GAYClientInternal.dll' = 'GAYClientCore.dll'
     'repair/GAYClientInternal.dll' = 'GAYClientInternal.dll'
     'repair/ENABLE_ACCESS.cmd' = 'ENABLE_ACCESS.cmd'
     'repair/RESTORE_ACCESS.cmd' = 'RESTORE_ACCESS.cmd'
-    'repair/START_CLIENT.exe' = 'START_CLIENT.exe'
 }
 
 Write-Host 'GAYClient installer / updater'
@@ -152,12 +152,32 @@ try {
                     $changes.Add(@{ Target = $target; Backup = $null; New = $true })
                 }
             }
+            # Retire only our exact, unmodified old companion EXE. Unknown files
+            # with this name are left untouched; the move is rollback-able.
+            $oldLauncher = Join-Path $destinationPath 'START_CLIENT.exe'
+            if (Test-Path -LiteralPath $oldLauncher) {
+                $oldItem = Get-Item -LiteralPath $oldLauncher -Force
+                if (-not $oldItem.PSIsContainer -and -not ($oldItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                    $oldHash = (Get-FileHash -LiteralPath $oldLauncher -Algorithm SHA256).Hash.ToLowerInvariant()
+                    $retiredHashes = @(
+                        'c6b302f4829e668eca81d24bed1fb9fb2498a9fae20e4e78a5a0c035c08e67ba',
+                        '15ba3b333c4f1c8247b9fb6100bb5fa99aedfd1463cdcf83a02adc4dbc19856b'
+                    )
+                    if ($retiredHashes -ccontains $oldHash) {
+                        $retiredBackup = Join-Path $stage 'retired-START_CLIENT.exe'
+                        [IO.File]::Move($oldLauncher, $retiredBackup)
+                        $changes.Add(@{ Target = $oldLauncher; Backup = $retiredBackup; Removed = $true })
+                        Write-Host 'Retired the known old START_CLIENT.exe.'
+                    } else { Write-Warning 'Unknown START_CLIENT.exe left untouched.' }
+                } else { Write-Warning 'Non-regular START_CLIENT.exe left untouched.' }
+            }
         } catch {
             Write-Warning 'File update failed. Attempting to roll back changed files.'
             for ($i = $changes.Count - 1; $i -ge 0; $i--) {
                 $change = $changes[$i]
                 try {
-                    if ($change.New) { [IO.File]::Delete($change.Target) }
+                    if ($change.Removed) { [IO.File]::Move($change.Backup, $change.Target) }
+                    elseif ($change.New) { [IO.File]::Delete($change.Target) }
                     else { [IO.File]::Replace($change.Backup, $change.Target, $null) }
                 } catch {
                     $keepStage = $true
@@ -172,8 +192,8 @@ try {
     }
     Write-Host "Files installed / updated: $destinationPath"
     Set-DllAccess $destinationPath
-    Write-Host 'Done. Run START_CLIENT.exe from this folder and start the game in the client.'
-    Write-Host 'Your other files and local ACL backups were not deleted.'
+    Write-Host 'Done. Run client.exe from this folder and start the game in the client.'
+    Write-Host 'Other files and local ACL backups were preserved.'
 } catch {
     Write-Error "Installer stopped: $($_.Exception.Message)" -ErrorAction Continue
     exit 1
