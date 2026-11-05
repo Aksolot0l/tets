@@ -12,6 +12,12 @@ int main() {
     assert(x < 0 && y > h); // no false hover when outside the window
     assert(!client_pointer(0, 0, 0, 600, x, y, w, h));
     assert(!client_pointer(0, 0, 800, 0, x, y, w, h));
+    // Client area starts below the UWP title bar: subtract its DIP origin.
+    assert(uwp_client_pointer(410, 332, 10, 32, 800, 600, x, y, w, h));
+    assert(x == 400 && y == 300 && w == 800 && h == 600);
+    assert(uwp_client_pointer(2, 12, 10, 32, 800, 600, x, y, w, h));
+    assert(x < 0 && y < 0);
+    assert(!uwp_client_pointer(0, 0, 0, 32, 0, 600, x, y, w, h));
     assert(client_pointer(1920, 1080, 3840, 2160, x, y, w, h));
     assert(std::abs(x / w - 0.5f) < 0.0001f);
     assert(std::abs(y / h - 0.5f) < 0.0001f);

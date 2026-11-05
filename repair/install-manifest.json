@@ -18,10 +18,11 @@
     {
       "source": "repair/GAYClientInternal.dll",
       "destination": "GAYClientInternal.dll",
-      "size": 152064,
-      "sha256": "7a722966f891c85f913a9d46caf63cf98bf3ee6984cbb54c13b9a1944caf9b34",
+      "size": 318976,
+      "sha256": "b9fff9341c955cbe2bf26fd65e78ba048d908e3ddc07a5ea516ce9d3c293663f",
       "previousSha256": [
-        "b0a7d82f2ea68e02fd66067242fa34ecdf18a82fa15b95e8a7f6f8d4fb190754"
+        "b0a7d82f2ea68e02fd66067242fa34ecdf18a82fa15b95e8a7f6f8d4fb190754",
+        "7a722966f891c85f913a9d46caf63cf98bf3ee6984cbb54c13b9a1944caf9b34"
       ]
     },
     {
@@ -36,6 +37,13 @@
       "destination": "RESTORE_ACCESS.cmd",
       "size": 769,
       "sha256": "5d3ef1a0a75f30a7e35a8c67213d8357659718c1c79a2489646f2f846b410eb6",
+      "previousSha256": []
+    },
+    {
+      "source": "repair/START_CLIENT.exe",
+      "destination": "START_CLIENT.exe",
+      "size": 154624,
+      "sha256": "c6b302f4829e668eca81d24bed1fb9fb2498a9fae20e4e78a5a0c035c08e67ba",
       "previousSha256": []
     }
   ]

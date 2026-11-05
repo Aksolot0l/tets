@@ -11,6 +11,8 @@
 #include "imgui.h"
 #include "settings.h"
 #include "pointer_mapping.h"
+#include "uwp_extra.h"
+#include <cstring>
 
 static_assert(offsetof(ag::Settings, uiScale) == 192, "legacy Settings ABI changed");
 
@@ -30,6 +32,8 @@ using AddFontFn = ImFont* (*)(float, bool);
 using PointerFn = bool (*)(float&, float&, float&, float&);
 using FindWindowFn = HWND (*)(bool);
 using SettingsCtorFn = void (*)(ag::Settings*);
+using TickFn = HRESULT (*)(void*);
+using AddWheelFn = void (*)(ImGuiIO*, float, float);
 
 static HMODULE selfModule = nullptr;
 static HMODULE core = nullptr;
@@ -44,9 +48,12 @@ static PointerFn realPointer = nullptr;
 static FindWindowFn findGameWindow = nullptr;
 static SettingsCtorFn realSettingsCtor = nullptr;
 static AddFontFn addFont = nullptr;
+static TickFn realTick = nullptr;
+static AddWheelFn addWheel = nullptr;
 static HWND pointerWindow = nullptr;
 static thread_local bool insidePresent = false;
 static thread_local bool seenInput = false;
+static thread_local bool pointerInUse = false;
 static thread_local ID3D11Device* frameDevice = nullptr;
 static thread_local ID3D11DeviceContext* frameContext = nullptr;
 static thread_local UINT frameWidth = 0, frameHeight = 0;
@@ -73,6 +80,9 @@ static void patchedNewFrame() {
         if (!rendererInit(frameDevice, frameContext)) log("ImGui DX11 initialization failed");
     }
     io.DisplaySize = ImVec2(static_cast<float>(frameWidth), static_cast<float>(frameHeight));
+    int wheelX = 0, wheelY = 0;
+    TakeUwpWheel(wheelX, wheelY);
+    if (pointerInUse && (wheelX || wheelY)) addWheel(&io, wheelX / 120.0f, wheelY / 120.0f);
     LARGE_INTEGER now{};
     QueryPerformanceCounter(&now);
     if (lastFrame.QuadPart && frequency.QuadPart && now.QuadPart > lastFrame.QuadPart) {
@@ -97,6 +107,10 @@ static void patchedUpdate(void* input, const void* settings, bool targetFocused,
 // Windows DPI virtualization affects cursor and client rectangle consistently.
 // If these APIs are unavailable in AppContainer, retain the legacy UWP input.
 static bool patchedPointer(float& x, float& y, float& w, float& h) {
+    pointerInUse = true;
+    // CoreWindow bounds describe the non-client origin in DIPs. Subtract it
+    // on the dispatcher thread's consistent sample before scaling to DXGI pixels.
+    if (GetSampledUwpPointer(x, y, w, h)) return true;
     if (!pointerWindow || !IsWindow(pointerWindow)) pointerWindow = findGameWindow(true);
     RECT client{};
     POINT position{};
@@ -107,6 +121,14 @@ static bool patchedPointer(float& x, float& y, float& w, float& h) {
                        static_cast<float>(client.right - client.left),
                        static_cast<float>(client.bottom - client.top), x, y, w, h)) return true;
     return realPointer(x, y, w, h);
+}
+
+// The legacy bridge already dispatches this tick on the CoreWindow UI thread.
+// Attach the wheel listener and sample CoreWindow bounds on that same thread.
+static HRESULT patchedTick(void* instance) {
+    HRESULT result = realTick(instance);
+    SampleUwpInput();
+    return result;
 }
 
 // Increase the default only. A saved profile may supply its own scale and the
@@ -129,7 +151,7 @@ static void draw(IDXGISwapChain* chain, UINT flags) {
             device->GetImmediateContext(&context);
             if (context) {
                 frameDevice = device; frameContext = context;
-                frameWidth = desc.Width; frameHeight = desc.Height; seenInput = false;
+                frameWidth = desc.Width; frameHeight = desc.Height; seenInput = false; pointerInUse = false;
                 legacyPresent(chain, 0, flags);
                 frameDevice = nullptr; frameContext = nullptr;
             }
@@ -211,10 +233,17 @@ static DWORD WINAPI bootstrap(void*) {
     void* settingsTarget = reinterpret_cast<void*>(GetProcAddress(core, "_ZN2ag8SettingsC1Ev"));
     findGameWindow = symbol<FindWindowFn>("_ZN2ag19FindMinecraftWindowEb");
     addFont = symbol<AddFontFn>("_ZN2ag15AddEmbeddedFontEfb");
+    addWheel = symbol<AddWheelFn>("_ZN7ImGuiIO18AddMouseWheelEventEff");
+    // This non-exported dispatcher callback is specific to the documented core
+    // build. Verify its known prologue before treating its RVA as code.
+    auto* tickTarget = reinterpret_cast<unsigned char*>(core) + 0x2060;
+    static const unsigned char expectedTick[] = {0x41,0x55,0x41,0x54,0x55,0x57,0x56,0x53,0x48,0x83,0xec,0x68};
+    bool tickHook = std::memcmp(tickTarget, expectedTick, sizeof(expectedTick)) == 0;
+    if (!tickHook) log("unsupported core input callback; using legacy input only");
     legacyPresent = symbol<LegacyPresentFn>("_Z11PresentHookP14IDXGISwapChainjj");
     rendererInit = symbol<RendererInitFn>("_Z19ImGui_ImplDX11_InitP12ID3D11DeviceP19ID3D11DeviceContext");
     getIO = symbol<GetIOFn>("_ZN5ImGui5GetIOEv");
-    if (!mhInit || !mhCreate || !mhQueueEnable || !mhApply || !mhDisable || !bridgeInit || !bridgeActive || !newFrameTarget || !updateTarget || !pointerTarget || !settingsTarget || !findGameWindow || !addFont || !legacyPresent || !rendererInit || !getIO) { log("legacy DLL exports do not match expected version"); return 1; }
+    if (!mhInit || !mhCreate || !mhQueueEnable || !mhApply || !mhDisable || !bridgeInit || !bridgeActive || !newFrameTarget || !updateTarget || !pointerTarget || !settingsTarget || !findGameWindow || !addFont || !addWheel || !legacyPresent || !rendererInit || !getIO) { log("legacy DLL exports do not match expected version"); return 1; }
     void* present = nullptr; void* present1 = nullptr;
     if (!findSwapChainMethods(present, present1)) return 1;
     if (mhInit() != 0) { log("MinHook initialization failed"); return 1; }
@@ -224,13 +253,17 @@ static DWORD WINAPI bootstrap(void*) {
         mhCreate(settingsTarget, reinterpret_cast<void*>(&patchedSettingsCtor), reinterpret_cast<void**>(&realSettingsCtor)) != 0 ||
         mhCreate(present, reinterpret_cast<void*>(&hookPresent), reinterpret_cast<void**>(&realPresent)) != 0 ||
         mhCreate(present1, reinterpret_cast<void*>(&hookPresent1), reinterpret_cast<void**>(&realPresent1)) != 0) { log("hook creation failed"); return 1; }
+    if (tickHook && mhCreate(tickTarget, reinterpret_cast<void*>(&patchedTick), reinterpret_cast<void**>(&realTick)) != 0) {
+        tickHook = false;
+        log("UWP input hook unavailable; using legacy input only");
+    }
     QueryPerformanceFrequency(&frequency);
     bridgeInit();
     bridgeActive(true);
     if (mhQueueEnable(newFrameTarget) || mhQueueEnable(updateTarget) ||
-        mhQueueEnable(pointerTarget) || mhQueueEnable(settingsTarget) ||
+        mhQueueEnable(pointerTarget) || mhQueueEnable(settingsTarget) || (tickHook && mhQueueEnable(tickTarget)) ||
         mhQueueEnable(present) || mhQueueEnable(present1) || mhApply()) {
-        mhDisable(present1); mhDisable(present); mhDisable(settingsTarget);
+        mhDisable(present1); mhDisable(present); if (tickHook) mhDisable(tickTarget); mhDisable(settingsTarget);
         mhDisable(pointerTarget); mhDisable(updateTarget); mhDisable(newFrameTarget);
         log("hook enable failed; attempted to disable hooks"); return 1;
     }

@@ -11,6 +11,7 @@ $expectedFiles = @{
     'repair/GAYClientInternal.dll' = 'GAYClientInternal.dll'
     'repair/ENABLE_ACCESS.cmd' = 'ENABLE_ACCESS.cmd'
     'repair/RESTORE_ACCESS.cmd' = 'RESTORE_ACCESS.cmd'
+    'repair/START_CLIENT.exe' = 'START_CLIENT.exe'
 }
 
 Write-Host 'GAYClient installer / updater'
@@ -18,7 +19,7 @@ Write-Warning 'This build is experimental and the original core does not match t
 Write-Warning 'The GitHub manifest and files come from the same branch; their hashes do not prove publisher authenticity.'
 Write-Warning 'The installer grants ALL APPLICATION PACKAGES read/execute access to both DLLs, saving the original ACLs first.'
 Write-Host "Install or update folder: $Destination"
-if ((Read-Host 'Close Minecraft and client.exe first. Type YES to continue') -cne 'YES') {
+if ((Read-Host 'Close Minecraft, client.exe and START_CLIENT.exe first. Type YES to continue') -cne 'YES') {
     Write-Host 'Cancelled; no changes made.'
     exit 0
 }
@@ -82,8 +83,8 @@ function Set-DllAccess([string]$directory) {
 }
 
 try {
-    if (@(Get-Process -Name 'Minecraft.Windows','client' -ErrorAction SilentlyContinue).Count -gt 0) {
-        throw 'Minecraft or client.exe is still running. Close them and run the installer again.'
+    if (@(Get-Process -Name 'Minecraft.Windows','client','START_CLIENT' -ErrorAction SilentlyContinue).Count -gt 0) {
+        throw 'Minecraft, client.exe or START_CLIENT.exe is still running. Close them and run the installer again.'
     }
     $destinationPath = [IO.Path]::GetFullPath($Destination).TrimEnd('\', '/')
     $parent = [IO.Path]::GetDirectoryName($destinationPath)
@@ -171,7 +172,7 @@ try {
     }
     Write-Host "Files installed / updated: $destinationPath"
     Set-DllAccess $destinationPath
-    Write-Host 'Done. Start Minecraft and then client.exe from this folder.'
+    Write-Host 'Done. Run START_CLIENT.exe from this folder and start the game in the client.'
     Write-Host 'Your other files and local ACL backups were not deleted.'
 } catch {
     Write-Error "Installer stopped: $($_.Exception.Message)" -ErrorAction Continue
