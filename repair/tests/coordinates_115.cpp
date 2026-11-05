@@ -20,29 +20,55 @@ struct Memory {
     }
 };
 int main() {
-    constexpr std::uint64_t base = 0x140000000ULL, root = 0x200000, start = 0x300000;
-    Memory m;
-    m.put(base + 0x19431e0, root);
-    m.put(base + 0x1921df8, start);
-    Position115 expected{-123.25f, 64.0f, 101.5f};
-    m.put(root + 0x524, expected);
-    std::uint64_t current = start;
-    for (auto offset : {0x30ULL,0x328ULL,0x0ULL,0x68ULL,0x90ULL,0x18ULL}) {
-        auto next = current + 0x1000;
-        m.put(current + offset, next);
-        current = next;
+    constexpr std::uint64_t base = 0x140000000ULL, start = 0x300000, first = 0x301000;
+    constexpr std::uint64_t aRoot = 0x200000;
+    Position115 expected{-123.25f, 64.0f, 101.5f}, unchanged{1,2,3};
+    Memory original;
+    original.put(base + 0x19431e0, std::uint64_t{0x200003}); // A is unaligned, as in the diagnostic
+    original.put(base + 0x1921df8, start);
+    original.put(start + 0x30, first);
+    std::uint64_t yRoot = first;
+    for (auto offset : {0x328ULL,0x0ULL,0x68ULL,0x90ULL,0x18ULL}) {
+        auto next = yRoot + 0x1000;
+        original.put(yRoot + offset, next); yRoot = next;
     }
-    m.put(current + 0x164, 65.6f);
-    auto read = [&](std::uint64_t a, void* p, size_t n) { return m.read(a,p,n); };
-    Position115 got{1,2,3};
-    assert(readPosition115(base, read, got));
-    assert(got.x == expected.x && got.y == expected.y && got.z == expected.z);
-    m.put(current + 0x164, 100.0f);
-    got = {1,2,3}; assert(!readPosition115(base, read, got));
-    assert(got.x == 1 && got.y == 2 && got.z == 3); // no fabricated value
-    m.put(current + 0x164, 64.0f);
-    m.put(root + 0x524, Position115{NAN, 64.0f, 10.0f});
-    assert(!readPosition115(base, read, got));
-    m.put(base + 0x19431e0, std::uint64_t{0});
-    assert(!readPosition115(base, read, got));
+    original.put(yRoot + 0x164, 65.6f);
+    std::uint64_t player = first, lastPlayerPointerAddress = 0;
+    for (auto offset : {0x2c0ULL,0x0ULL,0x78ULL,0x28ULL,0x58ULL}) {
+        auto next = player + 0x10000;
+        lastPlayerPointerAddress = player + offset;
+        original.put(lastPlayerPointerAddress, next); player = next;
+    }
+    original.put(player + 0x94, expected);
+    auto check = [&](Memory& m, bool success) {
+        auto read = [&](std::uint64_t a, void* p, size_t n) { return m.read(a,p,n); };
+        auto result = unchanged;
+        assert(readPosition115(base, read, result) == success);
+        if (success) assert(result.x == expected.x && result.y == expected.y && result.z == expected.z);
+        else assert(result.x == unchanged.x && result.y == unchanged.y && result.z == unchanged.z);
+    };
+    check(original, true);
+    { auto m = original; m.put(yRoot + 0x164, 100.0f); check(m, false); }
+    { auto m = original; m.put(yRoot + 0x164, NAN); check(m, false); }
+    { auto m = original; m.put(player + 0x94, Position115{NAN, 64.0f, 10.0f}); check(m, false); }
+    { auto m = original; m.put(player + 0x94, Position115{30000002.0f, 64.0f, 10.0f}); check(m, false); }
+    { auto m = original; m.put(lastPlayerPointerAddress, std::uint64_t{0}); check(m, false); }
+    { auto m = original; m.bytes.erase(player + 0x94); check(m, false); }
+    { auto m = original; m.put(base + 0x1921df8, std::uint64_t{0}); check(m, false); }
+    // Legacy A still works only if its independent height check works.
+    { auto m = original; m.put(lastPlayerPointerAddress, std::uint64_t{0});
+      m.put(base + 0x19431e0, aRoot); m.put(aRoot + 0x524, expected); check(m, true);
+      m.put(yRoot + 0x164, 100.0f); check(m, false); }
+    // The object changing while sampling must not be published.
+    int lastReads = 0;
+    auto changing = [&](std::uint64_t a, void* p, size_t n) {
+        if (a == lastPlayerPointerAddress && ++lastReads == 2) {
+            std::uint64_t different = player + 0x1000; std::memcpy(p, &different, sizeof(different)); return true;
+        }
+        return original.read(a,p,n);
+    };
+    auto result = unchanged;
+    assert(!readPosition115(base, changing, result));
+    assert(result.x == unchanged.x && result.y == unchanged.y && result.z == unchanged.z);
+    assert(!readPosition115(UINT64_MAX - 2, changing, result));
 }

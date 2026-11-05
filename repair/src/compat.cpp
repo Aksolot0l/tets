@@ -168,7 +168,7 @@ static void patchedText(const char* text, const char* textEnd) {
             std::snprintf(formatted, sizeof(formatted), "XYZ (test): %.1f %.1f %.1f", position.x, position.y, position.z);
             realText(formatted, nullptr); return;
         }
-        realText(supported ? "XYZ: not ready (enter world)" : "XYZ: unsupported game build", nullptr);
+        realText(supported ? "XYZ: not ready" : "XYZ: unsupported game build", nullptr);
         return;
     }
     realText(text, textEnd);
