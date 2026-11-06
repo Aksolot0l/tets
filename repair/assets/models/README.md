@@ -10,8 +10,8 @@
 
 The original GLB has five triangle meshes and materials, no texture images, no
 skinning and no animations. A simplified converted derivative is embedded in
-the opt-in experimental first-person renderer, not yet tested in Minecraft.
-Third-person replacement is not implemented.
+opt-in experimental first- and third-person candidate paths, not yet tested in
+Minecraft. Other render paths remain unchanged.
 
 ### Offline conversion and embedding
 
@@ -21,7 +21,7 @@ output is a derivative of the model above; retain its author/source/license
 attribution and state that the geometry and base colors were converted when
 distributing it. PBR properties (including emissive and metallic), extra vertex
 attributes and material culling settings are not preserved. An approximate grip transform is used by an experimental
-first-person renderer;
+first- and third-person renderer;
 its position and graphics material have not been tested in the game.
 
 GCM1 is little-endian: ASCII `GCM1`, uint32 version (1), uint32 vertex count,
@@ -31,7 +31,7 @@ index, uint32 index count, four float32 base-color factors (RGBA). Groups cover
 all indices consecutively. Reader limits are 100,000 vertices, 300,000 indices
 and 128 groups. `src/katana_mesh.h` validates the entire byte buffer before
 exposing a borrowed read-only view; its backing bytes must remain alive and
-unchanged throughout use. The experimental first-person DLL module uses it.
+unchanged throughout use. The experimental DLL module uses it.
 
 `src/katana_geometry.h` expands the mesh into colored triangles without any
 game calls. Its approximate grip pivot is derived from the supplied model, not

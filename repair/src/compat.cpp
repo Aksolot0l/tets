@@ -579,7 +579,8 @@ static void drawVisualPanel() {
                 int ks=KatanaStatus();
                 realText(ks==1?"Katana: GPU draw submitted":ks==2?"Katana: draw unavailable; original kept":
                     ks==9?"Katana: local player not matched":ks==10?"Katana: sword not matched":
-                    ks==11?"Katana: waiting for draw path":"Katana: waiting for held diamond sword",nullptr);
+                    ks==11?"Katana: waiting for draw path":ks==12?"Katana: geometry prepared":
+                    ks==13?"Katana: stream unavailable; original kept":"Katana: waiting for held diamond sword",nullptr);
             } else {
                 const int ks=KatanaStatus();
                 if (ks>=3) realText(ks==3?"Katana: game hooks unavailable":ks==4?"Katana: GPU hooks unavailable":

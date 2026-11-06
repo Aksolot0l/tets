@@ -92,3 +92,22 @@ already installed visual hook sites; katana entry points and call sites have
 separate in-memory checks. The original screenshot also grouped unrelated GPU
 and hook errors, so the exact runtime failing stage cannot be proven solely
 from that screenshot. UI now distinguishes these cases. No game test here.
+
+User screenshot after previous update: "Katana: waiting for draw path" with a
+selected sword and enabled toggle; user says invisible in first and third
+person. This proves the UI displayed the matching-candidate state at that
+instant, not which branch ran or that geometry was drawn. Third person was
+explicitly unimplemented in that version. The already collected tessellator
+window shows 0x5d1790 uses a streaming sink (+0x160) when +0x126 is nonzero and
+then resets tessellator state, while 0x5d14f0 takes a different path in that
+mode. The existing submitKatana/0x59f200 approach did not support the alternate
+0x5a22f0 -> 0x5d1790 branch.
+
+A new opt-in experiment adds guarded streaming geometry preparation at the
+first-person 0x59fcba call and the 0x56cd2a call within a local-player render
+scope. The game performs its own subsequent 0x5d1790 flush. Before touching
+state it checks EXE/call sites, candidate sword identity, sink, executable sink
+method, streaming mode and idle tessellator; other calls use the original.
+The material, vertex layout, behavior of bypassing original preparation,
+visibility, calibration and game state are still unverified in Minecraft. A
+prepared vertex batch is not evidence of a successful visible replacement.

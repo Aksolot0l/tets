@@ -12,6 +12,7 @@
 #include "visual_accessory.h"
 #include "katana_asset.h"
 #include "katana_geometry.h"
+#include "katana_stream_policy.h"
 #include "diamond_sword_candidate.h"
 #include "china_hat_player.h"
 #include "visual_hooks.h"
@@ -58,8 +59,9 @@ std::atomic<ULONGLONG> lastKatanaSubmit{0};
 std::atomic<int> katanaHookState{0}, katanaHookFailure{8};
 using HeldRender=std::uintptr_t (*)(void*,void*,void*,std::uintptr_t,float,std::uint8_t,std::uint8_t);
 using HeldDraw=std::uintptr_t (*)(void*,void*,std::uint8_t);
-HeldRender originalHeldRender=nullptr; HeldDraw originalHeldDraw=nullptr;
-thread_local bool katanaScope=false;
+using HeldGeometry=std::uintptr_t (*)(void*,void*,void*,void*,int);
+HeldRender originalHeldRender=nullptr; HeldDraw originalHeldDraw=nullptr; HeldGeometry originalHeldGeometry=nullptr;
+thread_local bool katanaScope=false, katanaLocalPlayerPass=false;
 std::atomic<int> accessoryStatus{0};
 std::atomic<ULONGLONG> lastAccessorySubmit{0};
 std::atomic<bool> jumpEnabled{false}, jumpRainbow{false};
@@ -315,6 +317,9 @@ std::intptr_t playerHook(void* self,void* entity,void* pos,float renderValue,flo
   ID3D11DeviceContext* ctx; bool active;
   ~CaptureScope() { if(active) { visual_gpu_depth::inPlayerCapture=false; visual_player_replay::end(); visual_player_skin::end(); } if(ctx)ctx->Release(); }
  } captureScope{captureContext,capture};
+ std::uintptr_t katanaLocal=0;
+ const bool localKatana=katanaEnabled.load(std::memory_order_acquire) && localPlayer(katanaLocal) && reinterpret_cast<std::uintptr_t>(entity)==katanaLocal;
+ struct KatanaPlayerScope { bool previous; explicit KatanaPlayerScope(bool value):previous(katanaLocalPlayerPass) { katanaLocalPlayerPass=value; } ~KatanaPlayerScope() { katanaLocalPlayerPass=previous; } } katanaPlayerScope{localKatana};
  const auto result=originalPlayer(self,entity,pos,renderValue,partial);
  if (capture) {
   visual_gpu_depth::inPlayerCapture=false; visual_player_skin::end();
@@ -543,15 +548,19 @@ void renderAccessory(const PlayerFrame& player) {
 }
 
 // Return addresses, ABI and material are inferred from this exact executable,
-// not a stable game API. Hooks only alter the one observed local first-person
-// sword call. Any mismatch or unavailable graphics state calls the original.
+// not a stable game API. Hooks are limited to the candidate local sword
+// paths below. Mismatches and unavailable graphics state call the original.
 bool katanaCodeMatches() {
  struct Sig { std::uintptr_t rva; std::uint8_t bytes[16]; };
  constexpr Sig sigs[]={
   {0x59f300,{0x48,0x8b,0xc4,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d}},
   {0x59f200,{0x48,0x83,0xec,0x38,0x80,0xba,0xe8,0,0,0,0,0x4c,0x8b,0xd2,0x74,0x2f}},
   {0x5a1d28,{0xe8,0xd3,0xd5,0xff,0xff,0xe9,0x65,0x04,0,0,0x45,0x38,0xbe,0x54,0x12,0}},
-  {0x59fd19,{0xe8,0xe2,0xf4,0xff,0xff,0x90,0x48,0x85,0xff,0x74,0x09,0xc6,0x47,0x18,0x01,0x48}}
+  {0x59fd19,{0xe8,0xe2,0xf4,0xff,0xff,0x90,0x48,0x85,0xff,0x74,0x09,0xc6,0x47,0x18,0x01,0x48}},
+  {0x5a22f0,{0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x54,0x24,0x10,0x55,0x56,0x57,0x48,0x83,0xec}},
+  {0x59fcba,{0xe8,0x31,0x26,0,0,0x41,0x80,0xbf,0xe8,0,0,0,0,0x4c,0x8d,0x0d}},
+  {0x56cd2a,{0xe8,0xc1,0x55,0x03,0,0x80,0xbb,0xe8,0,0,0,0,0x4c,0x8d,0x0d,0x03}},
+  {0x5d1790,{0x40,0x53,0x48,0x83,0xec,0x60,0x80,0xb9,0x26,0x01,0,0,0,0x48,0x8b,0xd9}}
  };
  for(const auto& sig:sigs) { std::uint8_t bytes[16]{}; if(!read(base+sig.rva,bytes,sizeof(bytes)) || std::memcmp(bytes,sig.bytes,sizeof(bytes))) return false; }
  return true;
@@ -585,6 +594,43 @@ bool submitKatana(ID3D11DeviceContext* ctx) {
  std::memcpy(reinterpret_cast<void*>(color),saved,sizeof(saved)); *reinterpret_cast<std::uint8_t*>(flag)=oldFlag;
  return submitted;
 }
+// Streaming branch: the game will flush this batch with its own 0x5d1790
+// after returning. No flush/end or modification of the hand/camera is done here.
+// This path is untested in Minecraft; a prepared batch does not prove pixels.
+bool prepareKatanaStream() {
+ const auto& mesh=katanaMesh(); auto pose=katana_geometry::katanaLocalPose();
+ const auto t=base+tessRva;
+ std::uint8_t streaming=0; std::uintptr_t sink=0,vt=0,drawFn=0;
+ if (!fetch(t+0x126,streaming) || streaming!=1 || !tessIdle(t) || !fetch(t+0x160,sink) || !sink ||
+     !fetch(sink,vt) || !vt || vt>UINTPTR_MAX-0x10 || !fetch(vt+0x10,drawFn) || !drawFn || !mesh.vertices() ||
+     !katana_geometry::triangles(mesh,pose,true,[](katana_geometry::ColoredVertex){})) return false;
+ MEMORY_BASIC_INFORMATION info{};
+ if (!VirtualQuery(reinterpret_cast<void*>(drawFn),&info,sizeof(info)) || info.State!=MEM_COMMIT || (info.Protect&(PAGE_GUARD|PAGE_NOACCESS))) return false;
+ const DWORD prot=info.Protect&0xff;
+ if (prot!=PAGE_EXECUTE && prot!=PAGE_EXECUTE_READ && prot!=PAGE_EXECUTE_READWRITE && prot!=PAGE_EXECUTE_WRITECOPY) return false;
+ auto* tess=reinterpret_cast<void*>(t);
+ tessBegin(tess,2,static_cast<int>(mesh.indices()*2));
+ auto channel=[](float x) { return static_cast<std::uint8_t>(std::clamp(x,0.f,1.f)*255.f+.5f); };
+ katana_geometry::triangles(mesh,pose,true,[&](const katana_geometry::ColoredVertex& v) {
+  tessColor(tess,channel(v.rgba[0]),channel(v.rgba[1]),channel(v.rgba[2]),channel(v.rgba[3]));
+  tessVertex(tess,v.position.x,v.position.y,v.position.z);
+ });
+ return true;
+}
+std::uintptr_t heldGeometryHook(void* self,void* a2,void* a3,void* stack,int a5) {
+ const auto returnAddress=reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));
+ if (!katana_stream_policy::eligible(katanaEnabled.load(std::memory_order_acquire),katanaScope,katanaLocalPlayerPass,returnAddress,base,true))
+  return originalHeldGeometry(self,a2,a3,stack,a5);
+ auto memory=[](std::uintptr_t address,void* out,std::size_t n) { return read(address,out,n); };
+ if (!diamond_sword_candidate::matches(base,reinterpret_cast<std::uintptr_t>(stack),memory))
+  return originalHeldGeometry(self,a2,a3,stack,a5);
+ auto* ctx=sameThreadContext();
+ const bool ready=ctx && visual_gpu_depth::matches(ctx) && prepareKatanaStream();
+ if(ctx) ctx->Release();
+ if (!ready) { katanaStatus.store(13,std::memory_order_relaxed); return originalHeldGeometry(self,a2,a3,stack,a5); }
+ katanaStatus.store(12,std::memory_order_relaxed); return 0;
+}
+
 std::uintptr_t heldDrawHook(void* renderer,void* context,std::uint8_t mode) {
  auto returnAddress=reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));
  if (!katanaScope || returnAddress!=base+0x59fd1e || !katanaEnabled.load(std::memory_order_acquire))
@@ -863,8 +909,9 @@ void SetKatanaEnabled(bool value) {
   else if (katanaMesh().vertices()!=4572 || katanaMesh().indices()!=7866) failure=7;
   else {
    visual_hooks::Hook hooks[]={{reinterpret_cast<void*>(base+0x59f300),reinterpret_cast<void*>(&heldRenderHook),reinterpret_cast<void**>(&originalHeldRender)},
-                               {reinterpret_cast<void*>(base+0x59f200),reinterpret_cast<void*>(&heldDrawHook),reinterpret_cast<void**>(&originalHeldDraw)}};
-   if (!visual_hooks::install(hooks,2,createHook,enableHook,disableHook,removeHook)) failure=8;
+                               {reinterpret_cast<void*>(base+0x59f200),reinterpret_cast<void*>(&heldDrawHook),reinterpret_cast<void**>(&originalHeldDraw)},
+                               {reinterpret_cast<void*>(base+0x5a22f0),reinterpret_cast<void*>(&heldGeometryHook),reinterpret_cast<void**>(&originalHeldGeometry)}};
+   if (!visual_hooks::install(hooks,3,createHook,enableHook,disableHook,removeHook)) failure=8;
   }
   if (failure) katanaHookFailure.store(failure,std::memory_order_relaxed);
   katanaHookState.store(failure?3:2,std::memory_order_release); state=failure?3:2;

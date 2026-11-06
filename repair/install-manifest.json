@@ -37,9 +37,10 @@
     {
       "source": "repair/GAYClientInternal.dll",
       "destination": "GAYClientInternal.dll",
-      "size": 588288,
-      "sha256": "bf4e4f03d976573fa11a6e32d29c4c43491a3fa782e6aa81f435032650b5b4ab",
+      "size": 594944,
+      "sha256": "6abe37ad990a9d077c2d8554c83de3fe290f7ca00c0aca18795c788c958803bb",
       "previousSha256": [
+        "bf4e4f03d976573fa11a6e32d29c4c43491a3fa782e6aa81f435032650b5b4ab",
         "b1053d8c273971365932f7c18e51fdfcbb8f713929f44b43061be92813597cde",
         "f07e264ccc06cb9f99207b379a508a3120b5e51cb4c09bffece29920ac82f134",
         "32aee8bee8945616a95855756e36337c41f69160c0d9c947d26f13f20539a8dd",
