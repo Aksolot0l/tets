@@ -7,7 +7,6 @@ void SetPlayerSkinPreviewActive(bool enabled);
 // Experimental GPU draw replay, never enabled unless the user selects it.
 void SetPlayerModelPreviewActive(bool enabled);
 void SetPlayerPreviewHatActive(bool enabled);
-int PlayerPreviewCameraStatus();
 void ObserveVisualContext(ID3D11DeviceContext* context);
 int VisualDepthBefore();
 int VisualDepthAfter();

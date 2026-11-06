@@ -99,13 +99,12 @@ assert 'originalIndirect(c,b,off); },true' not in gpu and 'originalAuto(c); },tr
 assert 'NestedScope' in n and 'visual_player_replay::end()' in n
 print('Opt-in replay wiring: static OK; D3D11/Minecraft test required')
 
-# Preview camera is opt-in and returns the underlying getter outside the test.
-camera=(r/'src/visual_preview_camera.h').read_text()
-assert 'perspectiveRva=0x488420' in n and 'fileCodeAt(bytes,size,nt,table,perspectiveRva' in n
-assert 'originalPerspective(options)' in n and 'if (!visual_player_replay::isRequested()) return original;' in n
-assert 'localPlayer(player),options!=nullptr,original' in n and 'value>=0 && value<=2' in camera
+# No perspective interception: it hid the first-person hand and interfered
+# with F5 in the reported game build. Keep camera input under game control.
+assert 'perspectiveHook' not in n and 'originalPerspective' not in n
+assert 'Use F5 for third person.' in u and 'PlayerPreviewCameraStatus' not in u
 assert 'SetPlayerPreviewHatActive(editingVisual && visualEditor==VisualEditor::Hat && previewGameModelTest)' in u
 assert 'inHatCapture && replayable' in gpu and 'submitted.fetch_add(1,std::memory_order_relaxed); call();' in gpu
 assert 'struct EntityScope { ~EntityScope() { visual_player_replay::end();' in n
 for palette in ('Aogiri Green','Emerald','Graphite'): assert palette in theme
-print('Camera/hat replay and HUD palette wiring: static OK; Windows test required')
+print('Manual camera, hat replay and HUD palette wiring: static OK; Windows test required')

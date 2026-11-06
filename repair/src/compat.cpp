@@ -602,11 +602,7 @@ static void drawEffectPreview(VisualEditor editor) {
                 if (model) drawImage(d,static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(model)),ImVec2(p.x+32.f,p.y),ImVec2(p.x+247.f,p.y+215.f),ImVec2(0,0),ImVec2(1,1),IM_COL32_WHITE);
             }
             guiDummy(ImVec2(280.f,215.f));
-            switch (PlayerPreviewCameraStatus()) {
-            case 1: realText("Auto front unavailable; use F5.",nullptr); break;
-            case 3: realText("Auto front requested; look level.",nullptr); break;
-            default: realText("Waiting for camera; use F5 if needed.",nullptr); break;
-            }
+            realText("Use F5 for third person.",nullptr);
             realText(editor==VisualEditor::Hat?"Hat preview: enable China Hat.":"Trail preview not available yet.",nullptr);
         } else {
             auto skin=visual_player_skin::acquire(frameDevice); previewFrameView=skin.view;

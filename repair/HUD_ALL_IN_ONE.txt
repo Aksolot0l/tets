@@ -10,7 +10,7 @@ SDK и Dear ImGui сюда не включены. Исходников закр�
 старый штатный HUD нельзя восстановить полностью по этому файлу.
 Мировой проход с глубиной, настоящая модель и копия шляпы в GPU-preview
 подтверждены пользователем. Автоматическое переключение с первого лица не
-сработало; палитры и возврат камеры ещё требуют проверки. Ошибка перекрытия
+сработало, его перехват удалён; исправление и палитры ещё требуют проверки. Ошибка перекрытия
 шляпы дальними блоками остаётся.
 
 СОДЕРЖАНИЕ:
@@ -171,20 +171,21 @@ Visuals содержит отдельные кнопки Settings для China H
 CPU, сохранения в файл или отправки в сеть. В Minecraft поиск не проверен.
 
 В Preview доступен выключенный по умолчанию `Game model replay (test)`.
-Пользователь подтвердил настоящую игровую модель в подходящем виде от третьего
-лица. Автоматическое переключение с первого лица у пользователя не сработало.
-Новый вариант пробует на время Preview возвращать из геттера перспективы
-вид от третьего лица спереди, не записывая настройку и поворот игрока; проверка
-производится только для точного EXE, но семантика перехвата в игре не доказана.
-После закрытия возвращается исходное значение геттера. В теории другой код игры
-может записать значение, пока действует перехват. Вертикальный угол не
-выравнивается автоматически. Шляпа при включённом модуле и игровом world
-pass повторяет реальные draw-вызовы на буфер модели с depth и прозрачностью.
-Трейл туда пока не копируется; старый баг перекрытия дальними блоками не
-исправлен. Копия шляпы видна на скриншоте пользователя; поведение в других
-условиях, возврат камеры и палитры ещё не проверены. Возможны артефакты,
-снижение FPS или сбой. При проблеме снимите галочку и перезапустите
-игру. Отдельной камеры и повторного вызова игрового renderer по-прежнему нет.
+Пользователь подтвердил, что настоящая игровая модель и шляпа видны при
+подходящем ракурсе от третьего лица. Автоматическое переключение с первого лица
+не сработало; экспериментальный перехват геттера перспективы мешал F5 и скрывал
+руку и теперь удалён. Пока необходимо вручную переключать вид клавишей F5.
+Исправление ещё нужно проверить в игре. Независимой камеры по-прежнему нет.
+
+Шляпа при включённом модуле и игровом world pass повторяет настоящие
+GPU-вызовы на буфер модели с depth и прозрачностью. Трейл туда пока не
+копируется; баг перекрытия шляпы дальними блоками не исправлен. Разные
+ракурсы и настройки ещё требуют проверки. Возможны артефакты, снижение FPS
+или сбой. При проблеме снимите галочку и перезапустите игру.
+
+Пользователь также попросил освободить курсор и блокировать ввод игры при
+открытом меню правым Shift. Пока это не реализовано: мост UWP считывает мышь,
+но не управляет захватом и не блокирует действия игры.
 
 Даже если найден настоящий скин, модель в предпросмотре упрощённая и создана
 отдельно: из игры не извлечены mesh, кости, нестандартная геометрия и анимация.
@@ -822,11 +823,7 @@ static void drawEffectPreview(VisualEditor editor) {
                 if (model) drawImage(d,static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(model)),ImVec2(p.x+32.f,p.y),ImVec2(p.x+247.f,p.y+215.f),ImVec2(0,0),ImVec2(1,1),IM_COL32_WHITE);
             }
             guiDummy(ImVec2(280.f,215.f));
-            switch (PlayerPreviewCameraStatus()) {
-            case 1: realText("Auto front unavailable; use F5.",nullptr); break;
-            case 3: realText("Auto front requested; look level.",nullptr); break;
-            default: realText("Waiting for camera; use F5 if needed.",nullptr); break;
-            }
+            realText("Use F5 for third person.",nullptr);
             realText(editor==VisualEditor::Hat?"Hat preview: enable China Hat.":"Trail preview not available yet.",nullptr);
         } else {
             auto skin=visual_player_skin::acquire(frameDevice); previewFrameView=skin.view;
@@ -1545,7 +1542,6 @@ struct Settings {
 #include "visual_gpu_depth.h"
 #include "visual_player_skin.h"
 #include "visual_player_replay.h"
-#include "visual_preview_camera.h"
 #include <d3d11.h>
 #include "hat_animation.h"
 #include <bcrypt.h>
@@ -1557,7 +1553,6 @@ struct Settings {
 
 namespace {
 using ClientTick = void (*)(void*,int,int);
-using GetPerspective = int (*)(void*);
 // In the recorded x64 dispatcher, the fourth parameter is passed in XMM3;
 // preserve it as float even though this wrapper's exact meaning is unknown.
 using PlayerRender = std::intptr_t (*)(void*,void*,void*,float,float);
@@ -1570,7 +1565,6 @@ using TessDraw = void (*)(void*,void*,std::int64_t);
 using TessEnd = void (*)(void*,void*,std::int64_t,std::uint8_t);
 constexpr std::uint32_t playerRva=0x581910, screenRva=0x3528c0, clientTickRva=0x11b2d0, beginRva=0x5d0660,
  colorRva=0x5d0890, vertexRva=0x5d0a90, drawRva=0x5d1840, endRva=0x5d14f0, worldEntitiesRva=0x5ae250;
-constexpr std::uint32_t perspectiveRva=0x488420; // candidate Options getter; separately validated
 constexpr std::uint32_t originRva=0x19436e8, tessRva=0x1925550, contextRva=0x1913b40,
  shaderColorRva=0x192ae08, shaderFlagRva=0x192ae18;
 std::atomic<bool> available{false}, enabled{false};
@@ -1583,8 +1577,6 @@ std::atomic<bool> hatRainbow{true}, trailRainbow{true}, vertexGradient{false};
 std::atomic<bool> strictDepth{true}, worldHookReady{false}, gpuHooksReady{false};
 // Off by default: preserve the current world pass until the alternate timing
 // is actually tested by the player. Does not change trail or legacy mode.
-std::atomic<bool> previewCameraCandidate{false}, previewCameraHookReady{false};
-std::atomic<ULONGLONG> lastCameraOverride{0};
 std::atomic<bool> hatPlayerPass{false};
 std::atomic<bool> previewHatCapture{false};
 std::atomic<int> hatPlayerPassStatus{0}, hatPlayerCompare{0}, worldDepthCompare{0};
@@ -1637,7 +1629,6 @@ ClientTick originalTick=nullptr;
 std::atomic<std::uintptr_t> clientInstance{0};
 std::atomic<ULONGLONG> lastClientTick{0};
 PlayerRender originalPlayer=nullptr;
-GetPerspective originalPerspective=nullptr;
 ScreenRender originalScreen=nullptr;
 EntitiesRender originalEntities=nullptr;
 TessBegin tessBegin=nullptr; TessColor tessColor=nullptr; TessVertex tessVertex=nullptr;
@@ -1722,7 +1713,6 @@ bool fileCodeAt(const BYTE* file,std::size_t size,const IMAGE_NT_HEADERS64& nt,s
  return false;
 }
 bool validateGame() {
- previewCameraCandidate.store(false,std::memory_order_release);
  HMODULE module=GetModuleHandleW(nullptr); if (!module) return false;
  wchar_t path[32768]{}; DWORD n=GetModuleFileNameW(module,path,32768);
  if (!n || n>=32768) return false;
@@ -1758,33 +1748,13 @@ bool validateGame() {
     const BYTE* fromFile=nullptr; std::uint8_t inMemory[16]{};
     if (!fileCodeAt(bytes,size,nt,table,rva,fromFile) || !read(image+rva,inMemory,16) || std::memcmp(inMemory,fromFile,16)!=0) valid=false;
    }
-   if (valid) {
-    // Optional feature: if another mod changed this candidate, disable only
-    // the camera experiment, not the already-working visuals.
-    const BYTE* fromFile=nullptr; std::uint8_t inMemory[16]{};
-    const bool camera=fileCodeAt(bytes,size,nt,table,perspectiveRva,fromFile) &&
-      read(image+perspectiveRva,inMemory,16) && std::memcmp(inMemory,fromFile,16)==0;
-    previewCameraCandidate.store(camera,std::memory_order_release);
-    base=image;
-   }
+   if (valid) base=image;
   }
   UnmapViewOfFile(bytes);
  }
  if (mapping) CloseHandle(mapping); CloseHandle(file); return valid;
 }
 
-// Return the stored game value except while the explicit model preview is
-// active. No Options setter or player rotation writes are performed.
-int perspectiveHook(void* options) {
- const int original=originalPerspective(options);
- if (!visual_player_replay::isRequested()) return original;
- std::uintptr_t player=0;
- if (visual_preview_camera::overrideFront(visual_player_replay::isRequested(),localPlayer(player),options!=nullptr,original)) {
-  lastCameraOverride.store(GetTickCount64(),std::memory_order_relaxed);
-  return 2;
- }
- return original;
-}
 // 1.1.5 candidate tick signature, called only after exact EXE identity and
 // loaded/file code comparison. This observes the live ClientInstance; it never
 // writes to the instance or changes the original tick arguments.
@@ -2193,12 +2163,6 @@ bool installHooks() {
     visual_gpu_depth::replayBegin.store(&visual_player_replay::beginDraw,std::memory_order_release);
    }
    ctx->Release();
-   if (gpu && previewCameraCandidate.load(std::memory_order_acquire)) {
-    visual_hooks::Hook camera[]={{reinterpret_cast<void*>(base+perspectiveRva),reinterpret_cast<void*>(&perspectiveHook),reinterpret_cast<void**>(&originalPerspective)}};
-    const bool installedCamera=visual_hooks::install(camera,1,createHook,enableHook,disableHook,removeHook);
-    previewCameraHookReady.store(installedCamera,std::memory_order_release);
-    if (!installedCamera) log("preview camera unavailable; manual third person remains available");
-   }
    if (!gpu) log("GPU depth guard unavailable; strict visual draw disabled");
   }
  }
@@ -2223,15 +2187,9 @@ void SetPlayerSkinPreviewActive(bool value) {
  if (visual_player_skin::isRequested()) return;
  if (enableVisual() && gpuHooksReady.load(std::memory_order_acquire)) visual_player_skin::setRequested(true);
 }
-int PlayerPreviewCameraStatus() {
- if (!visual_player_replay::isRequested()) return 0;
- if (!previewCameraHookReady.load(std::memory_order_acquire)) return 1;
- const auto t=lastCameraOverride.load(std::memory_order_relaxed),now=GetTickCount64();
- return t && now>=t && now-t<=1000 ? 3 : 2;
-}
 void SetPlayerPreviewHatActive(bool value) { previewHatCapture.store(value,std::memory_order_release); }
 void SetPlayerModelPreviewActive(bool value) {
- if (!value) { visual_player_replay::setRequested(false); lastCameraOverride.store(0,std::memory_order_relaxed); return; }
+ if (!value) { visual_player_replay::setRequested(false); return; }
  if (visual_player_replay::isRequested()) return;
  if (enableVisual() && gpuHooksReady.load(std::memory_order_acquire)) visual_player_replay::setRequested(true);
 }
@@ -2303,7 +2261,6 @@ void SetPlayerSkinPreviewActive(bool enabled);
 // Experimental GPU draw replay, never enabled unless the user selects it.
 void SetPlayerModelPreviewActive(bool enabled);
 void SetPlayerPreviewHatActive(bool enabled);
-int PlayerPreviewCameraStatus();
 void ObserveVisualContext(ID3D11DeviceContext* context);
 int VisualDepthBefore();
 int VisualDepthAfter();
@@ -2867,9 +2824,9 @@ inline void endDraw(ID3D11DeviceContext* ctx) {
 НАЧАЛО ФАЙЛА: repair/src/visual_preview_camera.h
 ================================================================================
 #pragma once
-// Candidate Bedrock perspective values for the exact validated build.
-// Do not set/persist options: override only the getter result while the
-// explicitly requested model preview is active, and only for a live player.
+// Historical, unused candidate policy retained for research and tests only.
+// Getter interception was removed after it interfered with F5 and the hand;
+// this header is not wired to the game. Do not re-enable it without evidence.
 namespace visual_preview_camera {
 inline bool overrideFront(bool requested,bool livePlayer,bool optionsValid,int value) {
  return requested && livePlayer && optionsValid && value>=0 && value<=2;
@@ -4631,16 +4588,15 @@ assert 'originalIndirect(c,b,off); },true' not in gpu and 'originalAuto(c); },tr
 assert 'NestedScope' in n and 'visual_player_replay::end()' in n
 print('Opt-in replay wiring: static OK; D3D11/Minecraft test required')
 
-# Preview camera is opt-in and returns the underlying getter outside the test.
-camera=(r/'src/visual_preview_camera.h').read_text()
-assert 'perspectiveRva=0x488420' in n and 'fileCodeAt(bytes,size,nt,table,perspectiveRva' in n
-assert 'originalPerspective(options)' in n and 'if (!visual_player_replay::isRequested()) return original;' in n
-assert 'localPlayer(player),options!=nullptr,original' in n and 'value>=0 && value<=2' in camera
+# No perspective interception: it hid the first-person hand and interfered
+# with F5 in the reported game build. Keep camera input under game control.
+assert 'perspectiveHook' not in n and 'originalPerspective' not in n
+assert 'Use F5 for third person.' in u and 'PlayerPreviewCameraStatus' not in u
 assert 'SetPlayerPreviewHatActive(editingVisual && visualEditor==VisualEditor::Hat && previewGameModelTest)' in u
 assert 'inHatCapture && replayable' in gpu and 'submitted.fetch_add(1,std::memory_order_relaxed); call();' in gpu
 assert 'struct EntityScope { ~EntityScope() { visual_player_replay::end();' in n
 for palette in ('Aogiri Green','Emerald','Graphite'): assert palette in theme
-print('Camera/hat replay and HUD palette wiring: static OK; Windows test required')
+print('Manual camera, hat replay and HUD palette wiring: static OK; Windows test required')
 
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_hud_visual_update.py
