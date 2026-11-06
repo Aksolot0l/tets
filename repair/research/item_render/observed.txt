@@ -111,3 +111,18 @@ method, streaming mode and idle tessellator; other calls use the original.
 The material, vertex layout, behavior of bypassing original preparation,
 visibility, calibration and game state are still unverified in Minecraft. A
 prepared vertex batch is not evidence of a successful visible replacement.
+
+User screenshot after streaming experiment again shows "waiting for draw
+path"; user reports no visible katana. Important correction: this status was
+written at the start of every matching first-person invocation and can overwrite
+an earlier prepared/blocked/submitted result. Thus neither screenshot proves
+that the inner callbacks never ran; claims to that effect were too strong.
+
+A diagnostic-only UI revision aggregates booleans since enable (no new game
+hooks or output files): F = matching first-person outer call; V = stack byte 0
+was observed nonzero; S1/S3 = eligible streaming preparation reached for local
+first/third person; R = batch prepared; B = preparation blocked; C = cached
+draw hook reached; D = cached custom GPU submission observed. They do not prove
+which events were in one frame, visible pixels, good placement, correct material,
+or that the original remains visible. Clearing the switch resets the flags.
+No rendering fix is claimed by this change. Windows runtime still unavailable.

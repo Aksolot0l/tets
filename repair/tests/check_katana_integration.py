@@ -18,9 +18,12 @@ assert 'katanaObserve=ctx' in n and 'katanaSuppress=ctx' in n and 'katanaSuppres
 assert 'if (ctx && ctx==katanaSuppress) return;' in g
 assert 'Diamond sword: katana (test)' in ui
 assert 'SetKatanaEnabled(false);' in ui
-for message in ('local player not matched','sword not matched','waiting for draw path','geometry prepared','stream unavailable'): assert message in ui
+for message in ('local player not matched','sword not matched','sword candidate','geometry prepared','stream unavailable'): assert message in ui
 print('Embedded model and first-person opt-in wiring OK; no Windows/game validation')
 
 assert 'katana_stream_policy::eligible' in n and 'prepareKatanaStream()' in n
 assert 'return originalHeldGeometry(self,a2,a3,stack,a5)' in n
 assert 'streaming!=1 || !tessIdle(t)' in n
+
+assert 'katanaEvents.fetch_or' in n and 'KatanaEvidence()' in ui
+assert 'Seen F:%u V:%u S1:%u S3:%u' in ui

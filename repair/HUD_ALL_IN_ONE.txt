@@ -43,6 +43,8 @@ SDK и Dear ImGui сюда не включены. Исходников закр�
    - repair/src/visual_jump.h
    - repair/src/visual_accessory.h
    - repair/src/katana_mesh.h
+   - repair/tests/katana_evidence.cpp
+   - repair/src/katana_evidence.h
    - repair/tests/katana_stream_policy.cpp
    - repair/src/katana_stream_policy.h
    - repair/tests/china_hat_runtime.cpp
@@ -838,8 +840,12 @@ static void drawVisualPanel() {
                 int ks=KatanaStatus();
                 realText(ks==1?"Katana: GPU draw submitted":ks==2?"Katana: draw unavailable; original kept":
                     ks==9?"Katana: local player not matched":ks==10?"Katana: sword not matched":
-                    ks==11?"Katana: waiting for draw path":ks==12?"Katana: geometry prepared":
+                    ks==11?"Katana: sword candidate":ks==12?"Katana: geometry prepared":
                     ks==13?"Katana: stream unavailable; original kept":"Katana: waiting for held diamond sword",nullptr);
+                const auto e=KatanaEvidence();
+                char line[96]{};
+                std::snprintf(line,sizeof(line),"Seen F:%u V:%u S1:%u S3:%u",unsigned(!!(e&1)),unsigned(!!(e&2)),unsigned(!!(e&4)),unsigned(!!(e&8))); realText(line,nullptr);
+                std::snprintf(line,sizeof(line),"R:%u B:%u C:%u D:%u",unsigned(!!(e&16)),unsigned(!!(e&32)),unsigned(!!(e&64)),unsigned(!!(e&128))); realText(line,nullptr);
             } else {
                 const int ks=KatanaStatus();
                 if (ks>=3) realText(ks==3?"Katana: game hooks unavailable":ks==4?"Katana: GPU hooks unavailable":
@@ -2361,6 +2367,7 @@ struct Settings {
 #include "katana_asset.h"
 #include "katana_geometry.h"
 #include "katana_stream_policy.h"
+#include "katana_evidence.h"
 #include "diamond_sword_candidate.h"
 #include "china_hat_player.h"
 #include "visual_hooks.h"
@@ -2403,6 +2410,7 @@ std::atomic<bool> accessoryEnabled{false};
 // Experimental, first-person only, disabled on every startup.
 std::atomic<bool> katanaEnabled{false};
 std::atomic<int> katanaStatus{0};
+std::atomic<std::uint32_t> katanaEvents{0};
 std::atomic<ULONGLONG> lastKatanaSubmit{0};
 std::atomic<int> katanaHookState{0}, katanaHookFailure{8};
 using HeldRender=std::uintptr_t (*)(void*,void*,void*,std::uintptr_t,float,std::uint8_t,std::uint8_t);
@@ -2972,10 +2980,12 @@ std::uintptr_t heldGeometryHook(void* self,void* a2,void* a3,void* stack,int a5)
  auto memory=[](std::uintptr_t address,void* out,std::size_t n) { return read(address,out,n); };
  if (!diamond_sword_candidate::matches(base,reinterpret_cast<std::uintptr_t>(stack),memory))
   return originalHeldGeometry(self,a2,a3,stack,a5);
+ katanaEvents.fetch_or(returnAddress==base+0x59fcbf ? katana_evidence::firstStream : katana_evidence::thirdStream,std::memory_order_relaxed);
  auto* ctx=sameThreadContext();
  const bool ready=ctx && visual_gpu_depth::matches(ctx) && prepareKatanaStream();
  if(ctx) ctx->Release();
- if (!ready) { katanaStatus.store(13,std::memory_order_relaxed); return originalHeldGeometry(self,a2,a3,stack,a5); }
+ if (!ready) { katanaEvents.fetch_or(katana_evidence::blocked,std::memory_order_relaxed); katanaStatus.store(13,std::memory_order_relaxed); return originalHeldGeometry(self,a2,a3,stack,a5); }
+ katanaEvents.fetch_or(katana_evidence::prepared,std::memory_order_relaxed);
  katanaStatus.store(12,std::memory_order_relaxed); return 0;
 }
 
@@ -2983,6 +2993,7 @@ std::uintptr_t heldDrawHook(void* renderer,void* context,std::uint8_t mode) {
  auto returnAddress=reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));
  if (!katanaScope || returnAddress!=base+0x59fd1e || !katanaEnabled.load(std::memory_order_acquire))
   return originalHeldDraw(renderer,context,mode);
+ katanaEvents.fetch_or(katana_evidence::cachedCall,std::memory_order_relaxed);
  auto* ctx=sameThreadContext();
  if (!ctx || !visual_gpu_depth::matches(ctx)) { if(ctx)ctx->Release(); katanaStatus.store(2,std::memory_order_relaxed); return originalHeldDraw(renderer,context,mode); }
  const bool submitted=submitKatana(ctx);
@@ -2995,7 +3006,7 @@ std::uintptr_t heldDrawHook(void* renderer,void* context,std::uint8_t mode) {
  visual_gpu_depth::katanaSuppress=ctx;
  const auto result=originalHeldDraw(renderer,context,mode);
  visual_gpu_depth::katanaSuppress=nullptr;
- ctx->Release(); lastKatanaSubmit.store(GetTickCount64(),std::memory_order_relaxed); katanaStatus.store(1,std::memory_order_relaxed);
+ ctx->Release(); katanaEvents.fetch_or(katana_evidence::submitted,std::memory_order_relaxed); lastKatanaSubmit.store(GetTickCount64(),std::memory_order_relaxed); katanaStatus.store(1,std::memory_order_relaxed);
  return result;
 }
 std::uintptr_t heldRenderHook(void* self,void* actor,void* stack,std::uintptr_t a4,float a5,std::uint8_t a6,std::uint8_t a7) {
@@ -3010,7 +3021,10 @@ std::uintptr_t heldRenderHook(void* self,void* actor,void* stack,std::uintptr_t 
  if (!diamond_sword_candidate::matches(base,reinterpret_cast<std::uintptr_t>(stack),memory)) {
   katanaStatus.store(10,std::memory_order_relaxed); return originalHeldRender(self,actor,stack,a4,a5,a6,a7);
  }
- katanaStatus.store(11,std::memory_order_relaxed); // Matching candidate; wait for its draw branch.
+ std::uint8_t stackByte=0;
+ const bool stackNonzero=fetch(reinterpret_cast<std::uintptr_t>(stack),stackByte) && stackByte!=0;
+ katanaEvents.fetch_or(katana_evidence::addFirst(0,stackNonzero),std::memory_order_relaxed);
+ katanaStatus.store(11,std::memory_order_relaxed); // Candidate only, not evidence that a later path did not run.
  struct Scope { Scope(){katanaScope=true;} ~Scope(){katanaScope=false;} } scope;
  return originalHeldRender(self,actor,stack,a4,a5,a6,a7);
 }
@@ -3239,14 +3253,15 @@ bool enableVisual() {
 }
 }
 bool KatanaEnabled() { return katanaEnabled.load(std::memory_order_acquire); }
+std::uint32_t KatanaEvidence() { return katanaEvents.load(std::memory_order_relaxed); }
 int KatanaStatus() {
  const int status=katanaStatus.load(std::memory_order_relaxed);
  const auto now=GetTickCount64(), then=lastKatanaSubmit.load(std::memory_order_relaxed);
  return status==1 && (!then || now<then || now-then>1000) ? 0 : status;
 }
 void SetKatanaEnabled(bool value) {
- if (!value) { katanaEnabled.store(false,std::memory_order_release); katanaStatus.store(0,std::memory_order_relaxed); return; }
- katanaStatus.store(0,std::memory_order_relaxed);
+ if (!value) { katanaEnabled.store(false,std::memory_order_release); katanaStatus.store(0,std::memory_order_relaxed); katanaEvents.store(0,std::memory_order_relaxed); return; }
+ katanaEvents.store(0,std::memory_order_relaxed); katanaStatus.store(0,std::memory_order_relaxed);
  if (!enableVisual()) { katanaStatus.store(3,std::memory_order_relaxed); return; }
  if (!gpuHooksReady.load(std::memory_order_acquire)) { katanaStatus.store(4,std::memory_order_relaxed); return; }
  int state=katanaHookState.load(std::memory_order_acquire);
@@ -3403,6 +3418,7 @@ void SetVisualTintEnabled(bool enabled);
 bool KatanaEnabled();
 void SetKatanaEnabled(bool enabled);
 int KatanaStatus();
+std::uint32_t KatanaEvidence();
 // Separate built-in, opt-in test accessory, not an external model loader.
 bool AccessoryEnabled();
 void SetAccessoryEnabled(bool enabled);
@@ -14011,12 +14027,15 @@ assert 'katanaObserve=ctx' in n and 'katanaSuppress=ctx' in n and 'katanaSuppres
 assert 'if (ctx && ctx==katanaSuppress) return;' in g
 assert 'Diamond sword: katana (test)' in ui
 assert 'SetKatanaEnabled(false);' in ui
-for message in ('local player not matched','sword not matched','waiting for draw path','geometry prepared','stream unavailable'): assert message in ui
+for message in ('local player not matched','sword not matched','sword candidate','geometry prepared','stream unavailable'): assert message in ui
 print('Embedded model and first-person opt-in wiring OK; no Windows/game validation')
 
 assert 'katana_stream_policy::eligible' in n and 'prepareKatanaStream()' in n
 assert 'return originalHeldGeometry(self,a2,a3,stack,a5)' in n
 assert 'streaming!=1 || !tessIdle(t)' in n
+
+assert 'katanaEvents.fetch_or' in n and 'KatanaEvidence()' in ui
+assert 'Seen F:%u V:%u S1:%u S3:%u' in ui
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_katana_integration.py
 ================================================================================
@@ -14110,4 +14129,42 @@ int main() {
 }
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/katana_stream_policy.cpp
+================================================================================
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/katana_evidence.h
+================================================================================
+#pragma once
+#include <cstdint>
+namespace katana_evidence {
+// Session aggregate, not a per-frame rendering result or proof of visibility.
+enum : std::uint32_t {
+ firstMatch=1u, firstNonzero=2u, firstStream=4u, thirdStream=8u,
+ prepared=16u, blocked=32u, cachedCall=64u, submitted=128u
+};
+inline std::uint32_t addFirst(std::uint32_t current,bool nonzero) {
+ return current | firstMatch | (nonzero?firstNonzero:0u);
+}
+}
+================================================================================
+КОНЕЦ ФАЙЛА: repair/src/katana_evidence.h
+================================================================================
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/katana_evidence.cpp
+================================================================================
+#include "../src/katana_evidence.h"
+#include <cassert>
+using namespace katana_evidence;
+int main() {
+ std::uint32_t bits=0;
+ bits=addFirst(bits,false); assert(bits==firstMatch);
+ bits|=firstStream|prepared; bits=addFirst(bits,false);
+ assert((bits & (firstMatch|firstStream|prepared))==(firstMatch|firstStream|prepared));
+ bits=addFirst(bits,true); assert(bits & firstNonzero);
+ bits|=thirdStream|blocked|cachedCall|submitted;
+ assert(bits==255);
+}
+================================================================================
+КОНЕЦ ФАЙЛА: repair/tests/katana_evidence.cpp
 ================================================================================

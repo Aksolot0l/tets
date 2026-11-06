@@ -13,6 +13,7 @@
 #include "katana_asset.h"
 #include "katana_geometry.h"
 #include "katana_stream_policy.h"
+#include "katana_evidence.h"
 #include "diamond_sword_candidate.h"
 #include "china_hat_player.h"
 #include "visual_hooks.h"
@@ -55,6 +56,7 @@ std::atomic<bool> accessoryEnabled{false};
 // Experimental, first-person only, disabled on every startup.
 std::atomic<bool> katanaEnabled{false};
 std::atomic<int> katanaStatus{0};
+std::atomic<std::uint32_t> katanaEvents{0};
 std::atomic<ULONGLONG> lastKatanaSubmit{0};
 std::atomic<int> katanaHookState{0}, katanaHookFailure{8};
 using HeldRender=std::uintptr_t (*)(void*,void*,void*,std::uintptr_t,float,std::uint8_t,std::uint8_t);
@@ -624,10 +626,12 @@ std::uintptr_t heldGeometryHook(void* self,void* a2,void* a3,void* stack,int a5)
  auto memory=[](std::uintptr_t address,void* out,std::size_t n) { return read(address,out,n); };
  if (!diamond_sword_candidate::matches(base,reinterpret_cast<std::uintptr_t>(stack),memory))
   return originalHeldGeometry(self,a2,a3,stack,a5);
+ katanaEvents.fetch_or(returnAddress==base+0x59fcbf ? katana_evidence::firstStream : katana_evidence::thirdStream,std::memory_order_relaxed);
  auto* ctx=sameThreadContext();
  const bool ready=ctx && visual_gpu_depth::matches(ctx) && prepareKatanaStream();
  if(ctx) ctx->Release();
- if (!ready) { katanaStatus.store(13,std::memory_order_relaxed); return originalHeldGeometry(self,a2,a3,stack,a5); }
+ if (!ready) { katanaEvents.fetch_or(katana_evidence::blocked,std::memory_order_relaxed); katanaStatus.store(13,std::memory_order_relaxed); return originalHeldGeometry(self,a2,a3,stack,a5); }
+ katanaEvents.fetch_or(katana_evidence::prepared,std::memory_order_relaxed);
  katanaStatus.store(12,std::memory_order_relaxed); return 0;
 }
 
@@ -635,6 +639,7 @@ std::uintptr_t heldDrawHook(void* renderer,void* context,std::uint8_t mode) {
  auto returnAddress=reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));
  if (!katanaScope || returnAddress!=base+0x59fd1e || !katanaEnabled.load(std::memory_order_acquire))
   return originalHeldDraw(renderer,context,mode);
+ katanaEvents.fetch_or(katana_evidence::cachedCall,std::memory_order_relaxed);
  auto* ctx=sameThreadContext();
  if (!ctx || !visual_gpu_depth::matches(ctx)) { if(ctx)ctx->Release(); katanaStatus.store(2,std::memory_order_relaxed); return originalHeldDraw(renderer,context,mode); }
  const bool submitted=submitKatana(ctx);
@@ -647,7 +652,7 @@ std::uintptr_t heldDrawHook(void* renderer,void* context,std::uint8_t mode) {
  visual_gpu_depth::katanaSuppress=ctx;
  const auto result=originalHeldDraw(renderer,context,mode);
  visual_gpu_depth::katanaSuppress=nullptr;
- ctx->Release(); lastKatanaSubmit.store(GetTickCount64(),std::memory_order_relaxed); katanaStatus.store(1,std::memory_order_relaxed);
+ ctx->Release(); katanaEvents.fetch_or(katana_evidence::submitted,std::memory_order_relaxed); lastKatanaSubmit.store(GetTickCount64(),std::memory_order_relaxed); katanaStatus.store(1,std::memory_order_relaxed);
  return result;
 }
 std::uintptr_t heldRenderHook(void* self,void* actor,void* stack,std::uintptr_t a4,float a5,std::uint8_t a6,std::uint8_t a7) {
@@ -662,7 +667,10 @@ std::uintptr_t heldRenderHook(void* self,void* actor,void* stack,std::uintptr_t 
  if (!diamond_sword_candidate::matches(base,reinterpret_cast<std::uintptr_t>(stack),memory)) {
   katanaStatus.store(10,std::memory_order_relaxed); return originalHeldRender(self,actor,stack,a4,a5,a6,a7);
  }
- katanaStatus.store(11,std::memory_order_relaxed); // Matching candidate; wait for its draw branch.
+ std::uint8_t stackByte=0;
+ const bool stackNonzero=fetch(reinterpret_cast<std::uintptr_t>(stack),stackByte) && stackByte!=0;
+ katanaEvents.fetch_or(katana_evidence::addFirst(0,stackNonzero),std::memory_order_relaxed);
+ katanaStatus.store(11,std::memory_order_relaxed); // Candidate only, not evidence that a later path did not run.
  struct Scope { Scope(){katanaScope=true;} ~Scope(){katanaScope=false;} } scope;
  return originalHeldRender(self,actor,stack,a4,a5,a6,a7);
 }
@@ -891,14 +899,15 @@ bool enableVisual() {
 }
 }
 bool KatanaEnabled() { return katanaEnabled.load(std::memory_order_acquire); }
+std::uint32_t KatanaEvidence() { return katanaEvents.load(std::memory_order_relaxed); }
 int KatanaStatus() {
  const int status=katanaStatus.load(std::memory_order_relaxed);
  const auto now=GetTickCount64(), then=lastKatanaSubmit.load(std::memory_order_relaxed);
  return status==1 && (!then || now<then || now-then>1000) ? 0 : status;
 }
 void SetKatanaEnabled(bool value) {
- if (!value) { katanaEnabled.store(false,std::memory_order_release); katanaStatus.store(0,std::memory_order_relaxed); return; }
- katanaStatus.store(0,std::memory_order_relaxed);
+ if (!value) { katanaEnabled.store(false,std::memory_order_release); katanaStatus.store(0,std::memory_order_relaxed); katanaEvents.store(0,std::memory_order_relaxed); return; }
+ katanaEvents.store(0,std::memory_order_relaxed); katanaStatus.store(0,std::memory_order_relaxed);
  if (!enableVisual()) { katanaStatus.store(3,std::memory_order_relaxed); return; }
  if (!gpuHooksReady.load(std::memory_order_acquire)) { katanaStatus.store(4,std::memory_order_relaxed); return; }
  int state=katanaHookState.load(std::memory_order_acquire);

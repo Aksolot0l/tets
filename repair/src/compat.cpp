@@ -579,8 +579,12 @@ static void drawVisualPanel() {
                 int ks=KatanaStatus();
                 realText(ks==1?"Katana: GPU draw submitted":ks==2?"Katana: draw unavailable; original kept":
                     ks==9?"Katana: local player not matched":ks==10?"Katana: sword not matched":
-                    ks==11?"Katana: waiting for draw path":ks==12?"Katana: geometry prepared":
+                    ks==11?"Katana: sword candidate":ks==12?"Katana: geometry prepared":
                     ks==13?"Katana: stream unavailable; original kept":"Katana: waiting for held diamond sword",nullptr);
+                const auto e=KatanaEvidence();
+                char line[96]{};
+                std::snprintf(line,sizeof(line),"Seen F:%u V:%u S1:%u S3:%u",unsigned(!!(e&1)),unsigned(!!(e&2)),unsigned(!!(e&4)),unsigned(!!(e&8))); realText(line,nullptr);
+                std::snprintf(line,sizeof(line),"R:%u B:%u C:%u D:%u",unsigned(!!(e&16)),unsigned(!!(e&32)),unsigned(!!(e&64)),unsigned(!!(e&128))); realText(line,nullptr);
             } else {
                 const int ks=KatanaStatus();
                 if (ks>=3) realText(ks==3?"Katana: game hooks unavailable":ks==4?"Katana: GPU hooks unavailable":

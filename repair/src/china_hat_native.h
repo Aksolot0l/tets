@@ -42,6 +42,7 @@ void SetVisualTintEnabled(bool enabled);
 bool KatanaEnabled();
 void SetKatanaEnabled(bool enabled);
 int KatanaStatus();
+std::uint32_t KatanaEvidence();
 // Separate built-in, opt-in test accessory, not an external model loader.
 bool AccessoryEnabled();
 void SetAccessoryEnabled(bool enabled);
