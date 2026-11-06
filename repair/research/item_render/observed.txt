@@ -1,0 +1,18 @@
+Minecraft Windows 10 Edition 1.1.5, user-supplied ITEM_RENDER_DIAG.txt.
+EXE SHA256: 2883b72a3579d95bfec73330c5e06f2463253b7ca530dd59f50885a71a724732
+
+This is an offline file scan, not runtime data. Candidate RTTI names:
+  ItemInHandRenderer substring RVA 0x0186352c
+  ItemRenderer substring RVA 0x01862c94 (also other substrings)
+The string diamond_sword is at RVA 0x011eab78. A code reference at
+0x00aa8d14 is inside a function beginning at 0x00aa8ce0 that passes this
+string to a constructor/helper and stores a returned pointer in an indexed
+global table. It looks like item registration; no rendering semantics, item
+identity ABI, calling convention or safe interception point are proven.
+The iteminhand strings at 0x011e8a40 are referenced from code around
+0x00a32ae3 and 0x00a32d1b, likely name/data lookup, but this is unverified.
+
+Do not hook, replace, suppress, or replay any draw on the basis of these
+strings and candidate windows. Follow-up RTTI file scan may identify vtables
+and candidate method bodies, but only targeted runtime observation can establish
+whether a function corresponds to held items and which stack is a diamond sword.
