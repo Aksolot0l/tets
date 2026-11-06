@@ -16,15 +16,16 @@ https://github.com/WinsentShame/Zodiak/tree/d2fcb0ffd4f8ada69ca4d84a83d3f546b300
 older wireframe build in game. After a subsequent surface/depth/trail update
 caused both effects to disappear for the user, this build restores the old
 wireframe draw sequence (with an optional vertical offset) and separates the
-experimental trail into its own batch. The failed surface and depth changes
-are disabled; actual head-bone attachment and correct occlusion are not done.
-Both options are opt-in, and the revised build still requires testing on Windows.
+experimental trail into its own batch. That earlier surface/depth attempt was
+removed. New optional surface batches are documented below; no forced depth
+state is used. Actual head-bone attachment and correct occlusion are not done.
+Both effects are opt-in, and new changes still require testing on Windows.
 A subsequent user screenshot showed the old coordinate chain identifying an
 unrelated character on a server. The visual effects no longer use that chain:
 they read the candidate local-player slot of a recently observed client
 instance. A candidate 1.1.5 tick entry point is hooked only on opt-in, with
 file/memory code comparison, exact executable hash gate and rollback. The tick
-ABI and local slot still require in-game verification. The standalone coordinates
+ABI and local slot have an initial user confirmation but are not fully validated. The standalone coordinates
 experiment is separate and can still use the old, potentially nonlocal path.
 
 The path is restricted to the exact user-observed SHA-256, PE timestamp and
@@ -42,11 +43,16 @@ means the code called the game renderer; it does not prove visible output.
 Del disables both features and the overlay; the adapter remains loaded until
 exit. Hooks are installed only after one of these features is enabled.
 The user confirmed that the local-player identification, hat, and simple
-trail work, but they appear white. `Color tint (test)` is a separate opt-in
-material-uniform experiment (green hat, cyan trail); the previous white uniform
-is used unchanged when off, and the saved shader color/flag are restored.
-The game material might ignore this uniform, so color output is unverified.
-No new depth state, filled geometry or trail geometry has been introduced.
+trail work, including green/cyan material tint. The hat now has a small
+frame-rate-independent bob. `Hat fill (test)` and `Trail fill (test)` are
+separate, off-by-default candidate triangle batches added after the confirmed
+line batches, with an idle-tessellator recheck and shader-state restoration.
+The trail surface is roughly 80% of the observed player height. Candidate
+mode 2 and these batches are not verified on this game build: they may be
+invisible, corrupt rendering, or crash. No new depth or blending state is
+assumed; opacity and correct occlusion are not guaranteed. The line-mode
+fallback remains available by unchecking the fill settings. The new behavior
+requires Windows/game testing.
 
 `DIAG_RENDER.ps1` is optional, read-only research. It prints the game EXE hash
 (if Windows permits access), PE timestamp/size, and 16 machine-code bytes from

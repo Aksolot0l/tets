@@ -25,18 +25,29 @@ assert 'China Hat (test)' in u and 'SetChinaHatEnabled(false)' in u
 assert 'Trail (test)' in u and 'SetTrailEnabled(false)' in u
 assert 'Hat height' in u and 'Hat: submitted' in u and 'Trail: submitted' in u
 assert 'CaptureVisualContext' not in u and 'DepthScope' not in n
-assert 'OMSetDepthStencilState' not in n and 'tessBegin(t,2,' not in n
+assert 'OMSetDepthStencilState' not in n
 assert 'trailGeneration' in n and 'trail.clear()' in n
 assert 'tessBegin(t,4,segments*2)' in n
 hat=n[n.index('void renderHat('):n.index('void renderTrail(')]
 assert 'visual_color::material(materialTint.load' in hat and 'visual_color::Effect::Hat' in hat
 assert 'Color tint (test)' in u and 'materialTint{false}' in n
+assert 'Hat fill (test)' in u and 'Trail fill (test)' in u
+assert 'hatFill{false}, trailFill{false}' in n
 trail=n[n.index('void renderTrail('):n.index('void screenHook(')]
 assert 'visual_color::Effect::Trail' in trail
 assert 'saved,sizeof(saved)' in hat and 'saved,sizeof(saved)' in trail
 assert 'constexpr int segments=48, spokes=12' in hat
 assert 'tessBegin(t,4,2*(segments+spokes))' in hat and 'china_hat::emitWireframe' in hat
 assert hat.index('tessDraw(') < hat.index('tessEnd(')
+assert 'hat_animation::bob(' in hat
+assert 'if (hatFill.load(std::memory_order_acquire) && tessIdle(tess))' in hat
+assert 'if (trailFill.load(std::memory_order_acquire) && tessIdle(tess))' in trail
+assert hat.index('tessBegin(t,4,') < hat.index('tessBegin(t,2,')
+assert trail.index('tessBegin(t,4,') < trail.index('tessBegin(t,2,')
+assert 'std::clamp(player.height*0.8f,0.65f,1.6f)' in trail
+assert 'visual_ribbon::segment' in trail and 'segments*12' in trail
+assert hat.index('surfaceScratch') < hat.rindex('saved,sizeof(saved)')
+assert trail.index('ribbonScratch') < trail.rindex('saved,sizeof(saved)')
 screen=n[n.index('void screenHook('):n.index('bool ChinaHatAvailable()')]
 assert screen.index('renderHat(visible)') < screen.index('renderTrail(local)')
 assert u.index('InitializeChinaHat(mhCreate') > u.index('mhApply())')

@@ -11,6 +11,8 @@
 #include "china_hat_player.h"
 #include "visual_hooks.h"
 #include "visual_color.h"
+#include "visual_ribbon.h"
+#include "hat_animation.h"
 #include <bcrypt.h>
 #include <atomic>
 #include <cstdint>
@@ -32,7 +34,7 @@ constexpr std::uint32_t playerRva=0x581910, screenRva=0x3528c0, clientTickRva=0x
 constexpr std::uint32_t originRva=0x19436e8, tessRva=0x1925550, contextRva=0x1913b40,
  shaderColorRva=0x192ae08, shaderFlagRva=0x192ae18;
 std::atomic<bool> available{false}, enabled{false};
-std::atomic<bool> trailEnabled{false}, materialTint{false};
+std::atomic<bool> trailEnabled{false}, materialTint{false}, hatFill{false}, trailFill{false};
 std::atomic<float> heightOffset{0.0f};
 std::atomic<unsigned> trailGeneration{0};
 thread_local visual_trail::History trail;
@@ -80,6 +82,13 @@ bool writable(std::uintptr_t p, std::size_t n) {
  if (prot!=PAGE_READWRITE && prot!=PAGE_WRITECOPY && prot!=PAGE_EXECUTE_READWRITE && prot!=PAGE_EXECUTE_WRITECOPY) return false;
  std::uintptr_t end=reinterpret_cast<std::uintptr_t>(m.BaseAddress)+m.RegionSize;
  return p<=end && n<=end-p;
+}
+// Check again after a draw/end before an optional second tessellator batch.
+bool tessIdle(std::uintptr_t tess) {
+ std::uint8_t state[0x178]{};
+ if (!read(tess,state,sizeof(state)) || !writable(tess,sizeof(state))) return false;
+ std::int32_t pending=0; std::memcpy(&pending,state+0x168,sizeof(pending));
+ return !state[0x125] && !state[0x170] && !pending;
 }
 struct BCryptApi {
  using Algorithm=BCRYPT_ALG_HANDLE;
@@ -221,7 +230,7 @@ void renderHat(const PlayerFrame& player) {
  std::int32_t pending=0; std::memcpy(&pending,state+0x168,sizeof(pending));
  if (state[0x125] || state[0x170] || pending) return;
  for (float v:origin) if (!std::isfinite(v)) return;
- china_hat::Point head{player.world.x-origin[0],player.world.y-origin[1]-1.62f+player.height+0.03f+heightOffset.load(std::memory_order_relaxed),player.world.z-origin[2]};
+ china_hat::Point head{player.world.x-origin[0],player.world.y-origin[1]-1.62f+player.height+0.03f+heightOffset.load(std::memory_order_relaxed)+hat_animation::bob(GetTickCount64()),player.world.z-origin[2]};
  if (std::fabs(head.x)>16 || std::fabs(head.y)>16 || std::fabs(head.z)>16) return;
  china_hat::Mesh mesh{};
  if (!china_hat::build(mesh,head,.58f,.34f,48,static_cast<float>(GetTickCount64()%8000)/8000.0f,255)) return;
@@ -241,6 +250,16 @@ void renderHat(const PlayerFrame& player) {
  // A zeroed, aligned output slot is provided as required by the native ABI.
  alignas(16) std::uint8_t scratch[0x200]{};
  tessEnd(t,scratch,0,0);
+ if (hatFill.load(std::memory_order_acquire) && tessIdle(tess)) {
+  // The prior batch may have consumed the game's shader-color dirty flag.
+  std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
+  // Candidate triangle-list mode, not yet confirmed for the user's build.
+  // Keep the proven wireframe as the first, separate batch.
+  tessBegin(t,2,static_cast<int>(mesh.triangleVertices*2));
+  china_hat::emitDoubleSidedSurface(mesh,vertex);
+  tessDraw(t,reinterpret_cast<void*>(base+contextRva),0);
+  alignas(16) std::uint8_t surfaceScratch[0x200]{}; tessEnd(t,surfaceScratch,0,0);
+ }
  std::memcpy(reinterpret_cast<void*>(color),saved,sizeof(saved)); *reinterpret_cast<std::uint8_t*>(flag)=oldFlag;
 }
 
@@ -285,6 +304,17 @@ void renderTrail(const PlayerFrame& player) {
  lastTrailSubmit.store(GetTickCount64(),std::memory_order_relaxed);
  trailStatus.store(1,std::memory_order_relaxed);
  alignas(16) std::uint8_t scratch[0x200]{}; tessEnd(t,scratch,0,0);
+ if (trailFill.load(std::memory_order_acquire) && tessIdle(tess)) {
+  std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
+  // 12 vertices per segment: two triangles, each drawn in both directions.
+  // Screen/material state and transparency remain controlled by the game.
+  float height=std::clamp(player.height*0.8f,0.65f,1.6f);
+  tessBegin(t,2,segments*12);
+  for (std::size_t i=1;i<trail.size();++i)
+   if (valid[i] && valid[i-1]) visual_ribbon::segment(points[i-1],points[i],height,vertex);
+  tessDraw(t,reinterpret_cast<void*>(base+contextRva),0);
+  alignas(16) std::uint8_t ribbonScratch[0x200]{}; tessEnd(t,ribbonScratch,0,0);
+ }
  std::memcpy(reinterpret_cast<void*>(color),saved,sizeof(saved)); *reinterpret_cast<std::uint8_t*>(flag)=oldFlag;
 }
 void screenHook(void* self,void* ctx) {
@@ -349,6 +379,10 @@ void SetChinaHatEnabled(bool value) {
  hatStatus.store(0,std::memory_order_relaxed);
  if (enableVisual()) enabled.store(true,std::memory_order_release);
 }
+bool HatFillEnabled() { return hatFill.load(std::memory_order_acquire); }
+void SetHatFillEnabled(bool value) { hatFill.store(value,std::memory_order_release); }
+bool TrailFillEnabled() { return trailFill.load(std::memory_order_acquire); }
+void SetTrailFillEnabled(bool value) { trailFill.store(value,std::memory_order_release); }
 bool VisualTintEnabled() { return materialTint.load(std::memory_order_acquire); }
 void SetVisualTintEnabled(bool value) { materialTint.store(value,std::memory_order_release); }
 bool TrailEnabled() { return trailEnabled.load(std::memory_order_acquire); }

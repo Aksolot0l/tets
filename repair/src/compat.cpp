@@ -248,6 +248,8 @@ static void patchedDrawGui(void* runtime) {
             bool hat = ChinaHatEnabled();
             if (guiCheckbox("China Hat (test)", &hat)) SetChinaHatEnabled(hat);
             if (hat && ChinaHatEnabled()) {
+                bool fill=HatFillEnabled();
+                if (guiCheckbox("Hat fill (test)", &fill)) SetHatFillEnabled(fill);
                 if (guiSliderFloat) {
                     float height=ChinaHatHeight();
                     if (guiSliderFloat("Hat height", &height, -0.2f, 0.4f, "%.2f", 0)) SetChinaHatHeight(height);
@@ -260,6 +262,8 @@ static void patchedDrawGui(void* runtime) {
             bool trail=TrailEnabled();
             if (guiCheckbox("Trail (test)", &trail)) SetTrailEnabled(trail);
             if (trail && TrailEnabled()) {
+                bool fill=TrailFillEnabled();
+                if (guiCheckbox("Trail fill (test)", &fill)) SetTrailFillEnabled(fill);
                 const int status=TrailStatus();
                 realText(status==1 ? "Trail: submitted" : status==2 ? "Trail: renderer not ready" : "Trail: move to create trail",nullptr);
             }

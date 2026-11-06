@@ -12,6 +12,10 @@ bool ChinaHatEnabled();
 void SetChinaHatEnabled(bool enabled);
 
 // Visuals are independent switches and use the same validated game hooks.
+bool HatFillEnabled();
+void SetHatFillEnabled(bool enabled);
+bool TrailFillEnabled();
+void SetTrailFillEnabled(bool enabled);
 bool VisualTintEnabled();
 void SetVisualTintEnabled(bool enabled);
 bool TrailEnabled();
