@@ -126,3 +126,22 @@ draw hook reached; D = cached custom GPU submission observed. They do not prove
 which events were in one frame, visible pixels, good placement, correct material,
 or that the original remains visible. Clearing the switch resets the flags.
 No rendering fix is claimed by this change. Windows runtime still unavailable.
+
+User screenshots after diagnostic build: image-43/image-45 show F:1 V:1 S1:0
+S3:0 R:0 B:0 C:1 D:1. This establishes that, at least once since enabling,
+the matching first-person cached hook ran, its own tessellator draw generated
+an observed D3D draw, and the code proceeded to suppress the original held-item
+GPU calls. It does not establish visible pixels or a correct material, pose,
+vertex layout, texture, and shader. User reports nothing visible in first person.
+In image-44 the normal diamond sword is visible in third person. The evidence
+screenshot appears before the third-person screenshot, so S3:0 cannot establish
+that the third-person streaming path was absent after switching view.
+
+Static follow-up: cached submitKatana() issues its tessDraw before calling the
+original 0x59f200 method; the latter selects item resources and invokes one of
+0x7308c0/0x730cd0/0x730bd0. Whether those calls bind material/shader/mesh is
+unconfirmed, but this ordering is a concrete reason the custom draw may not have
+the item's draw state. Also the third-person cached call returns at 0x56cd8e,
+which heldDrawHook currently excludes; no runtime proof of the exact third-person
+path yet. Do not suppress vanilla based on an observed Draw alone as if visibility
+was verified. No fix or Windows validation is claimed.
