@@ -21,5 +21,5 @@ assert 'sampleOutputMerger(depthBefore)' in n and 'sampleOutputMerger(depthAfter
 assert 'OMGetDepthStencilState' in n and 'OMGetBlendState' in n
 assert 'OMSetDepthStencilState' not in n and 'OMSetBlendState' not in n
 assert (r/'HUD_PREVIEW.png').read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
-assert (r/'HUD_VISUAL_GUIDE.txt').exists()
+assert (r/'HUD_ALL_IN_ONE.txt').exists()
 print('HUD, gradient and read-only depth diagnostics: static checks OK; Windows test required')
