@@ -43,6 +43,10 @@ SDK и Dear ImGui сюда не включены. Исходников закр�
    - repair/src/visual_jump.h
    - repair/src/visual_accessory.h
    - repair/src/katana_mesh.h
+   - repair/src/katana_geometry.h
+   - repair/src/diamond_sword_candidate.h
+   - repair/tests/katana_geometry.cpp
+   - repair/tests/diamond_sword_candidate.cpp
    - repair/tools/convert_katana.py
    - repair/tests/katana_mesh.cpp
    - repair/tests/check_katana_converter.py
@@ -6498,4 +6502,173 @@ else: raise AssertionError('scaled matrix unexpectedly accepted')
 print('Katana conversion: 4572 vertices, 2622 triangles, 5 colors; no game integration')
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_katana_converter.py
+================================================================================
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/katana_geometry.h
+================================================================================
+#pragma once
+#include "katana_mesh.h"
+#include <cmath>
+#include <cstdint>
+
+// CPU-only triangle expansion. This does not access Minecraft or issue draws.
+// GCM1 is in the model's source coordinates. The supplied pivot/axes/scale
+// map those coordinates into the caller's space; their game values are unknown.
+namespace katana_geometry {
+struct Vec3 { float x=0,y=0,z=0; };
+struct Pose {
+ Vec3 origin{}, pivot{};
+ Vec3 x{1,0,0}, y{0,1,0}, z{0,0,1};
+ float scale=1;
+};
+struct ColoredVertex { Vec3 position; float rgba[4]{}; };
+inline bool finite(Vec3 v) {
+ return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z) &&
+        std::fabs(v.x)<=1000000.f && std::fabs(v.y)<=1000000.f && std::fabs(v.z)<=1000000.f;
+}
+inline Vec3 apply(const Pose& p,const float* v) {
+ const float x=(v[0]-p.pivot.x)*p.scale, y=(v[1]-p.pivot.y)*p.scale, z=(v[2]-p.pivot.z)*p.scale;
+ return {p.origin.x+p.x.x*x+p.y.x*y+p.z.x*z,
+         p.origin.y+p.x.y*x+p.y.y*y+p.z.y*z,
+         p.origin.z+p.x.z*x+p.y.z*y+p.z.z*z};
+}
+// Callback receives triangle vertices and raw glTF linear baseColor factors.
+// With immutable backing bytes, all inputs are checked before the first callback.
+template<class Emit> bool triangles(const katana_mesh::View& mesh,const Pose& pose,bool doubleSided,Emit emit) {
+ if (!mesh.vertices() || !mesh.indices() || !mesh.groups() || !finite(pose.origin) || !finite(pose.pivot) ||
+     !finite(pose.x) || !finite(pose.y) || !finite(pose.z) || !std::isfinite(pose.scale) || pose.scale<=0 || pose.scale>1000) return false;
+ const double det=double(pose.x.x)*(double(pose.y.y)*pose.z.z-double(pose.y.z)*pose.z.y)
+                 -double(pose.y.x)*(double(pose.x.y)*pose.z.z-double(pose.x.z)*pose.z.y)
+                 +double(pose.z.x)*(double(pose.x.y)*pose.y.z-double(pose.x.z)*pose.y.y);
+ if(!std::isfinite(det) || std::fabs(det)<1e-12) return false;
+ katana_mesh::Vertex vertex;
+ for (std::uint32_t i=0;i<mesh.vertices();++i) {
+  if (!mesh.vertex(i,vertex) || !finite(apply(pose,vertex.position))) return false;
+ }
+ for (std::uint32_t n=0;n<mesh.groups();++n) {
+  katana_mesh::Group group; if(!mesh.group(n,group)) return false;
+  for(std::uint32_t j=0;j<group.count;j+=3) {
+   ColoredVertex tri[3]{};
+   for(std::uint32_t k=0;k<3;++k) {
+    std::uint32_t index; if(!mesh.index(group.first+j+k,index) || !mesh.vertex(index,vertex)) return false;
+    tri[k].position=apply(pose,vertex.position);
+    for(int c=0;c<4;++c) tri[k].rgba[c]=group.color[c];
+   }
+   emit(tri[0]); emit(tri[1]); emit(tri[2]);
+   if(doubleSided) { emit(tri[2]); emit(tri[1]); emit(tri[0]); }
+  }
+ }
+ return true;
+}
+// Approximate grip center inferred from the supplied model's bounds. This is
+// NOT a proven Minecraft hand pose and must be calibrated in a safe test.
+inline Pose katanaLocalPose() {
+ Pose p; p.pivot={6.2f,2.6f,0.f}; p.x={0,-1,0}; p.y={1,0,0}; p.z={0,0,1}; p.scale=1.f/17.221883f; return p;
+}
+}
+================================================================================
+КОНЕЦ ФАЙЛА: repair/src/katana_geometry.h
+================================================================================
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/diamond_sword_candidate.h
+================================================================================
+#pragma once
+#include <cstdint>
+#include <limits>
+
+// Research-only identity candidate for the user's 1.1.5 executable. Not a
+// hook, not a memory reader, not enabled in the DLL. The caller supplies a
+// checked read function and must independently validate EXE identity/context.
+namespace diamond_sword_candidate {
+constexpr std::uintptr_t itemTableRva=0x190afa0;
+constexpr std::int16_t legacyId=276;
+template<class Read, class T> bool get(Read& read,std::uintptr_t base,std::uintptr_t offset,T& out) {
+ if(!base || offset>std::numeric_limits<std::uintptr_t>::max()-base) return false;
+ return read(base+offset,&out,sizeof(out));
+}
+// Requires the candidate stack's active flag, its item pointer, the candidate
+// short ID and agreement with the same table used by diamond-sword registration.
+// This is corroboration, not proof of the runtime ABI or drawing boundary.
+template<class Read> bool matches(std::uintptr_t module,std::uintptr_t stack,Read read) {
+ std::uint8_t active=0; std::uintptr_t item=0, registered=0; std::int16_t id=0;
+ if (!get(read,stack,4,active) || !active || !get(read,stack,0x10,item) || !item ||
+     !get(read,item,0x36,id) || id!=legacyId ||
+     !get(read,module,itemTableRva+std::uintptr_t(legacyId)*sizeof(std::uintptr_t),registered)) return false;
+ return registered!=0 && registered==item;
+}
+}
+================================================================================
+КОНЕЦ ФАЙЛА: repair/src/diamond_sword_candidate.h
+================================================================================
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/katana_geometry.cpp
+================================================================================
+#include "../src/katana_geometry.h"
+#include <cassert>
+#include <cmath>
+#include <cstring>
+#include <fstream>
+#include <iterator>
+#include <limits>
+#include <vector>
+using namespace katana_geometry;
+static void put32(std::vector<std::uint8_t>& b,std::size_t i,std::uint32_t n) { for(int k=0;k<4;++k)b[i+k]=static_cast<std::uint8_t>(n>>(k*8)); }
+static void putf(std::vector<std::uint8_t>& b,std::size_t i,float x) { std::uint32_t n; std::memcpy(&n,&x,4); put32(b,i,n); }
+int main(int argc,char**argv) {
+ std::vector<std::uint8_t> b(20+3*24+3*4+24); std::memcpy(b.data(),"GCM1",4);
+ put32(b,4,1); put32(b,8,3); put32(b,12,3); put32(b,16,1); putf(b,20+24,1); putf(b,20+48+4,1);
+ auto ix=20+72; put32(b,ix+4,1); put32(b,ix+8,2); auto gr=ix+12; put32(b,gr+4,3); putf(b,gr+8,0.25f); putf(b,gr+20,1);
+ katana_mesh::View m; assert(m.load(b.data(),b.size()));
+ std::vector<ColoredVertex> out; auto emit=[&](ColoredVertex v){ out.push_back(v); };
+ Pose p; p.origin={2,3,4}; p.scale=2;
+ assert(triangles(m,p,true,emit)); assert(out.size()==6); assert(out[1].position.x==4 && out[2].position.y==5);
+ assert(out[0].rgba[0]==.25f && out[0].rgba[3]==1); assert(out[3].position.y==out[2].position.y);
+ out.clear(); p.scale=std::numeric_limits<float>::infinity(); assert(!triangles(m,p,true,emit) && out.empty());
+ p.scale=1; p.origin.x=std::numeric_limits<float>::quiet_NaN(); assert(!triangles(m,p,true,emit) && out.empty());
+ p.origin.x=0; p.x={0,0,0}; assert(!triangles(m,p,true,emit) && out.empty());
+ if(argc>1) {
+  std::ifstream f(argv[1],std::ios::binary); assert(f);
+  std::vector<std::uint8_t> model((std::istreambuf_iterator<char>(f)),std::istreambuf_iterator<char>());
+  assert(m.load(model.data(),model.size())); out.clear(); assert(triangles(m,katanaLocalPose(),false,emit));
+  assert(out.size()==7866); bool green=false; for(const auto& v:out) {
+   assert(finite(v.position)); assert(std::fabs(v.position.x)<.1f && std::fabs(v.position.y)<1.f && std::fabs(v.position.z)<.1f);
+   if(v.rgba[1]>.79f && v.rgba[0]<.08f)green=true;
+  } assert(green);
+ }
+}
+================================================================================
+КОНЕЦ ФАЙЛА: repair/tests/katana_geometry.cpp
+================================================================================
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/diamond_sword_candidate.cpp
+================================================================================
+#include "../src/diamond_sword_candidate.h"
+#include <cassert>
+#include <cstring>
+#include <limits>
+#include <map>
+#include <vector>
+using namespace diamond_sword_candidate;
+int main() {
+ std::map<std::uintptr_t,std::vector<unsigned char>> memory;
+ auto put=[&](std::uintptr_t at,const auto& value) { auto p=reinterpret_cast<const unsigned char*>(&value); memory[at]=std::vector<unsigned char>(p,p+sizeof(value)); };
+ auto read=[&](std::uintptr_t at,void* out,std::size_t size) { auto it=memory.find(at); if(it==memory.end()||it->second.size()!=size)return false; std::memcpy(out,it->second.data(),size); return true; };
+ const std::uintptr_t base=0x10000000,stack=0x20000000,item=0x30000000;
+ put(stack+4,std::uint8_t(1)); put(stack+0x10,item); put(item+0x36,legacyId);
+ auto table=base+itemTableRva+std::uintptr_t(legacyId)*sizeof(std::uintptr_t); put(table,item);
+ assert(matches(base,stack,read));
+ put(item+0x36,std::int16_t(267)); assert(!matches(base,stack,read)); put(item+0x36,legacyId);
+ put(table,std::uintptr_t(0x40000000)); assert(!matches(base,stack,read)); put(table,item);
+ put(stack+4,std::uint8_t(0)); assert(!matches(base,stack,read)); put(stack+4,std::uint8_t(1));
+ put(stack+0x10,std::uintptr_t(0)); assert(!matches(base,stack,read)); put(stack+0x10,item);
+ memory.erase(table); assert(!matches(base,stack,read));
+ assert(!matches(0,stack,read)); assert(!matches(std::numeric_limits<std::uintptr_t>::max()-1,stack,read));
+ assert(!matches(base,std::numeric_limits<std::uintptr_t>::max()-1,read));
+}
+================================================================================
+КОНЕЦ ФАЙЛА: repair/tests/diamond_sword_candidate.cpp
 ================================================================================

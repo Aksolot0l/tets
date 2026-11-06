@@ -50,3 +50,23 @@ The supplied katana contains 4572 vertices, 7866 triangle indices and five
 materials; no images, skinning or animation. The offline converter produces a
 bounded GCM1 model retaining positions, normals and base colors. This is only
 asset preparation; GCM1 is not yet loaded or displayed by the game client.
+
+Further offline analysis (no new runtime report): at 0x59fcb1 the candidate
+stack saved from the third parameter of 0x59f300 is passed in R9 to 0x5a22f0,
+followed by a call to tessellator method 0x5d1790. Inside 0x5a22f0 one branch
+calls the known tessellator begin at 0x5d0660 and another calls 0x5a0de0. This
+is evidence of geometry preparation, not proof that replacing the function is
+safe. The alternate branch at 0x59fcf6 bypasses it and calls 0x59f200 instead;
+a hook there would not automatically cover all render paths. Material and
+state setup occurs before this sequence, while cleanup follows it. The exact
+meaning of parameters, mode, vertex layout and color/material binding remain
+unverified. Do not ship a render hook from this observation alone.
+
+The sequence 0xaa8d14-0xaa8d4a associates the diamond_sword string with an item
+pointer and places it in the array at 0x190afa0, indexed by a signed short read
+from item +0x36. Independently, published 1.1.0.1 Win10/MCPE item ID listings
+identify diamond_sword as 276 (https://gist.github.com/jocopa3/f8c9f9158ede0e9d057781188ba440f5).
+A mock-tested, unused candidate check in src/diamond_sword_candidate.h requires
+a stack's active byte, candidate item pointer, 276 field and matching registry
+slot simultaneously. 1.1.0.1 documentation is not runtime proof for this exact
+1.1.5 build, nor does the check establish which player or render pass is active.

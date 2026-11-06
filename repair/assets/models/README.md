@@ -32,3 +32,8 @@ all indices consecutively. Reader limits are 100,000 vertices, 300,000 indices
 and 128 groups. `src/katana_mesh.h` validates the entire byte buffer before
 exposing a borrowed read-only view; its backing bytes must remain alive and
 unchanged throughout use. It is standalone and not wired into the DLL.
+
+`src/katana_geometry.h` expands the mesh into colored triangles without any
+game calls. Its approximate grip pivot is derived from the supplied model, not
+from Minecraft, and requires in-game calibration. It passes raw linear base
+color factors to the caller and does not reconstruct lighting or emissive PBR.
