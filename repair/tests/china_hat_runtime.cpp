@@ -7,6 +7,15 @@
 int main() {
  using namespace china_hat;
  Mesh m{}; assert(build(m,{2,3,4},.58f,.34f,48,.25f,255));
+ std::vector<Vertex> surface;
+ assert(emitDoubleSidedSurface(m,[&](const Vertex& v){surface.push_back(v);}));
+ assert(surface.size()==288);
+ for (std::size_t i=0;i<48;i++) {
+  const auto& a=surface[i*6]; const auto& b=surface[i*6+1]; const auto& c=surface[i*6+2];
+  assert(a.position.y>b.position.y && a.position.y>c.position.y);
+  assert(surface[i*6+3].position.y==a.position.y);
+  assert(surface[i*6+4].position.x==c.position.x && surface[i*6+5].position.x==b.position.x);
+ }
  std::vector<Vertex> list;
  assert(emitWireframe(m,12,[&](const Vertex& v){list.push_back(v);}));
  assert(list.size()==120);

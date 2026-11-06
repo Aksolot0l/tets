@@ -13,8 +13,8 @@ particular binary, and the repository has no license. No source was copied.
 https://github.com/WinsentShame/Zodiak/tree/d2fcb0ffd4f8ada69ca4d84a83d3f546b300d01d
 
 `hat_mesh.h` is our independent cone geometry prototype. The installed adapter
-now has an opt-in **wireframe** test path, using candidate game functions and
-render timing. The path is restricted to the exact user-observed SHA-256, PE
+now has opt-in experimental surface and wireframe paths, using candidate game
+functions and render timing. The path is restricted to the exact user-observed SHA-256, PE
 timestamp and image size; diagnostic prologues and loaded code are compared to
 the file. If validation or hook installation fails, the feature is unavailable.
 Before drawing, it checks player identity, position, dimensions and tessellator
@@ -24,11 +24,23 @@ semantics. Windows runtime testing is essential; no guarantee of an effect,
 correct placement or stability. Other builds never use these hooks.
 
 The hat is off by default; enable `China Hat (test)` in the game menu and use
-third-person view. Save the world before testing. It can be turned off in the
-menu or with Del (which also disables the overlay until restart). The adapter
-remains loaded until the game exits. Crouch, camera modes, animations and
-render order have not been verified. Private game-render hooks are installed only after the user checks the box;
-once installed they remain inert when disabled until the game exits.
+third-person view. `Hat surface (test)` opts into the experimental filled cone;
+when off the previously tested wireframe remains. `Hat height` adjusts vertical
+placement; a very small vertical bob is added. Its position follows the local
+player's interpolated position and approximate collision-box height, not the
+actual animated head bone, so pitch/crouching/animations need testing. The
+independent `Trail (test)` draws a bounded, short-lived line from sampled world
+positions, not a particle trail. It is off by default; discontinuities reset it.
+
+The adapter attempts a depth test with depth writes off only when the same
+render thread has a captured D3D11 context and a bound depth view. It restores
+the previous state; the game's material may override it or no depth view may
+be bound, so correct occlusion is not guaranteed. The candidate filled topology
+and material are not confirmed on 1.1.5; the surface might be invisible, white,
+incorrect, or unstable. Before testing, save or use a disposable world. Both
+features turn off with Del (which also disables the overlay until restart). The
+adapter remains loaded until game exit. Private game-render hooks are installed
+only after the user enables one of the features; they remain inert when disabled.
 
 `DIAG_RENDER.ps1` is optional, read-only research. It prints the game EXE hash
 (if Windows permits access), PE timestamp/size, and 16 machine-code bytes from

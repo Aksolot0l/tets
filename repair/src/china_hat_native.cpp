@@ -7,6 +7,8 @@
 #include "china_hat_validation.h"
 #include "china_hat_lines.h"
 #include "china_hat_hash.h"
+#include "visual_trail.h"
+#include <d3d11.h>
 #include <bcrypt.h>
 #include <atomic>
 #include <cstdint>
@@ -27,6 +29,15 @@ constexpr std::uint32_t playerRva=0x581910, screenRva=0x3528c0, beginRva=0x5d066
 constexpr std::uint32_t originRva=0x19436e8, tessRva=0x1925550, contextRva=0x1913b40,
  shaderColorRva=0x192ae08, shaderFlagRva=0x192ae18, playerRootRva=0x1921df8;
 std::atomic<bool> available{false}, enabled{false};
+std::atomic<bool> trailEnabled{false}, solidHat{false};
+std::atomic<float> heightOffset{0.0f};
+std::atomic<unsigned> trailGeneration{0};
+SRWLOCK contextLock=SRWLOCK_INIT;
+ID3D11DeviceContext* visualContext=nullptr;
+DWORD visualThread=0;
+thread_local visual_trail::History trail;
+thread_local unsigned seenTrailGeneration=0;
+bool anyVisual() { return enabled.load(std::memory_order_acquire) || trailEnabled.load(std::memory_order_acquire); }
 // 0 = not attempted, 1 = installing, 2 = installed, 3 = failed.
 std::atomic<int> hookState{0};
 HatCreateHook createHook=nullptr; HatToggleHook enableHook=nullptr, disableHook=nullptr, removeHook=nullptr;
@@ -149,7 +160,7 @@ bool validateGame() {
 
 void rememberPlayer(void* entity,float partial) {
  frame.valid=false;
- if (!enabled.load(std::memory_order_acquire) || !entity || !std::isfinite(partial)) return;
+ if (!anyVisual() || !entity || !std::isfinite(partial)) return;
  std::uintptr_t actual=0, actor=reinterpret_cast<std::uintptr_t>(entity);
  if (!localPlayer(actual) || actual!=actor) return;
  std::int32_t type=0; float current[3]{}, old[3]{}, dims[2]{};
@@ -168,49 +179,136 @@ void rememberPlayer(void* entity,float partial) {
 std::intptr_t playerHook(void* self,void* entity,void* pos,void* extra,float partial) {
  const auto result=originalPlayer(self,entity,pos,extra,partial);
  // Do not clear a local-player frame when another player's renderer runs.
- if (enabled.load(std::memory_order_acquire)) {
+ if (anyVisual()) {
   std::uintptr_t local=0;
   if (localPlayer(local) && reinterpret_cast<std::uintptr_t>(entity)==local) rememberPlayer(entity,partial);
  }
  return result;
 }
-void renderHat(const PlayerFrame& player) {
- if (!enabled.load(std::memory_order_acquire) || !player.valid || GetTickCount64()-player.at>250) return;
- std::uintptr_t actor=0; if (!localPlayer(actor) || actor!=player.entity) return;
+// Context is captured from this same game's swap chain on Present. Do not use
+// an immediate context from a different thread or without a bound depth view.
+// Game materials may replace this state inside tessDraw; runtime validation is
+// still required. Never write depth and restore the previous state afterwards.
+struct DepthScope {
+ ID3D11DeviceContext* ctx=nullptr; ID3D11DepthStencilState* previous=nullptr;
+ ID3D11DepthStencilState* replacement=nullptr; UINT stencil=0; bool changed=false;
+ DepthScope() {
+  AcquireSRWLockShared(&contextLock);
+  if (visualContext && visualThread==GetCurrentThreadId()) { ctx=visualContext; ctx->AddRef(); }
+  ReleaseSRWLockShared(&contextLock);
+  if (!ctx) return;
+  ID3D11DepthStencilView* dsv=nullptr; ctx->OMGetRenderTargets(0,nullptr,&dsv);
+  if (!dsv) return;
+  dsv->Release();
+  ctx->OMGetDepthStencilState(&previous,&stencil);
+  D3D11_DEPTH_STENCIL_DESC desc{};
+  if (previous) previous->GetDesc(&desc);
+  else {
+   desc.DepthFunc=D3D11_COMPARISON_LESS;
+   desc.StencilReadMask=D3D11_DEFAULT_STENCIL_READ_MASK; desc.StencilWriteMask=D3D11_DEFAULT_STENCIL_WRITE_MASK;
+   desc.FrontFace={D3D11_STENCIL_OP_KEEP,D3D11_STENCIL_OP_KEEP,D3D11_STENCIL_OP_KEEP,D3D11_COMPARISON_ALWAYS};
+   desc.BackFace=desc.FrontFace;
+  }
+  if (!desc.DepthEnable || desc.DepthFunc==D3D11_COMPARISON_ALWAYS || desc.DepthFunc==D3D11_COMPARISON_NEVER)
+   desc.DepthFunc=D3D11_COMPARISON_LESS_EQUAL;
+  desc.DepthEnable=TRUE; desc.DepthWriteMask=D3D11_DEPTH_WRITE_MASK_ZERO;
+  ID3D11Device* device=nullptr; ctx->GetDevice(&device);
+  if (device) { HRESULT hr=device->CreateDepthStencilState(&desc,&replacement); device->Release();
+   if (SUCCEEDED(hr) && replacement) { ctx->OMSetDepthStencilState(replacement,stencil); changed=true; }
+  }
+ }
+ ~DepthScope() {
+  if (changed) ctx->OMSetDepthStencilState(previous,stencil);
+  if (replacement) replacement->Release(); if (previous) previous->Release(); if (ctx) ctx->Release();
+ }
+};
+void renderVisuals(const PlayerFrame& visible, const PlayerFrame& local) {
+ const bool hat=enabled.load(std::memory_order_acquire);
+ const bool tracing=trailEnabled.load(std::memory_order_acquire);
+ const ULONGLONG now=GetTickCount64();
+ unsigned gen=trailGeneration.load(std::memory_order_acquire);
+ if (gen!=seenTrailGeneration || !tracing) { trail.clear(); seenTrailGeneration=gen; }
+ if (tracing) {
+  if (local.valid && now-local.at<=250) {
+   china_hat::Point feet{local.world.x,local.world.y-1.62f+.10f,local.world.z};
+   trail.update(local.entity,feet,now);
+  } else trail.clear();
+ }
+ const bool drawHat=hat && visible.valid && now-visible.at<=250;
+ if (!drawHat && (!tracing || trail.size()<2)) return;
+ std::uintptr_t actor=0;
+ if (!localPlayer(actor) || (drawHat && actor!=visible.entity) || (tracing && local.valid && actor!=local.entity)) { trail.clear(); return; }
  float origin[3]{}, saved[4]{}; std::uint8_t oldFlag=0, state[0x178]{};
  auto tess=base+tessRva, color=base+shaderColorRva, flag=base+shaderFlagRva;
  if (!read(base+originRva,origin,sizeof(origin)) || !read(tess,state,sizeof(state)) ||
      !read(color,saved,sizeof(saved)) || !fetch(flag,oldFlag) || !writable(color,sizeof(saved)) || !writable(flag,1) ||
      !writable(tess,sizeof(state))) return;
- // Never reset or flush a tessellator another game operation is using.
  std::int32_t pending=0; std::memcpy(&pending,state+0x168,sizeof(pending));
  if (state[0x125] || state[0x170] || pending) return;
  for (float v:origin) if (!std::isfinite(v)) return;
- china_hat::Point head{player.world.x-origin[0],player.world.y-origin[1]-1.62f+player.height+0.03f,player.world.z-origin[2]};
- if (std::fabs(head.x)>16 || std::fabs(head.y)>16 || std::fabs(head.z)>16) return;
- china_hat::Mesh mesh{};
- if (!china_hat::build(mesh,head,.58f,.34f,48,static_cast<float>(GetTickCount64()%8000)/8000.0f,255)) return;
- float white[4]={1,1,1,1}; std::memcpy(reinterpret_cast<void*>(color),white,sizeof(white)); *reinterpret_cast<std::uint8_t*>(flag)=1;
  auto* t=reinterpret_cast<void*>(tess);
- // The documented 1.1.5 renderer uses topology 4 for line segments. The first
- // experimental version is a wireframe hat, not a filled/textured cone.
- constexpr int segments=48, spokes=12;
- tessBegin(t,4,2*(segments+spokes));
  auto vertex=[&](const china_hat::Vertex& v) { tessColor(t,v.color.r,v.color.g,v.color.b,v.color.a); tessVertex(t,v.position.x,v.position.y,v.position.z); };
- china_hat::emitWireframe(mesh,spokes,vertex);
- tessDraw(t,reinterpret_cast<void*>(base+contextRva),0);
- // The researched renderer releases its temporary tessellation at this point.
- // A zeroed, aligned output slot is provided as required by the native ABI.
- alignas(16) std::uint8_t scratch[0x200]{};
- tessEnd(t,scratch,0,0);
+ auto flush=[&]() {
+  tessDraw(t,reinterpret_cast<void*>(base+contextRva),0);
+  alignas(16) std::uint8_t scratch[0x200]{}; tessEnd(t,scratch,0,0);
+ };
+ DepthScope depth;
+ float tint[4]={0.62f,1.0f,0.84f,1.0f};
+ std::memcpy(reinterpret_cast<void*>(color),tint,sizeof(tint)); *reinterpret_cast<std::uint8_t*>(flag)=1;
+ if (drawHat) {
+  const float bob=0.018f*std::sin(static_cast<float>(now%3500)*6.2831853f/3500.f);
+  china_hat::Point head{visible.world.x-origin[0],visible.world.y-origin[1]-1.62f+visible.height+0.03f+heightOffset.load(std::memory_order_relaxed)+bob,visible.world.z-origin[2]};
+  if (std::fabs(head.x)<16 && std::fabs(head.y)<16 && std::fabs(head.z)<16) {
+   china_hat::Mesh mesh{};
+   if (china_hat::build(mesh,head,.58f,.31f,48,static_cast<float>(now%8000)/8000.f,255)) {
+    bool surface=solidHat.load(std::memory_order_relaxed);
+    if (surface) {
+     // Mode 2 is a candidate triangle topology from related engine research,
+     // not yet validated on 1.1.5. Render both windings for culling variants.
+     tessBegin(t,2,static_cast<int>(mesh.triangleVertices*2));
+     china_hat::emitDoubleSidedSurface(mesh,vertex);
+     flush();
+    }
+    // A fine rim remains visible even if the experimental surface fails.
+    tessBegin(t,4,surface?96:120);
+    if (!surface) china_hat::emitWireframe(mesh,12,vertex);
+    else for (std::size_t i=0;i<48;i++) { vertex(mesh.outline[i]); vertex(mesh.outline[i+1]); }
+    flush();
+   }
+  }
+ }
+ if (tracing && trail.size()>=2) {
+  // Separate line segments in camera-relative coordinates; never join across
+  // invalid, too distant or stale points. Bounded history and GPU batch size.
+  china_hat::Vertex points[visual_trail::History::capacity]{}; bool valid[visual_trail::History::capacity]{};
+  int segments=0;
+  for (std::size_t i=0;i<trail.size();++i) {
+   const auto& p=trail[i];
+   auto& v=points[i]; v.position={p.point.x-origin[0],p.point.y-origin[1],p.point.z-origin[2]};
+   valid[i]=std::fabs(v.position.x)<32 && std::fabs(v.position.y)<32 && std::fabs(v.position.z)<32;
+   float age=static_cast<float>(now-p.time)/visual_trail::History::lifetime;
+   v.color=china_hat::rainbow(.38f + static_cast<float>(i)*.002f,static_cast<std::uint8_t>(255.f*(1.f-std::clamp(age,0.f,1.f))));
+   if (i && valid[i] && valid[i-1]) ++segments;
+  }
+  if (segments) {
+   tessBegin(t,4,segments*2);
+   for (std::size_t i=1;i<trail.size();++i) if (valid[i] && valid[i-1]) { vertex(points[i-1]); vertex(points[i]); }
+   flush();
+  }
+ }
  std::memcpy(reinterpret_cast<void*>(color),saved,sizeof(saved)); *reinterpret_cast<std::uint8_t*>(flag)=oldFlag;
 }
 void screenHook(void* self,void* ctx) {
  if (inScreen) { originalScreen(self,ctx); return; }
  inScreen=true;
  originalScreen(self,ctx);
- PlayerFrame snapshot=frame; frame.valid=false;
- renderHat(snapshot);
+ PlayerFrame visible=frame; frame.valid=false;
+ PlayerFrame local=visible;
+ if (trailEnabled.load(std::memory_order_acquire) && !local.valid) {
+  std::uintptr_t actor=0;
+  if (localPlayer(actor)) { rememberPlayer(reinterpret_cast<void*>(actor),1.0f); local=frame; frame.valid=false; }
+ }
+ renderVisuals(visible,local);
  inScreen=false;
 }
 }
@@ -249,17 +347,38 @@ bool installHooks() {
  return success;
 }
 }
+namespace {
+bool enableVisual() {
+ if (!ChinaHatAvailable()) return false;
+ try { return installHooks(); }
+ catch (...) {
+  enabled.store(false,std::memory_order_release); trailEnabled.store(false,std::memory_order_release);
+  available.store(false,std::memory_order_release); hookState.store(3,std::memory_order_release);
+  log("failed to enable; overlay remains available"); return false;
+ }
+}
+}
 void SetChinaHatEnabled(bool value) {
  if (!value) { enabled.store(false,std::memory_order_release); return; }
- if (!ChinaHatAvailable()) return;
- try {
-  if (installHooks()) enabled.store(true,std::memory_order_release);
- } catch (...) {
-  enabled.store(false,std::memory_order_release);
-  available.store(false,std::memory_order_release);
-  hookState.store(3,std::memory_order_release);
-  log("failed to enable; overlay remains available");
+ if (enableVisual()) enabled.store(true,std::memory_order_release);
+}
+bool TrailEnabled() { return trailEnabled.load(std::memory_order_acquire); }
+void SetTrailEnabled(bool value) {
+ if (!value) { trailEnabled.store(false,std::memory_order_release); trailGeneration.fetch_add(1,std::memory_order_acq_rel); return; }
+ if (enableVisual()) trailEnabled.store(true,std::memory_order_release);
+}
+bool ChinaHatSurface() { return solidHat.load(std::memory_order_acquire); }
+void SetChinaHatSurface(bool value) { solidHat.store(value,std::memory_order_release); }
+float ChinaHatHeight() { return heightOffset.load(std::memory_order_acquire); }
+void SetChinaHatHeight(float value) { if (std::isfinite(value)) heightOffset.store(std::clamp(value,-0.2f,0.4f),std::memory_order_release); }
+void CaptureVisualContext(ID3D11DeviceContext* context) {
+ if (!context || !anyVisual()) return;
+ AcquireSRWLockExclusive(&contextLock);
+ if (visualContext!=context) {
+  context->AddRef(); if (visualContext) visualContext->Release(); visualContext=context;
  }
+ visualThread=GetCurrentThreadId();
+ ReleaseSRWLockExclusive(&contextLock);
 }
 bool InitializeChinaHat(HatCreateHook create,HatToggleHook enable,HatToggleHook disable,HatToggleHook remove) {
  if (!create || !enable || !disable || !remove || !validateGame()) { log("unsupported game or unable to verify executable; disabled"); return false; }

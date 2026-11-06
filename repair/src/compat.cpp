@@ -52,6 +52,7 @@ using SetModuleFn = void (*)(void*, ag::ModuleId, bool);
 using BeginFn = bool (*)(const char*, bool*, int);
 using EndFn = void (*)();
 using CheckboxFn = bool (*)(const char*, bool*);
+using SliderFloatFn = bool (*)(const char*, float*, float, float, const char*, int);
 using SetNextPosFn = void (*)(const ImVec2&, int, const ImVec2&);
 
 static HMODULE selfModule = nullptr;
@@ -82,6 +83,7 @@ static SetModuleFn setModule = nullptr;
 static BeginFn guiBegin = nullptr;
 static EndFn guiEnd = nullptr;
 static CheckboxFn guiCheckbox = nullptr;
+static SliderFloatFn guiSliderFloat = nullptr;
 static SetNextPosFn guiSetNextPos = nullptr;
 static std::atomic<const WheelBridge*> externalWheel{nullptr};
 static SRWLOCK externalWheelLock = SRWLOCK_INIT;
@@ -226,6 +228,7 @@ static void patchedDrawGui(void* runtime) {
     if (disableHotkey.update(down, down && gameIsForeground(), editing)) {
         overlayDisabled.store(true, std::memory_order_release);
         SetChinaHatEnabled(false);
+        SetTrailEnabled(false);
         if (bridgeActive) bridgeActive(false);
         DisableUwpExtraInput();
         log("overlay disabled by Delete; DLLs remain loaded until game exit");
@@ -244,6 +247,16 @@ static void patchedDrawGui(void* runtime) {
         if (ChinaHatAvailable()) {
             bool hat = ChinaHatEnabled();
             if (guiCheckbox("China Hat (test)", &hat)) SetChinaHatEnabled(hat);
+            if (hat && ChinaHatEnabled()) {
+                bool surface=ChinaHatSurface();
+                if (guiCheckbox("Hat surface (test)", &surface)) SetChinaHatSurface(surface);
+                if (guiSliderFloat) {
+                    float height=ChinaHatHeight();
+                    if (guiSliderFloat("Hat height", &height, -0.2f, 0.4f, "%.2f", 0)) SetChinaHatHeight(height);
+                }
+            }
+            bool trail=TrailEnabled();
+            if (guiCheckbox("Trail (test)", &trail)) SetTrailEnabled(trail);
         } else {
             realText("China Hat: unsupported game or unavailable", nullptr);
         }
@@ -352,6 +365,7 @@ static void draw(IDXGISwapChain* chain, UINT flags) {
         if (desc.Width >= 320 && desc.Height >= 200) {
             device->GetImmediateContext(&context);
             if (context) {
+                CaptureVisualContext(context);
                 frameDevice = device; frameContext = context;
                 frameWidth = desc.Width; frameHeight = desc.Height; seenInput = false; pointerInUse = false;
                 legacyPresent(chain, 0, flags);
@@ -443,6 +457,7 @@ static DWORD WINAPI bootstrap(void*) {
     guiBegin = symbol<BeginFn>("_ZN5ImGui5BeginEPKcPbi");
     guiEnd = symbol<EndFn>("_ZN5ImGui3EndEv");
     guiCheckbox = symbol<CheckboxFn>("_ZN5ImGui8CheckboxEPKcPb");
+    guiSliderFloat = symbol<SliderFloatFn>("_ZN5ImGui11SliderFloatEPKcPfffS1_i");
     guiSetNextPos = symbol<SetNextPosFn>("_ZN5ImGui16SetNextWindowPosERK6ImVec2iS2_");
     findGameWindow = symbol<FindWindowFn>("_ZN2ag19FindMinecraftWindowEb");
     addFont = symbol<AddFontFn>("_ZN2ag15AddEmbeddedFontEfb");

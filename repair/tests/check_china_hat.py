@@ -10,11 +10,21 @@ assert 'std::memcmp(fromFile,sig.bytes,16)!=0' in n
 assert 'state[0x125] || state[0x170] || pending' in n
 assert 'oldFlag' in n and 'saved,sizeof(saved)' in n
 assert 'actual!=actor' in n and 'type!=30' in n
-assert 'GetTickCount64()-player.at>250' in n
+assert 'now-visible.at<=250' in n and 'now-local.at<=250' in n
 assert 'available{false}, enabled{false}' in n
-assert 'if (!ChinaHatAvailable()) return;' in n and 'if (installHooks())' in n
+assert 'if (!ChinaHatAvailable()) return false;' in n and 'return installHooks();' in n
 assert n.index('installHooks()') < n.index('bool InitializeChinaHat(')
 assert 'China Hat (test)' in u and 'SetChinaHatEnabled(false)' in u
+assert 'Trail (test)' in u and 'SetTrailEnabled(false)' in u
+assert 'Hat height' in u and 'Hat surface (test)' in u
+assert 'CaptureVisualContext(context)' in u
+assert 'visualThread==GetCurrentThreadId()' in n
+assert 'D3D11_DEPTH_WRITE_MASK_ZERO' in n and 'OMSetDepthStencilState(previous,stencil)' in n
+assert 'if (!dsv) return;' in n
+assert 'trailGeneration' in n and 'trail.clear()' in n
+assert 'tessBegin(t,2,' in n and 'emitDoubleSidedSurface' in n
+assert 'trailEnabled{false}, solidHat{false}' in n
+assert 'tessBegin(t,4,segments*2)' in n
 assert u.index('InitializeChinaHat(mhCreate') > u.index('mhApply())')
 assert 'GetModuleFileNameW' in n and 'Minecraft.Windows.exe' in n
 assert '0x28,0x83,0xb7,0x2a' in v

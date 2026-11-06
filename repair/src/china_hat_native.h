@@ -10,3 +10,13 @@ bool InitializeChinaHat(HatCreateHook create, HatToggleHook enable,
 bool ChinaHatAvailable();
 bool ChinaHatEnabled();
 void SetChinaHatEnabled(bool enabled);
+
+// Visuals are independent switches and use the same validated game hooks.
+bool TrailEnabled();
+void SetTrailEnabled(bool enabled);
+bool ChinaHatSurface();
+void SetChinaHatSurface(bool enabled);
+float ChinaHatHeight();
+void SetChinaHatHeight(float value);
+struct ID3D11DeviceContext;
+void CaptureVisualContext(ID3D11DeviceContext* context);
