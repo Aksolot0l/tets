@@ -21,5 +21,7 @@ int main() {
  auto base=hat_animation::bob(0), high=hat_animation::bob(800), low=hat_animation::bob(2400);
  assert(base>.06f && base<.08f && high>base && low<base && low>=0);
  assert(std::fabs(hat_animation::bob(3200)-base)<1e-6);
+ assert(hat_animation::bob(800,0.f,.5f)==0.f);
+ assert(hat_animation::bob(500,.1f,.5f) > hat_animation::bob(500,.1f,1.f));
  for (std::uint64_t t=0;t<3200;t+=17) { float v=hat_animation::bob(t); assert(v>=0 && v<=.141f); }
 }

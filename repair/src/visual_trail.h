@@ -10,13 +10,13 @@ namespace visual_trail {
 struct Sample { china_hat::Point point; std::uint64_t time=0; };
 class History {
 public:
- static constexpr std::size_t capacity=96;
+ static constexpr std::size_t capacity=128;
  static constexpr std::uint64_t lifetime=3000;
  void clear() { count_=0; actor_=0; lastSeen_=0; }
- void update(std::uintptr_t actor, china_hat::Point p, std::uint64_t now) {
+ void update(std::uintptr_t actor, china_hat::Point p, std::uint64_t now, std::uint64_t ttl=lifetime) {
   if (!actor || !std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) { clear(); return; }
   if (actor_!=actor || (lastSeen_ && (now<lastSeen_ || now-lastSeen_>1000))) { clear(); actor_=actor; }
-  lastSeen_=now; expire(now);
+  lastSeen_=now; expire(now,ttl);
   if (count_) {
    const auto& last=points_[count_-1];
    float dx=p.x-last.point.x, dy=p.y-last.point.y, dz=p.z-last.point.z;
@@ -27,9 +27,9 @@ public:
   if (count_==capacity) { for (std::size_t i=1;i<count_;++i) points_[i-1]=points_[i]; --count_; }
   points_[count_++]={p,now};
  }
- void expire(std::uint64_t now) {
+ void expire(std::uint64_t now,std::uint64_t ttl=lifetime) {
   std::size_t n=0;
-  while (n<count_ && (now<points_[n].time || now-points_[n].time>lifetime)) ++n;
+  while (n<count_ && (now<points_[n].time || now-points_[n].time>ttl)) ++n;
   if (n) { for (std::size_t i=n;i<count_;++i) points_[i-n]=points_[i]; count_-=n; }
  }
  std::size_t size() const { return count_; }

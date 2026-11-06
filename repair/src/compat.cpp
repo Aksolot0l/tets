@@ -54,6 +54,11 @@ using EndFn = void (*)();
 using CheckboxFn = bool (*)(const char*, bool*);
 using SliderFloatFn = bool (*)(const char*, float*, float, float, const char*, int);
 using SetNextPosFn = void (*)(const ImVec2&, int, const ImVec2&);
+using SetNextSizeFn = void (*)(const ImVec2&, int);
+using BeginTabBarFn = bool (*)(const char*, int);
+using BeginTabItemFn = bool (*)(const char*, bool*, int);
+using EndTabFn = void (*)();
+using ColorEdit3Fn = bool (*)(const char*, float*, int);
 
 static HMODULE selfModule = nullptr;
 static HMODULE core = nullptr;
@@ -85,6 +90,11 @@ static EndFn guiEnd = nullptr;
 static CheckboxFn guiCheckbox = nullptr;
 static SliderFloatFn guiSliderFloat = nullptr;
 static SetNextPosFn guiSetNextPos = nullptr;
+static SetNextSizeFn guiSetNextSize = nullptr;
+static BeginTabBarFn guiBeginTabBar = nullptr;
+static BeginTabItemFn guiBeginTabItem = nullptr;
+static EndTabFn guiEndTabBar = nullptr, guiEndTabItem = nullptr;
+static ColorEdit3Fn guiColorEdit3 = nullptr;
 static std::atomic<const WheelBridge*> externalWheel{nullptr};
 static SRWLOCK externalWheelLock = SRWLOCK_INIT;
 static HWND pointerWindow = nullptr;
@@ -220,6 +230,91 @@ static void patchedText(const char* text, const char* textEnd) {
     }
     realText(text, textEnd);
 }
+// This panel uses the same ImGui context and functions exported by the legacy
+// core. It is a separate window, not a modification of the closed-source
+// original category list. Values are kept only for this game session.
+static void visualSlider(const char* label,VisualParam p,const char* fmt) {
+    if (!guiSliderFloat) { realText("Slider unavailable",nullptr); return; }
+    const auto i=static_cast<std::size_t>(p);
+    if (i>=static_cast<std::size_t>(VisualParam::Count)) return;
+    float value=GetVisualParam(p); const auto spec=visualParamSpecs[i];
+    if (guiSliderFloat(label,&value,spec.low,spec.high,fmt,0)) SetVisualParam(p,value);
+}
+static void visualColor(const char* label,VisualParam r,VisualParam g,VisualParam b) {
+    if (!guiColorEdit3) { realText("Color picker unavailable",nullptr); return; }
+    float color[3]={GetVisualParam(r),GetVisualParam(g),GetVisualParam(b)};
+    if (guiColorEdit3(label,color,0)) {
+        SetVisualParam(r,color[0]); SetVisualParam(g,color[1]); SetVisualParam(b,color[2]);
+    }
+}
+static void drawHatSettings() {
+    bool enabled=ChinaHatEnabled();
+    if (guiCheckbox("China Hat (test)",&enabled)) SetChinaHatEnabled(enabled);
+    bool fill=HatFillEnabled();
+    if (guiCheckbox("Filled hat (test)",&fill)) SetHatFillEnabled(fill);
+    bool rainbow=HatRainbowEnabled();
+    if (guiCheckbox("Rainbow hat",&rainbow)) SetHatRainbowEnabled(rainbow);
+    if (rainbow) visualSlider("Rainbow speed##hat",VisualParam::HatRainbowSpeed,"%.2f");
+    else visualColor("Hat color",VisualParam::HatRed,VisualParam::HatGreen,VisualParam::HatBlue);
+    visualSlider("Radius",VisualParam::HatRadius,"%.2f");
+    visualSlider("Cone height",VisualParam::HatConeHeight,"%.2f");
+    visualSlider("Hat height",VisualParam::HatOffset,"%.2f");
+    visualSlider("Float amount",VisualParam::HatBobAmplitude,"%.2f");
+    visualSlider("Float speed",VisualParam::HatBobSpeed,"%.2f");
+    if (ChinaHatEnabled()) {
+        const int status=ChinaHatStatus();
+        realText(status==1 ? "Hat: submitted" : status==2 ? "Hat: renderer not ready" : "Hat: waiting for player",nullptr);
+        if (fill) { const int fs=HatFillStatus();
+            realText(fs==1?"Fill: submitted (visibility unverified)":fs==2?"Fill: renderer busy":"Fill: waiting",nullptr);
+        }
+    }
+}
+static void drawTrailSettings() {
+    bool enabled=TrailEnabled();
+    if (guiCheckbox("Trail (test)",&enabled)) SetTrailEnabled(enabled);
+    bool fill=TrailFillEnabled();
+    if (guiCheckbox("Filled trail (test)",&fill)) SetTrailFillEnabled(fill);
+    bool rainbow=TrailRainbowEnabled();
+    if (guiCheckbox("Rainbow trail",&rainbow)) SetTrailRainbowEnabled(rainbow);
+    if (rainbow) visualSlider("Rainbow speed##trail",VisualParam::TrailRainbowSpeed,"%.2f");
+    else visualColor("Trail color",VisualParam::TrailRed,VisualParam::TrailGreen,VisualParam::TrailBlue);
+    visualSlider("Trail height",VisualParam::TrailHeight,"%.2f");
+    visualSlider("Lifetime (seconds)",VisualParam::TrailSeconds,"%.1f");
+    if (TrailEnabled()) {
+        const int status=TrailStatus();
+        realText(status==1 ? "Trail: submitted" : status==2 ? "Trail: renderer not ready" : "Trail: move to create trail",nullptr);
+        if (fill) { const int fs=TrailFillStatus();
+            realText(fs==1?"Fill: submitted (visibility unverified)":fs==2?"Fill: renderer busy":"Fill: waiting",nullptr);
+        }
+    }
+}
+static void drawVisualOptions() {
+    bool tint=VisualTintEnabled();
+    if (guiCheckbox("Enable colors",&tint)) SetVisualTintEnabled(tint);
+    realText("Settings reset when the game closes.",nullptr);
+    realText("Fill is experimental; uncheck to use lines.",nullptr);
+}
+static void drawVisualPanel() {
+    guiSetNextPos(ImVec2(18.0f,280.0f), ImGuiCond_FirstUseEver, ImVec2(0,0));
+    if (guiSetNextSize) guiSetNextSize(ImVec2(350.0f,410.0f),ImGuiCond_FirstUseEver);
+    const int flags=ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoCollapse;
+    if (guiBegin("Visuals",nullptr,flags)) {
+        if (!ChinaHatAvailable()) realText("Visuals: unsupported game or unavailable",nullptr);
+        else if (guiBeginTabBar && guiBeginTabItem && guiEndTabBar && guiEndTabItem) {
+            if (guiBeginTabBar("##visual_tabs",0)) {
+                if (guiBeginTabItem("China Hat",nullptr,0)) { drawHatSettings(); guiEndTabItem(); }
+                if (guiBeginTabItem("Trail",nullptr,0)) { drawTrailSettings(); guiEndTabItem(); }
+                if (guiBeginTabItem("Options",nullptr,0)) { drawVisualOptions(); guiEndTabItem(); }
+                guiEndTabBar();
+            }
+        } else {
+            realText("China Hat",nullptr); drawHatSettings();
+            realText("Trail",nullptr); drawTrailSettings(); drawVisualOptions();
+        }
+    }
+    guiEnd();
+}
+
 static void patchedDrawGui(void* runtime) {
     // The old loop never calls RequestUnload for Delete. This is an explicit
     // one-way overlay stop, NOT a DLL unload: callbacks and hooks remain pinned.
@@ -244,34 +339,9 @@ static void patchedDrawGui(void* runtime) {
                       ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse;
     if (guiBegin("##coordinate_switch_115", nullptr, flags)) {
         if (guiCheckbox("Coordinates (test)", &enabled)) setModule(runtime, ag::ModuleId::Coordinates, enabled);
-        if (ChinaHatAvailable()) {
-            bool hat = ChinaHatEnabled();
-            if (guiCheckbox("China Hat (test)", &hat)) SetChinaHatEnabled(hat);
-            if (hat && ChinaHatEnabled()) {
-                bool fill=HatFillEnabled();
-                if (guiCheckbox("Hat fill (test)", &fill)) SetHatFillEnabled(fill);
-                if (guiSliderFloat) {
-                    float height=ChinaHatHeight();
-                    if (guiSliderFloat("Hat height", &height, -0.2f, 0.4f, "%.2f", 0)) SetChinaHatHeight(height);
-                }
-                const int status=ChinaHatStatus();
-                realText(status==1 ? "Hat: submitted" : status==2 ? "Hat: renderer not ready" : "Hat: waiting for player",nullptr);
-            }
-            bool tint=VisualTintEnabled();
-            if (guiCheckbox("Color tint (test)", &tint)) SetVisualTintEnabled(tint);
-            bool trail=TrailEnabled();
-            if (guiCheckbox("Trail (test)", &trail)) SetTrailEnabled(trail);
-            if (trail && TrailEnabled()) {
-                bool fill=TrailFillEnabled();
-                if (guiCheckbox("Trail fill (test)", &fill)) SetTrailFillEnabled(fill);
-                const int status=TrailStatus();
-                realText(status==1 ? "Trail: submitted" : status==2 ? "Trail: renderer not ready" : "Trail: move to create trail",nullptr);
-            }
-        } else {
-            realText("China Hat: unsupported game or unavailable", nullptr);
-        }
     }
     guiEnd();
+    drawVisualPanel();
 }
 
 // Called from legacy drawMarker, while its own render lock is held. The ImGui
@@ -467,6 +537,12 @@ static DWORD WINAPI bootstrap(void*) {
     guiEnd = symbol<EndFn>("_ZN5ImGui3EndEv");
     guiCheckbox = symbol<CheckboxFn>("_ZN5ImGui8CheckboxEPKcPb");
     guiSliderFloat = symbol<SliderFloatFn>("_ZN5ImGui11SliderFloatEPKcPfffS1_i");
+    guiSetNextSize = symbol<SetNextSizeFn>("_ZN5ImGui17SetNextWindowSizeERK6ImVec2i");
+    guiBeginTabBar = symbol<BeginTabBarFn>("_ZN5ImGui11BeginTabBarEPKci");
+    guiEndTabBar = symbol<EndTabFn>("_ZN5ImGui9EndTabBarEv");
+    guiBeginTabItem = symbol<BeginTabItemFn>("_ZN5ImGui12BeginTabItemEPKcPbi");
+    guiEndTabItem = symbol<EndTabFn>("_ZN5ImGui10EndTabItemEv");
+    guiColorEdit3 = symbol<ColorEdit3Fn>("_ZN5ImGui10ColorEdit3EPKcPfi");
     guiSetNextPos = symbol<SetNextPosFn>("_ZN5ImGui16SetNextWindowPosERK6ImVec2iS2_");
     findGameWindow = symbol<FindWindowFn>("_ZN2ag19FindMinecraftWindowEb");
     addFont = symbol<AddFontFn>("_ZN2ag15AddEmbeddedFontEfb");

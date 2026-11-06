@@ -34,13 +34,20 @@ constexpr std::uint32_t playerRva=0x581910, screenRva=0x3528c0, clientTickRva=0x
 constexpr std::uint32_t originRva=0x19436e8, tessRva=0x1925550, contextRva=0x1913b40,
  shaderColorRva=0x192ae08, shaderFlagRva=0x192ae18;
 std::atomic<bool> available{false}, enabled{false};
-std::atomic<bool> trailEnabled{false}, materialTint{false}, hatFill{false}, trailFill{false};
-std::atomic<float> heightOffset{0.0f};
+// Modules remain off until the user explicitly enables them. Defaults configure
+// the requested filled/rainbow appearance, with a wireframe fallback in Visuals.
+std::atomic<bool> trailEnabled{false}, materialTint{true}, hatFill{true}, trailFill{true};
+std::atomic<bool> hatRainbow{true}, trailRainbow{true};
+struct ParamStorage {
+ std::atomic<float> values[static_cast<std::size_t>(VisualParam::Count)]{};
+ ParamStorage() { for (std::size_t i=0;i<static_cast<std::size_t>(VisualParam::Count);++i) values[i].store(visualParamSpecs[i].value); }
+} params;
+float param(VisualParam p) { return params.values[static_cast<std::size_t>(p)].load(std::memory_order_acquire); }
 std::atomic<unsigned> trailGeneration{0};
 thread_local visual_trail::History trail;
 thread_local unsigned seenTrailGeneration=0;
 // 0 waiting for a player, 1 submitted to GPU, 2 game renderer busy/unavailable.
-std::atomic<int> hatStatus{0}, trailStatus{0};
+std::atomic<int> hatStatus{0}, trailStatus{0}, hatFillStatus{0}, trailFillStatus{0};
 std::atomic<ULONGLONG> lastHatSubmit{0}, lastTrailSubmit{0};
 bool anyVisual() { return enabled.load(std::memory_order_acquire) || trailEnabled.load(std::memory_order_acquire); }
 // 0 = not attempted, 1 = installing, 2 = installed, 3 = failed.
@@ -230,11 +237,14 @@ void renderHat(const PlayerFrame& player) {
  std::int32_t pending=0; std::memcpy(&pending,state+0x168,sizeof(pending));
  if (state[0x125] || state[0x170] || pending) return;
  for (float v:origin) if (!std::isfinite(v)) return;
- china_hat::Point head{player.world.x-origin[0],player.world.y-origin[1]-1.62f+player.height+0.03f+heightOffset.load(std::memory_order_relaxed)+hat_animation::bob(GetTickCount64()),player.world.z-origin[2]};
+ const auto now=GetTickCount64();
+ china_hat::Point head{player.world.x-origin[0],player.world.y-origin[1]-1.62f+player.height+0.03f+
+   param(VisualParam::HatOffset)+hat_animation::bob(now,param(VisualParam::HatBobAmplitude),param(VisualParam::HatBobSpeed)),player.world.z-origin[2]};
  if (std::fabs(head.x)>16 || std::fabs(head.y)>16 || std::fabs(head.z)>16) return;
  china_hat::Mesh mesh{};
- if (!china_hat::build(mesh,head,.58f,.34f,48,static_cast<float>(GetTickCount64()%8000)/8000.0f,255)) return;
- auto tint=visual_color::material(materialTint.load(std::memory_order_acquire),visual_color::Effect::Hat);
+ if (!china_hat::build(mesh,head,param(VisualParam::HatRadius),param(VisualParam::HatConeHeight),48,static_cast<float>(now%8000)/8000.0f,255)) return;
+ auto tint=visual_color::animated(materialTint.load(std::memory_order_acquire),hatRainbow.load(std::memory_order_acquire),
+    {{param(VisualParam::HatRed),param(VisualParam::HatGreen),param(VisualParam::HatBlue)}},param(VisualParam::HatRainbowSpeed),now);
  std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
  auto* t=reinterpret_cast<void*>(tess);
  // The documented 1.1.5 renderer uses topology 4 for line segments. The first
@@ -250,7 +260,9 @@ void renderHat(const PlayerFrame& player) {
  // A zeroed, aligned output slot is provided as required by the native ABI.
  alignas(16) std::uint8_t scratch[0x200]{};
  tessEnd(t,scratch,0,0);
- if (hatFill.load(std::memory_order_acquire) && tessIdle(tess)) {
+ if (hatFill.load(std::memory_order_acquire)) {
+  if (!tessIdle(tess)) { hatFillStatus.store(2,std::memory_order_relaxed); }
+  else {
   // The prior batch may have consumed the game's shader-color dirty flag.
   std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
   // Candidate triangle-list mode, not yet confirmed for the user's build.
@@ -258,8 +270,10 @@ void renderHat(const PlayerFrame& player) {
   tessBegin(t,2,static_cast<int>(mesh.triangleVertices*2));
   china_hat::emitDoubleSidedSurface(mesh,vertex);
   tessDraw(t,reinterpret_cast<void*>(base+contextRva),0);
+  hatFillStatus.store(1,std::memory_order_relaxed);
   alignas(16) std::uint8_t surfaceScratch[0x200]{}; tessEnd(t,surfaceScratch,0,0);
- }
+  }
+ } else hatFillStatus.store(0,std::memory_order_relaxed);
  std::memcpy(reinterpret_cast<void*>(color),saved,sizeof(saved)); *reinterpret_cast<std::uint8_t*>(flag)=oldFlag;
 }
 
@@ -272,7 +286,8 @@ void renderTrail(const PlayerFrame& player) {
  std::uintptr_t actor=0;
  if (!localPlayer(actor) || actor!=player.entity) { trail.clear(); trailStatus.store(0,std::memory_order_relaxed); return; }
  china_hat::Point feet{player.world.x,player.world.y-1.62f+.10f,player.world.z};
- trail.update(actor,feet,now);
+ const auto ttl=static_cast<std::uint64_t>(param(VisualParam::TrailSeconds)*1000.0f);
+ trail.update(actor,feet,now,ttl);
  if (trail.size()<2) { trailStatus.store(0,std::memory_order_relaxed); return; }
  trailStatus.store(2,std::memory_order_relaxed);
  float origin[3]{}, saved[4]{}; std::uint8_t oldFlag=0, state[0x178]{};
@@ -289,12 +304,13 @@ void renderTrail(const PlayerFrame& player) {
   const auto& p=trail[i]; auto& v=points[i];
   v.position={p.point.x-origin[0],p.point.y-origin[1],p.point.z-origin[2]};
   valid[i]=std::fabs(v.position.x)<32 && std::fabs(v.position.y)<32 && std::fabs(v.position.z)<32;
-  float age=static_cast<float>(now-p.time)/visual_trail::History::lifetime;
+  float age=static_cast<float>(now-p.time)/static_cast<float>(ttl);
   v.color=china_hat::rainbow(.38f + static_cast<float>(i)*.002f,static_cast<std::uint8_t>(255.f*(1.f-std::clamp(age,0.f,1.f))));
   if (i && valid[i] && valid[i-1]) ++segments;
  }
  if (!segments) return;
- auto tint=visual_color::material(materialTint.load(std::memory_order_acquire),visual_color::Effect::Trail);
+ auto tint=visual_color::animated(materialTint.load(std::memory_order_acquire),trailRainbow.load(std::memory_order_acquire),
+    {{param(VisualParam::TrailRed),param(VisualParam::TrailGreen),param(VisualParam::TrailBlue)}},param(VisualParam::TrailRainbowSpeed),now);
  std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
  auto* t=reinterpret_cast<void*>(tess);
  tessBegin(t,4,segments*2);
@@ -304,17 +320,21 @@ void renderTrail(const PlayerFrame& player) {
  lastTrailSubmit.store(GetTickCount64(),std::memory_order_relaxed);
  trailStatus.store(1,std::memory_order_relaxed);
  alignas(16) std::uint8_t scratch[0x200]{}; tessEnd(t,scratch,0,0);
- if (trailFill.load(std::memory_order_acquire) && tessIdle(tess)) {
+ if (trailFill.load(std::memory_order_acquire)) {
+  if (!tessIdle(tess)) { trailFillStatus.store(2,std::memory_order_relaxed); }
+  else {
   std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
   // 12 vertices per segment: two triangles, each drawn in both directions.
   // Screen/material state and transparency remain controlled by the game.
-  float height=std::clamp(player.height*0.8f,0.65f,1.6f);
+  float height=std::clamp(player.height*param(VisualParam::TrailHeight),0.4f,2.0f);
   tessBegin(t,2,segments*12);
   for (std::size_t i=1;i<trail.size();++i)
    if (valid[i] && valid[i-1]) visual_ribbon::segment(points[i-1],points[i],height,vertex);
   tessDraw(t,reinterpret_cast<void*>(base+contextRva),0);
+  trailFillStatus.store(1,std::memory_order_relaxed);
   alignas(16) std::uint8_t ribbonScratch[0x200]{}; tessEnd(t,ribbonScratch,0,0);
- }
+  }
+ } else trailFillStatus.store(0,std::memory_order_relaxed);
  std::memcpy(reinterpret_cast<void*>(color),saved,sizeof(saved)); *reinterpret_cast<std::uint8_t*>(flag)=oldFlag;
 }
 void screenHook(void* self,void* ctx) {
@@ -380,9 +400,9 @@ void SetChinaHatEnabled(bool value) {
  if (enableVisual()) enabled.store(true,std::memory_order_release);
 }
 bool HatFillEnabled() { return hatFill.load(std::memory_order_acquire); }
-void SetHatFillEnabled(bool value) { hatFill.store(value,std::memory_order_release); }
+void SetHatFillEnabled(bool value) { hatFill.store(value,std::memory_order_release); hatFillStatus.store(0,std::memory_order_relaxed); }
 bool TrailFillEnabled() { return trailFill.load(std::memory_order_acquire); }
-void SetTrailFillEnabled(bool value) { trailFill.store(value,std::memory_order_release); }
+void SetTrailFillEnabled(bool value) { trailFill.store(value,std::memory_order_release); trailFillStatus.store(0,std::memory_order_relaxed); }
 bool VisualTintEnabled() { return materialTint.load(std::memory_order_acquire); }
 void SetVisualTintEnabled(bool value) { materialTint.store(value,std::memory_order_release); }
 bool TrailEnabled() { return trailEnabled.load(std::memory_order_acquire); }
@@ -391,8 +411,20 @@ void SetTrailEnabled(bool value) {
  trailStatus.store(0,std::memory_order_relaxed);
  if (enableVisual()) trailEnabled.store(true,std::memory_order_release);
 }
-float ChinaHatHeight() { return heightOffset.load(std::memory_order_acquire); }
-void SetChinaHatHeight(float value) { if (std::isfinite(value)) heightOffset.store(std::clamp(value,-0.2f,0.4f),std::memory_order_release); }
+float GetVisualParam(VisualParam p) {
+ auto i=static_cast<std::size_t>(p); return i<static_cast<std::size_t>(VisualParam::Count)?params.values[i].load(std::memory_order_acquire):0.f;
+}
+void SetVisualParam(VisualParam p,float value) {
+ auto i=static_cast<std::size_t>(p); if (i<static_cast<std::size_t>(VisualParam::Count)) params.values[i].store(sanitizeVisualParam(p,value),std::memory_order_release);
+}
+float ChinaHatHeight() { return GetVisualParam(VisualParam::HatOffset); }
+void SetChinaHatHeight(float value) { SetVisualParam(VisualParam::HatOffset,value); }
+bool HatRainbowEnabled() { return hatRainbow.load(std::memory_order_acquire); }
+void SetHatRainbowEnabled(bool value) { hatRainbow.store(value,std::memory_order_release); }
+bool TrailRainbowEnabled() { return trailRainbow.load(std::memory_order_acquire); }
+void SetTrailRainbowEnabled(bool value) { trailRainbow.store(value,std::memory_order_release); }
+int HatFillStatus() { return hatFillStatus.load(std::memory_order_relaxed); }
+int TrailFillStatus() { return trailFillStatus.load(std::memory_order_relaxed); }
 int ChinaHatStatus() {
  int status=hatStatus.load(std::memory_order_relaxed);
  auto then=lastHatSubmit.load(std::memory_order_relaxed), now=GetTickCount64();

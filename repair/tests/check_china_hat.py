@@ -29,22 +29,32 @@ assert 'OMSetDepthStencilState' not in n
 assert 'trailGeneration' in n and 'trail.clear()' in n
 assert 'tessBegin(t,4,segments*2)' in n
 hat=n[n.index('void renderHat('):n.index('void renderTrail(')]
-assert 'visual_color::material(materialTint.load' in hat and 'visual_color::Effect::Hat' in hat
-assert 'Color tint (test)' in u and 'materialTint{false}' in n
-assert 'Hat fill (test)' in u and 'Trail fill (test)' in u
-assert 'hatFill{false}, trailFill{false}' in n
+assert 'visual_color::animated(materialTint.load' in hat and 'hatRainbow.load' in hat
+assert 'Enable colors' in u and 'materialTint{true}' in n
+assert 'Filled hat (test)' in u and 'Filled trail (test)' in u
+assert 'hatFill{true}, trailFill{true}' in n
+assert 'guiBegin("Visuals"' in u and 'guiBeginTabItem("China Hat"' in u and 'guiBeginTabItem("Trail"' in u
+assert 'Rainbow hat' in u and 'Rainbow trail' in u
+assert 'hatRainbow{true}, trailRainbow{true}' in n
+assert 'std::atomic<bool> available{false}, enabled{false}' in n and 'trailEnabled{false}' in n
+assert '_ZN5ImGui11BeginTabBarEPKci' in u and '_ZN5ImGui12BeginTabItemEPKcPbi' in u
+for symbol in ('_ZN5ImGui11BeginTabBarEPKci','_ZN5ImGui9EndTabBarEv',
+               '_ZN5ImGui12BeginTabItemEPKcPbi','_ZN5ImGui10EndTabItemEv',
+               '_ZN5ImGui10ColorEdit3EPKcPfi','_ZN5ImGui17SetNextWindowSizeERK6ImVec2i'):
+    assert symbol in u and symbol.encode() in (r.parent/'GAYClientInternal.dll').read_bytes(), symbol
+assert 'guiEndTabItem();' in u and 'guiEndTabBar();' in u
 trail=n[n.index('void renderTrail('):n.index('void screenHook(')]
-assert 'visual_color::Effect::Trail' in trail
+assert 'visual_color::animated(materialTint.load' in trail and 'trailRainbow.load' in trail
 assert 'saved,sizeof(saved)' in hat and 'saved,sizeof(saved)' in trail
 assert 'constexpr int segments=48, spokes=12' in hat
 assert 'tessBegin(t,4,2*(segments+spokes))' in hat and 'china_hat::emitWireframe' in hat
 assert hat.index('tessDraw(') < hat.index('tessEnd(')
 assert 'hat_animation::bob(' in hat
-assert 'if (hatFill.load(std::memory_order_acquire) && tessIdle(tess))' in hat
-assert 'if (trailFill.load(std::memory_order_acquire) && tessIdle(tess))' in trail
+assert 'if (hatFill.load(std::memory_order_acquire))' in hat and 'if (!tessIdle(tess))' in hat
+assert 'if (trailFill.load(std::memory_order_acquire))' in trail and 'if (!tessIdle(tess))' in trail
 assert hat.index('tessBegin(t,4,') < hat.index('tessBegin(t,2,')
 assert trail.index('tessBegin(t,4,') < trail.index('tessBegin(t,2,')
-assert 'std::clamp(player.height*0.8f,0.65f,1.6f)' in trail
+assert 'param(VisualParam::TrailHeight)' in trail and 'param(VisualParam::TrailSeconds)' in trail
 assert 'visual_ribbon::segment' in trail and 'segments*12' in trail
 assert hat.index('surfaceScratch') < hat.rindex('saved,sizeof(saved)')
 assert trail.index('ribbonScratch') < trail.rindex('saved,sizeof(saved)')
@@ -53,6 +63,9 @@ assert screen.index('renderHat(visible)') < screen.index('renderTrail(local)')
 assert u.index('InitializeChinaHat(mhCreate') > u.index('mhApply())')
 assert 'GetModuleFileNameW' in n and 'Minecraft.Windows.exe' in n
 assert '0x28,0x83,0xb7,0x2a' in v
+for field in ('HatRadius','HatConeHeight','HatOffset','HatBobAmplitude','HatBobSpeed','HatRainbowSpeed',
+              'TrailHeight','TrailSeconds','TrailRainbowSpeed','HatRed','HatGreen','HatBlue','TrailRed','TrailGreen','TrailBlue'):
+    assert 'VisualParam::'+field in n and 'VisualParam::'+field in u, field
 print('Experimental China Hat gating, input and render wiring: static OK (Windows game test required)')
 
 # Recorded diagnostic bytes are checked independently of the C++ initializer.

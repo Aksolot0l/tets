@@ -1,5 +1,6 @@
 #pragma once
 #include <windows.h>
+#include "visual_settings.h"
 
 using HatCreateHook = int (WINAPI*)(void*, void*, void**);
 using HatToggleHook = int (WINAPI*)(void*);
@@ -24,3 +25,12 @@ float ChinaHatHeight();
 void SetChinaHatHeight(float value);
 int ChinaHatStatus();
 int TrailStatus();
+
+float GetVisualParam(VisualParam param);
+void SetVisualParam(VisualParam param,float value);
+bool HatRainbowEnabled();
+void SetHatRainbowEnabled(bool enabled);
+bool TrailRainbowEnabled();
+void SetTrailRainbowEnabled(bool enabled);
+int HatFillStatus();
+int TrailFillStatus();

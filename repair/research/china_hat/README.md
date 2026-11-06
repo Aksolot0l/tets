@@ -35,24 +35,23 @@ Before drawing, it checks player identity, position, dimensions and tessellator
 state and restores the global shader color. This does not prove private ABI,
 local-player chain or camera semantics. Windows runtime testing is essential.
 
-The hat is off by default; enable `China Hat (test)` and use third-person view.
-`Hat height` adjusts placement, which follows interpolated player position and
-approximate hitbox height, not the animated head bone. `Trail (test)` draws a
-bounded, short-lived line based on world positions. `submitted` in the menu
-means the code called the game renderer; it does not prove visible output.
-Del disables both features and the overlay; the adapter remains loaded until
-exit. Hooks are installed only after one of these features is enabled.
-The user confirmed that the local-player identification, hat, and simple
-trail work, including green/cyan material tint. The hat now has a small
-frame-rate-independent bob. `Hat fill (test)` and `Trail fill (test)` are
-separate, off-by-default candidate triangle batches added after the confirmed
-line batches, with an idle-tessellator recheck and shader-state restoration.
-The trail surface is roughly 80% of the observed player height. Candidate
-mode 2 and these batches are not verified on this game build: they may be
-invisible, corrupt rendering, or crash. No new depth or blending state is
-assumed; opacity and correct occlusion are not guaranteed. The line-mode
-fallback remains available by unchecking the fill settings. The new behavior
-requires Windows/game testing.
+The separate draggable `Visuals` window contains `China Hat`, `Trail`, and
+`Options` tabs. Both modules are off by default; their per-session controls
+include fill, animated whole-material rainbow or fixed color, rainbow speed,
+shape/position/bob for the hat, and ribbon height/lifetime for the trail.
+Settings are not persisted. The material tint and simple local-player lines were
+confirmed by the user; the new UI, animated colors and controls are untested on
+Windows. Del disables both features and the overlay; hooks remain installed.
+
+Fill is on by default for each module once enabled, but can be turned off in
+the UI before enabling the module. It uses a candidate mode-2 triangle batch
+after the known line batch and checks the tessellator is idle first. There is
+no proof mode 2 or this material works in the user's game: the result may be
+invisible, cause corruption, or crash. `Fill: submitted` means only that the
+batch was sent, not that it was visible. The game controls depth and blending;
+correct occlusion and opacity are not guaranteed. The hat still follows player
+position and hitbox rather than the head bone. When fill is disabled the known
+line rendering remains available. All new behavior requires Windows testing.
 
 `DIAG_RENDER.ps1` is optional, read-only research. It prints the game EXE hash
 (if Windows permits access), PE timestamp/size, and 16 machine-code bytes from

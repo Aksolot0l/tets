@@ -14,6 +14,8 @@ int main() {
  h.update(200,{std::numeric_limits<float>::quiet_NaN(),0,0},1600); assert(h.size()==0);
  h.update(200,{0,0,0},2000); h.update(200,{.1f,0,0},2100);
  h.expire(5001); assert(h.size()==1); h.expire(6000); assert(h.size()==0);
+ h.clear(); h.update(3,{0,0,0},1000,6000); h.update(3,{.2f,0,0},1100,6000);
+ h.expire(4100,6000); assert(h.size()==2); h.expire(4100,1000); assert(h.size()==0);
  h.clear(); for (int i=0;i<180;i++) h.update(1,{float(i)*.1f,0,0},1000+i*51);
  assert(h.size()<=History::capacity && h.size()>2);
  h.clear(); assert(!h.size());
