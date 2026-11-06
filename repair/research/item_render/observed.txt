@@ -16,3 +16,21 @@ Do not hook, replace, suppress, or replay any draw on the basis of these
 strings and candidate windows. Follow-up RTTI file scan may identify vtables
 and candidate method bodies, but only targeted runtime observation can establish
 whether a function corresponds to held items and which stack is a diamond sword.
+
+Follow-up user-supplied ITEM_RENDER_DIAG_2.txt, same SHA:
+ItemInHandRenderer type descriptor 0x01863518, vtables 0x01729ee8 and
+0x01729f00. The primary slot 0 at 0x59e870 is a deleting destructor;
+the secondary slot 0 at 0x5a3dc4 is a thunk to that destructor. Neither is
+an item-rendering method. ItemRenderer slot 5 is a large function 0x56fcc0
+but its actual semantics and ABI remain unverified.
+
+Existing player-render diagnostics contain a direct call at 0x56cd2a to
+0x5a22f0 with the fourth argument in R9, followed by calls at 0x56cd4c and
+0x56cd89 to 0x59f2c0/0x59f200 and candidate tessellator operations. At
+0x5a22f0, the fourth argument's +0x10/+0x18 pointers and apparent renderer
+state lead into tessellator setup. A helper at 0x5a23f0 reads a +0x10 item
+pointer and its +0x36 short field; registration at 0xaa8d2b also reads that
+field. This is a candidate identity relationship only: no stack layout,
+first-person path, diamond identity, thread affinity, transform or safe
+suppression behavior is confirmed. Do not skip/call/hook these functions on
+this evidence alone; the code can modify renderer/tessellator state.
