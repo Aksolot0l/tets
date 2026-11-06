@@ -19,6 +19,12 @@ constexpr Signature signatures[] = {
  {0x5d0a90, {0x4c,0x8b,0xdc,0x57,0x48,0x81,0xec,0xb0,0x00,0x00,0x00,0x8b,0x81,0x6c,0x01,0x00}},
  {0x5d1840, {0x48,0x8b,0xc4,0x55,0x48,0x8d,0x68,0xa1,0x48,0x81,0xec,0xe0,0x00,0x00,0x00,0x48}}
 };
+// Only hooks installed by the adapter can account for these changed prologues.
+// The on-disk signature and executable hash must still be checked separately.
+inline bool mayBePatched(std::uint32_t rva, bool visualInstalled, bool worldInstalled) {
+ if (!visualInstalled) return false;
+ return rva==0x581910 || rva==0x3528c0 || rva==0x11b2d0 || (worldInstalled && rva==0x5ae250);
+}
 inline bool identity(const std::uint8_t* hash, std::uint32_t timestamp, std::size_t imageSize) {
  return hash && timestamp == kTimestamp && imageSize == kImageSize && std::memcmp(hash,kHash,32)==0;
 }

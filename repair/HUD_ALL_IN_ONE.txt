@@ -43,6 +43,7 @@ SDK и Dear ImGui сюда не включены. Исходников закр�
    - repair/src/visual_jump.h
    - repair/src/visual_accessory.h
    - repair/src/katana_mesh.h
+   - repair/tests/china_hat_runtime.cpp
    - repair/tests/check_katana_integration.py
    - repair/tools/embed_katana.py
    - repair/src/katana_asset.h
@@ -833,8 +834,15 @@ static void drawVisualPanel() {
             bool katana=KatanaEnabled(); if (guiCheckbox("Diamond sword: katana (test)",&katana)) SetKatanaEnabled(katana);
             if (KatanaEnabled()) {
                 int ks=KatanaStatus();
-                realText(ks==1?"Katana: GPU draw submitted":ks==2?"Katana: draw unavailable, original kept":"Katana: waiting for held diamond sword",nullptr);
-            } else if (KatanaStatus()==3) realText("Katana: unsupported or hooks unavailable",nullptr);
+                realText(ks==1?"Katana: GPU draw submitted":ks==2?"Katana: draw unavailable; original kept":
+                    ks==9?"Katana: local player not matched":ks==10?"Katana: sword not matched":
+                    ks==11?"Katana: waiting for draw path":"Katana: waiting for held diamond sword",nullptr);
+            } else {
+                const int ks=KatanaStatus();
+                if (ks>=3) realText(ks==3?"Katana: game hooks unavailable":ks==4?"Katana: GPU hooks unavailable":
+                    ks==5?"Katana: game check failed":ks==6?"Katana: item code changed":
+                    ks==7?"Katana: model invalid":"Katana: hook install failed",nullptr);
+            }
             sectionTitle("3D ACCESSORY");
             bool accessory=AccessoryEnabled(); if (guiCheckbox("3D crown (test)",&accessory)) SetAccessoryEnabled(accessory);
             if (canVisualPreview() && guiButton("Settings##open_accessory",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Accessory;
@@ -1283,6 +1291,7 @@ static void patchedDrawGui(void* runtime) {
         SetTrailEnabled(false);
         SetJumpEnabled(false);
         SetAccessoryEnabled(false);
+        SetKatanaEnabled(false);
         SetPlayerSkinPreviewActive(false);
         SetPlayerModelPreviewActive(false);
         SetPlayerPreviewHatActive(false);
@@ -2391,7 +2400,7 @@ std::atomic<bool> accessoryEnabled{false};
 std::atomic<bool> katanaEnabled{false};
 std::atomic<int> katanaStatus{0};
 std::atomic<ULONGLONG> lastKatanaSubmit{0};
-std::atomic<int> katanaHookState{0};
+std::atomic<int> katanaHookState{0}, katanaHookFailure{8};
 using HeldRender=std::uintptr_t (*)(void*,void*,void*,std::uintptr_t,float,std::uint8_t,std::uint8_t);
 using HeldDraw=std::uintptr_t (*)(void*,void*,std::uint8_t);
 HeldRender originalHeldRender=nullptr; HeldDraw originalHeldDraw=nullptr;
@@ -2546,7 +2555,11 @@ bool fileCodeAt(const BYTE* file,std::size_t size,const IMAGE_NT_HEADERS64& nt,s
  }
  return false;
 }
-bool validateGame() {
+bool validateGame(bool afterVisualHooks=false) {
+ // Never excuse memory differences unless the adapter itself completed all
+ // required visual hooks. All disk hashes/signatures remain mandatory.
+ if (afterVisualHooks && hookState.load(std::memory_order_acquire)!=2) return false;
+ const bool worldInstalled=afterVisualHooks && worldHookReady.load(std::memory_order_acquire);
  HMODULE module=GetModuleHandleW(nullptr); if (!module) return false;
  wchar_t path[32768]{}; DWORD n=GetModuleFileNameW(module,path,32768);
  if (!n || n>=32768) return false;
@@ -2575,12 +2588,15 @@ bool validateGame() {
    valid=true;
    for (const auto& sig:hat_validation::signatures) {
     const BYTE* fromFile=nullptr; std::uint8_t inMemory[16]{};
-    if (!fileCodeAt(bytes,size,nt,table,sig.rva,fromFile) || std::memcmp(fromFile,sig.bytes,16)!=0 ||
-        !read(image+sig.rva,inMemory,16) || std::memcmp(inMemory,fromFile,16)!=0) { valid=false; break; }
+    if (!fileCodeAt(bytes,size,nt,table,sig.rva,fromFile) || std::memcmp(fromFile,sig.bytes,16)!=0) { valid=false; break; }
+    if (!hat_validation::mayBePatched(sig.rva,afterVisualHooks,worldInstalled) &&
+        (!read(image+sig.rva,inMemory,16) || std::memcmp(inMemory,fromFile,16)!=0)) { valid=false; break; }
    }
    for (auto rva : {screenRva,endRva,clientTickRva}) {
     const BYTE* fromFile=nullptr; std::uint8_t inMemory[16]{};
-    if (!fileCodeAt(bytes,size,nt,table,rva,fromFile) || !read(image+rva,inMemory,16) || std::memcmp(inMemory,fromFile,16)!=0) valid=false;
+    if (!fileCodeAt(bytes,size,nt,table,rva,fromFile)) { valid=false; continue; }
+    if (!hat_validation::mayBePatched(rva,afterVisualHooks,worldInstalled) &&
+        (!read(image+rva,inMemory,16) || std::memcmp(inMemory,fromFile,16)!=0)) valid=false;
    }
    if (valid) base=image;
   }
@@ -2937,10 +2953,15 @@ std::uintptr_t heldRenderHook(void* self,void* actor,void* stack,std::uintptr_t 
  const auto returnAddress=reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));
  std::uintptr_t local=0;
  auto memory=[](std::uintptr_t address,void* out,std::size_t n) { return read(address,out,n); };
- const bool eligible=!katanaScope && katanaEnabled.load(std::memory_order_acquire) && returnAddress==base+0x5a1d2d &&
-   localPlayer(local) && local==reinterpret_cast<std::uintptr_t>(actor) &&
-   diamond_sword_candidate::matches(base,reinterpret_cast<std::uintptr_t>(stack),memory);
- if (!eligible) return originalHeldRender(self,actor,stack,a4,a5,a6,a7);
+ if (katanaScope || !katanaEnabled.load(std::memory_order_acquire) || returnAddress!=base+0x5a1d2d)
+  return originalHeldRender(self,actor,stack,a4,a5,a6,a7);
+ if (!localPlayer(local) || local!=reinterpret_cast<std::uintptr_t>(actor)) {
+  katanaStatus.store(9,std::memory_order_relaxed); return originalHeldRender(self,actor,stack,a4,a5,a6,a7);
+ }
+ if (!diamond_sword_candidate::matches(base,reinterpret_cast<std::uintptr_t>(stack),memory)) {
+  katanaStatus.store(10,std::memory_order_relaxed); return originalHeldRender(self,actor,stack,a4,a5,a6,a7);
+ }
+ katanaStatus.store(11,std::memory_order_relaxed); // Matching candidate; wait for its draw branch.
  struct Scope { Scope(){katanaScope=true;} ~Scope(){katanaScope=false;} } scope;
  return originalHeldRender(self,actor,stack,a4,a5,a6,a7);
 }
@@ -3177,18 +3198,23 @@ int KatanaStatus() {
 void SetKatanaEnabled(bool value) {
  if (!value) { katanaEnabled.store(false,std::memory_order_release); katanaStatus.store(0,std::memory_order_relaxed); return; }
  katanaStatus.store(0,std::memory_order_relaxed);
- if (!enableVisual() || !gpuHooksReady.load(std::memory_order_acquire)) { katanaStatus.store(3,std::memory_order_relaxed); return; }
+ if (!enableVisual()) { katanaStatus.store(3,std::memory_order_relaxed); return; }
+ if (!gpuHooksReady.load(std::memory_order_acquire)) { katanaStatus.store(4,std::memory_order_relaxed); return; }
  int state=katanaHookState.load(std::memory_order_acquire);
  if (state==0 && katanaHookState.compare_exchange_strong(state,1,std::memory_order_acq_rel)) {
-  bool ok=validateGame() && katanaCodeMatches() && katanaMesh().vertices()==4572 && katanaMesh().indices()==7866;
-  if(ok) {
+  int failure=0;
+  if (!validateGame(true)) failure=5;
+  else if (!katanaCodeMatches()) failure=6;
+  else if (katanaMesh().vertices()!=4572 || katanaMesh().indices()!=7866) failure=7;
+  else {
    visual_hooks::Hook hooks[]={{reinterpret_cast<void*>(base+0x59f300),reinterpret_cast<void*>(&heldRenderHook),reinterpret_cast<void**>(&originalHeldRender)},
                                {reinterpret_cast<void*>(base+0x59f200),reinterpret_cast<void*>(&heldDrawHook),reinterpret_cast<void**>(&originalHeldDraw)}};
-   ok=visual_hooks::install(hooks,2,createHook,enableHook,disableHook,removeHook);
+   if (!visual_hooks::install(hooks,2,createHook,enableHook,disableHook,removeHook)) failure=8;
   }
-  katanaHookState.store(ok?2:3,std::memory_order_release); state=ok?2:3;
+  if (failure) katanaHookFailure.store(failure,std::memory_order_relaxed);
+  katanaHookState.store(failure?3:2,std::memory_order_release); state=failure?3:2;
  }
- if(state!=2) { katanaStatus.store(3,std::memory_order_relaxed); return; }
+ if(state!=2) { katanaStatus.store(state==3?katanaHookFailure.load(std::memory_order_relaxed):8,std::memory_order_relaxed); return; }
  katanaEnabled.store(true,std::memory_order_release);
 }
 
@@ -4222,6 +4248,12 @@ constexpr Signature signatures[] = {
  {0x5d0a90, {0x4c,0x8b,0xdc,0x57,0x48,0x81,0xec,0xb0,0x00,0x00,0x00,0x8b,0x81,0x6c,0x01,0x00}},
  {0x5d1840, {0x48,0x8b,0xc4,0x55,0x48,0x8d,0x68,0xa1,0x48,0x81,0xec,0xe0,0x00,0x00,0x00,0x48}}
 };
+// Only hooks installed by the adapter can account for these changed prologues.
+// The on-disk signature and executable hash must still be checked separately.
+inline bool mayBePatched(std::uint32_t rva, bool visualInstalled, bool worldInstalled) {
+ if (!visualInstalled) return false;
+ return rva==0x581910 || rva==0x3528c0 || rva==0x11b2d0 || (worldInstalled && rva==0x5ae250);
+}
 inline bool identity(const std::uint8_t* hash, std::uint32_t timestamp, std::size_t imageSize) {
  return hash && timestamp == kTimestamp && imageSize == kImageSize && std::memcmp(hash,kHash,32)==0;
 }
@@ -13918,14 +13950,70 @@ asset=(r/'src/katana_asset.h').read_text()
 embedded=bytes(int(x,16) for x in re.findall(r'0x([0-9a-f]{2})',asset))
 assert embedded==c.convert((r/'assets/models/cyberpunk-katana.glb').read_bytes())
 n=(r/'src/china_hat_native.cpp').read_text(); g=(r/'src/visual_gpu_depth.h').read_text(); ui=(r/'src/compat.cpp').read_text()
-assert 'katanaEnabled{false}' in n and 'returnAddress==base+0x5a1d2d' in n and 'returnAddress!=base+0x59fd1e' in n
-assert 'local==reinterpret_cast<std::uintptr_t>(actor)' in n and 'diamond_sword_candidate::matches' in n
-assert 'validateGame() && katanaCodeMatches()' in n and 'visual_hooks::install(hooks,2' in n
+assert 'katanaEnabled{false}' in n and 'returnAddress!=base+0x5a1d2d' in n and 'returnAddress!=base+0x59fd1e' in n
+assert 'local!=reinterpret_cast<std::uintptr_t>(actor)' in n and 'diamond_sword_candidate::matches' in n
+assert 'validateGame(true)' in n and 'katanaCodeMatches()' in n and 'visual_hooks::install(hooks,2' in n
+assert 'hookState.load(std::memory_order_acquire)!=2' in n
+assert n.count('hat_validation::mayBePatched(')==2
+for message in ('game hooks unavailable','GPU hooks unavailable','game check failed','item code changed','model invalid','hook install failed'): assert message in ui
 assert 'if (!submitted || !katanaEnabled.load' in n and 'return originalHeldDraw(renderer,context,mode)' in n
 assert 'katanaObserve=ctx' in n and 'katanaSuppress=ctx' in n and 'katanaSuppress=nullptr' in n
 assert 'if (ctx && ctx==katanaSuppress) return;' in g
 assert 'Diamond sword: katana (test)' in ui
+assert 'SetKatanaEnabled(false);' in ui
+for message in ('local player not matched','sword not matched','waiting for draw path'): assert message in ui
 print('Embedded model and first-person opt-in wiring OK; no Windows/game validation')
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_katana_integration.py
+================================================================================
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/china_hat_runtime.cpp
+================================================================================
+#include "../src/china_hat_lines.h"
+#include "../src/china_hat_validation.h"
+#include <cassert>
+#include <vector>
+#include <cmath>
+#include <cstring>
+int main() {
+ using namespace china_hat;
+ Mesh m{}; assert(build(m,{2,3,4},.58f,.34f,48,.25f,255));
+ std::vector<Vertex> surface;
+ assert(emitDoubleSidedSurface(m,[&](const Vertex& v){surface.push_back(v);}));
+ assert(surface.size()==288);
+ for (std::size_t i=0;i<48;i++) {
+  const auto& a=surface[i*6]; const auto& b=surface[i*6+1]; const auto& c=surface[i*6+2];
+  assert(a.position.y>b.position.y && a.position.y>c.position.y);
+  assert(surface[i*6+3].position.y==a.position.y);
+  assert(surface[i*6+4].position.x==c.position.x && surface[i*6+5].position.x==b.position.x);
+ }
+ std::vector<Vertex> list;
+ assert(emitWireframe(m,12,[&](const Vertex& v){list.push_back(v);}));
+ assert(list.size()==120);
+ for (int i=0;i<48;i++) {
+  auto a=list[i*2].position, b=list[i*2+1].position;
+  assert(std::fabs(a.y-3.0f)<1e-6 && std::fabs(b.y-3.0f)<1e-6);
+  assert(std::fabs(a.x-m.outline[i].position.x)<1e-6);
+  assert(std::fabs(b.z-m.outline[i+1].position.z)<1e-6);
+ }
+ for (int i=0;i<12;i++) assert(std::fabs(list[96+i*2].position.y-3.34f)<1e-5);
+ list.clear(); assert(!emitWireframe(m,13,[&](const Vertex& v){list.push_back(v);})); assert(list.empty());
+ m.triangleVertices=0; assert(!emitWireframe(m,12,[&](const Vertex& v){list.push_back(v);}));
+ // Bootstrap checks all code. After successful hook installation only the
+ // adapter-owned sites may have different in-memory bytes; disk is still verified.
+ for (auto rva : {0x581910u,0x3528c0u,0x11b2d0u,0x5ae250u}) assert(!hat_validation::mayBePatched(rva,false,true));
+ for (auto rva : {0x581910u,0x3528c0u,0x11b2d0u}) assert(hat_validation::mayBePatched(rva,true,false));
+ assert(!hat_validation::mayBePatched(0x5ae250,true,false));
+ assert(hat_validation::mayBePatched(0x5ae250,true,true));
+ for (auto rva : {0x59f300u,0x59f200u,0x5d0660u,0x5d14f0u,0x5a1d28u}) assert(!hat_validation::mayBePatched(rva,true,true));
+ std::uint8_t hash[32]; std::memcpy(hash,hat_validation::kHash,sizeof hash);
+ assert(hat_validation::identity(hash,hat_validation::kTimestamp,hat_validation::kImageSize));
+ hash[31]^=1; assert(!hat_validation::identity(hash,hat_validation::kTimestamp,hat_validation::kImageSize));
+ assert(!hat_validation::identity(nullptr,hat_validation::kTimestamp,hat_validation::kImageSize));
+ assert(!hat_validation::identity(hat_validation::kHash,0,hat_validation::kImageSize));
+ assert(!hat_validation::identity(hat_validation::kHash,hat_validation::kTimestamp,hat_validation::kImageSize+1));
+}
+================================================================================
+КОНЕЦ ФАЙЛА: repair/tests/china_hat_runtime.cpp
 ================================================================================

@@ -55,7 +55,7 @@ std::atomic<bool> accessoryEnabled{false};
 std::atomic<bool> katanaEnabled{false};
 std::atomic<int> katanaStatus{0};
 std::atomic<ULONGLONG> lastKatanaSubmit{0};
-std::atomic<int> katanaHookState{0};
+std::atomic<int> katanaHookState{0}, katanaHookFailure{8};
 using HeldRender=std::uintptr_t (*)(void*,void*,void*,std::uintptr_t,float,std::uint8_t,std::uint8_t);
 using HeldDraw=std::uintptr_t (*)(void*,void*,std::uint8_t);
 HeldRender originalHeldRender=nullptr; HeldDraw originalHeldDraw=nullptr;
@@ -210,7 +210,11 @@ bool fileCodeAt(const BYTE* file,std::size_t size,const IMAGE_NT_HEADERS64& nt,s
  }
  return false;
 }
-bool validateGame() {
+bool validateGame(bool afterVisualHooks=false) {
+ // Never excuse memory differences unless the adapter itself completed all
+ // required visual hooks. All disk hashes/signatures remain mandatory.
+ if (afterVisualHooks && hookState.load(std::memory_order_acquire)!=2) return false;
+ const bool worldInstalled=afterVisualHooks && worldHookReady.load(std::memory_order_acquire);
  HMODULE module=GetModuleHandleW(nullptr); if (!module) return false;
  wchar_t path[32768]{}; DWORD n=GetModuleFileNameW(module,path,32768);
  if (!n || n>=32768) return false;
@@ -239,12 +243,15 @@ bool validateGame() {
    valid=true;
    for (const auto& sig:hat_validation::signatures) {
     const BYTE* fromFile=nullptr; std::uint8_t inMemory[16]{};
-    if (!fileCodeAt(bytes,size,nt,table,sig.rva,fromFile) || std::memcmp(fromFile,sig.bytes,16)!=0 ||
-        !read(image+sig.rva,inMemory,16) || std::memcmp(inMemory,fromFile,16)!=0) { valid=false; break; }
+    if (!fileCodeAt(bytes,size,nt,table,sig.rva,fromFile) || std::memcmp(fromFile,sig.bytes,16)!=0) { valid=false; break; }
+    if (!hat_validation::mayBePatched(sig.rva,afterVisualHooks,worldInstalled) &&
+        (!read(image+sig.rva,inMemory,16) || std::memcmp(inMemory,fromFile,16)!=0)) { valid=false; break; }
    }
    for (auto rva : {screenRva,endRva,clientTickRva}) {
     const BYTE* fromFile=nullptr; std::uint8_t inMemory[16]{};
-    if (!fileCodeAt(bytes,size,nt,table,rva,fromFile) || !read(image+rva,inMemory,16) || std::memcmp(inMemory,fromFile,16)!=0) valid=false;
+    if (!fileCodeAt(bytes,size,nt,table,rva,fromFile)) { valid=false; continue; }
+    if (!hat_validation::mayBePatched(rva,afterVisualHooks,worldInstalled) &&
+        (!read(image+rva,inMemory,16) || std::memcmp(inMemory,fromFile,16)!=0)) valid=false;
    }
    if (valid) base=image;
   }
@@ -601,10 +608,15 @@ std::uintptr_t heldRenderHook(void* self,void* actor,void* stack,std::uintptr_t 
  const auto returnAddress=reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));
  std::uintptr_t local=0;
  auto memory=[](std::uintptr_t address,void* out,std::size_t n) { return read(address,out,n); };
- const bool eligible=!katanaScope && katanaEnabled.load(std::memory_order_acquire) && returnAddress==base+0x5a1d2d &&
-   localPlayer(local) && local==reinterpret_cast<std::uintptr_t>(actor) &&
-   diamond_sword_candidate::matches(base,reinterpret_cast<std::uintptr_t>(stack),memory);
- if (!eligible) return originalHeldRender(self,actor,stack,a4,a5,a6,a7);
+ if (katanaScope || !katanaEnabled.load(std::memory_order_acquire) || returnAddress!=base+0x5a1d2d)
+  return originalHeldRender(self,actor,stack,a4,a5,a6,a7);
+ if (!localPlayer(local) || local!=reinterpret_cast<std::uintptr_t>(actor)) {
+  katanaStatus.store(9,std::memory_order_relaxed); return originalHeldRender(self,actor,stack,a4,a5,a6,a7);
+ }
+ if (!diamond_sword_candidate::matches(base,reinterpret_cast<std::uintptr_t>(stack),memory)) {
+  katanaStatus.store(10,std::memory_order_relaxed); return originalHeldRender(self,actor,stack,a4,a5,a6,a7);
+ }
+ katanaStatus.store(11,std::memory_order_relaxed); // Matching candidate; wait for its draw branch.
  struct Scope { Scope(){katanaScope=true;} ~Scope(){katanaScope=false;} } scope;
  return originalHeldRender(self,actor,stack,a4,a5,a6,a7);
 }
@@ -841,18 +853,23 @@ int KatanaStatus() {
 void SetKatanaEnabled(bool value) {
  if (!value) { katanaEnabled.store(false,std::memory_order_release); katanaStatus.store(0,std::memory_order_relaxed); return; }
  katanaStatus.store(0,std::memory_order_relaxed);
- if (!enableVisual() || !gpuHooksReady.load(std::memory_order_acquire)) { katanaStatus.store(3,std::memory_order_relaxed); return; }
+ if (!enableVisual()) { katanaStatus.store(3,std::memory_order_relaxed); return; }
+ if (!gpuHooksReady.load(std::memory_order_acquire)) { katanaStatus.store(4,std::memory_order_relaxed); return; }
  int state=katanaHookState.load(std::memory_order_acquire);
  if (state==0 && katanaHookState.compare_exchange_strong(state,1,std::memory_order_acq_rel)) {
-  bool ok=validateGame() && katanaCodeMatches() && katanaMesh().vertices()==4572 && katanaMesh().indices()==7866;
-  if(ok) {
+  int failure=0;
+  if (!validateGame(true)) failure=5;
+  else if (!katanaCodeMatches()) failure=6;
+  else if (katanaMesh().vertices()!=4572 || katanaMesh().indices()!=7866) failure=7;
+  else {
    visual_hooks::Hook hooks[]={{reinterpret_cast<void*>(base+0x59f300),reinterpret_cast<void*>(&heldRenderHook),reinterpret_cast<void**>(&originalHeldRender)},
                                {reinterpret_cast<void*>(base+0x59f200),reinterpret_cast<void*>(&heldDrawHook),reinterpret_cast<void**>(&originalHeldDraw)}};
-   ok=visual_hooks::install(hooks,2,createHook,enableHook,disableHook,removeHook);
+   if (!visual_hooks::install(hooks,2,createHook,enableHook,disableHook,removeHook)) failure=8;
   }
-  katanaHookState.store(ok?2:3,std::memory_order_release); state=ok?2:3;
+  if (failure) katanaHookFailure.store(failure,std::memory_order_relaxed);
+  katanaHookState.store(failure?3:2,std::memory_order_release); state=failure?3:2;
  }
- if(state!=2) { katanaStatus.store(3,std::memory_order_relaxed); return; }
+ if(state!=2) { katanaStatus.store(state==3?katanaHookFailure.load(std::memory_order_relaxed):8,std::memory_order_relaxed); return; }
  katanaEnabled.store(true,std::memory_order_release);
 }
 

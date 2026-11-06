@@ -577,8 +577,15 @@ static void drawVisualPanel() {
             bool katana=KatanaEnabled(); if (guiCheckbox("Diamond sword: katana (test)",&katana)) SetKatanaEnabled(katana);
             if (KatanaEnabled()) {
                 int ks=KatanaStatus();
-                realText(ks==1?"Katana: GPU draw submitted":ks==2?"Katana: draw unavailable, original kept":"Katana: waiting for held diamond sword",nullptr);
-            } else if (KatanaStatus()==3) realText("Katana: unsupported or hooks unavailable",nullptr);
+                realText(ks==1?"Katana: GPU draw submitted":ks==2?"Katana: draw unavailable; original kept":
+                    ks==9?"Katana: local player not matched":ks==10?"Katana: sword not matched":
+                    ks==11?"Katana: waiting for draw path":"Katana: waiting for held diamond sword",nullptr);
+            } else {
+                const int ks=KatanaStatus();
+                if (ks>=3) realText(ks==3?"Katana: game hooks unavailable":ks==4?"Katana: GPU hooks unavailable":
+                    ks==5?"Katana: game check failed":ks==6?"Katana: item code changed":
+                    ks==7?"Katana: model invalid":"Katana: hook install failed",nullptr);
+            }
             sectionTitle("3D ACCESSORY");
             bool accessory=AccessoryEnabled(); if (guiCheckbox("3D crown (test)",&accessory)) SetAccessoryEnabled(accessory);
             if (canVisualPreview() && guiButton("Settings##open_accessory",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Accessory;
@@ -1027,6 +1034,7 @@ static void patchedDrawGui(void* runtime) {
         SetTrailEnabled(false);
         SetJumpEnabled(false);
         SetAccessoryEnabled(false);
+        SetKatanaEnabled(false);
         SetPlayerSkinPreviewActive(false);
         SetPlayerModelPreviewActive(false);
         SetPlayerPreviewHatActive(false);

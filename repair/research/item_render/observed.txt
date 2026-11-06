@@ -81,3 +81,14 @@ proof of visibility, ABI, safe render state, shader/material or hand placement;
 Windows game testing remains mandatory. The alternative branch and third person
 are unimplemented. Switch is off by default and this note supersedes earlier
 historical statements that these components are not connected to the DLL.
+
+User screenshot after initial integration: "Katana: unsupported or hooks
+unavailable", switch did not stay enabled. Confirmed logic defect: the katana
+installer called validateGame() after installHooks() had already installed and
+patched the player/screen/tick (and possibly world) entry points. That strict
+comparison would reject the adapter's own changed bytes. Validation now still
+checks the disk identity and signatures, while selectively accepting only its
+already installed visual hook sites; katana entry points and call sites have
+separate in-memory checks. The original screenshot also grouped unrelated GPU
+and hook errors, so the exact runtime failing stage cannot be proven solely
+from that screenshot. UI now distinguishes these cases. No game test here.

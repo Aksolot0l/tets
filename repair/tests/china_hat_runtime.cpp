@@ -28,6 +28,13 @@ int main() {
  for (int i=0;i<12;i++) assert(std::fabs(list[96+i*2].position.y-3.34f)<1e-5);
  list.clear(); assert(!emitWireframe(m,13,[&](const Vertex& v){list.push_back(v);})); assert(list.empty());
  m.triangleVertices=0; assert(!emitWireframe(m,12,[&](const Vertex& v){list.push_back(v);}));
+ // Bootstrap checks all code. After successful hook installation only the
+ // adapter-owned sites may have different in-memory bytes; disk is still verified.
+ for (auto rva : {0x581910u,0x3528c0u,0x11b2d0u,0x5ae250u}) assert(!hat_validation::mayBePatched(rva,false,true));
+ for (auto rva : {0x581910u,0x3528c0u,0x11b2d0u}) assert(hat_validation::mayBePatched(rva,true,false));
+ assert(!hat_validation::mayBePatched(0x5ae250,true,false));
+ assert(hat_validation::mayBePatched(0x5ae250,true,true));
+ for (auto rva : {0x59f300u,0x59f200u,0x5d0660u,0x5d14f0u,0x5a1d28u}) assert(!hat_validation::mayBePatched(rva,true,true));
  std::uint8_t hash[32]; std::memcpy(hash,hat_validation::kHash,sizeof hash);
  assert(hat_validation::identity(hash,hat_validation::kTimestamp,hat_validation::kImageSize));
  hash[31]^=1; assert(!hat_validation::identity(hash,hat_validation::kTimestamp,hat_validation::kImageSize));
