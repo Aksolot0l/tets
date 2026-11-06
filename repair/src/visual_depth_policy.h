@@ -5,4 +5,10 @@ inline bool worldDraw(bool strict,bool worldHook,bool gpuHooks,bool context,bool
  return strict && worldHook && gpuHooks && context && depthView && validCompare;
 }
 inline bool overlayDraw(bool strict) { return !strict; }
+// A diagnostic alternative to the post-entities hat draw, never a fallback to
+// the depth-disabled screen path. Both paths must not draw in the same pass.
+inline bool playerHat(bool strict,bool selected,bool inEntities,bool local,bool valid,bool attempted) {
+ return strict && selected && inEntities && local && valid && !attempted;
+}
+inline bool entitiesHat(bool selected) { return !selected; }
 }

@@ -75,3 +75,16 @@ addresses, player state, or names, does not transmit anything, and does not
 modify or inject into the game. Candidate bytes alone do not prove compatibility.
 See `repair/tests/china_hat_mesh.cpp` for portable geometry tests. The geometry
 is compiled into the adapter; the diagnostic is not part of the installed bundle.
+
+### Alternate hat timing diagnostic
+
+User screenshots show the world pass can incorrectly occlude the hat with
+faraway terrain, including its wireframe; the depth-disabled legacy overlay
+shows the full shape. This does not prove whether depth values, projection,
+viewport or renderer timing are responsible. `Hat at player pass (test)` is
+off by default. When enabled in strict mode, it tries one guarded hat draw
+after the local player renderer within the entity pass, suppressing the normal
+post-entities hat draw. It does not change trail or legacy overlay, always
+requires the observed context/DSV/depth and restores blend/depth state. Current
+status and depth comparison function are exposed; this path has not been
+tested in Minecraft, and `submitted` does not mean it is visually correct.

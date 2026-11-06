@@ -7,6 +7,12 @@ int VisualDepthBefore();
 int VisualDepthAfter();
 int VisualDepthWorld();
 int VisualOcclusionStatus();
+// Optional player-pass timing test; never bypasses depth or blends.
+bool HatPlayerPass();
+void SetHatPlayerPass(bool enabled);
+int HatPlayerPassStatus();
+int HatPlayerDepthCompare();
+int WorldDepthCompare();
 bool VisualLegacyMode();
 void SetVisualLegacyMode(bool enabled);
 

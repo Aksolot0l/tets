@@ -79,3 +79,17 @@ for label,entry in zip(labels,entries):
     encoded=bytes(int(x,16) for x in re.findall(r'0x[0-9a-f]{2}',entry)).hex()
     assert encoded==recorded, label
 print('Recorded prologues: OK')
+
+# Optional earlier player-pass experiment: no depth bypass, no second hat in
+# the normal world path; original trail and legacy overlay remain independent.
+assert 'hatPlayerPass{false}' in n
+assert 'if (inEntityPass) return originalEntities(self,partial);' in n
+assert 'isLocal && enabled.load(std::memory_order_acquire)' in n
+assert 'playerPassAttempted=true' in n and 'drawHatAtPlayer(frame)' in n
+assert 'if (visual_depth_policy::entitiesHat(entityPlayerPass)) renderHat(visible)' in n
+alt=n[n.index('void drawHatAtPlayer(const PlayerFrame& player) {'):n.index('// Activate D3D guards')]
+assert 'visual_depth_policy::worldDraw(' in alt and 'visual_gpu_depth::matches(ctx)' in alt
+assert 'visual_gpu_depth::expectedDepth=dsv' in alt and 'visual_gpu_depth::expectedDepth=nullptr' in alt
+assert 'renderHat(player)' in alt and 'renderTrail(' not in alt
+assert 'Hat at player pass (test)' in u and 'Player compare:' in u and 'World compare:' in u
+print('Alternative player timing, mutual exclusion and depth gate: static OK; Windows test required')

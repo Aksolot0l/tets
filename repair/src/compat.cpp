@@ -355,15 +355,32 @@ static void drawTrailSettings() {
         }
     }
 }
+static const char* depthCompareLabel(int value) {
+    switch (value) { case 1:return "never"; case 2:return "less"; case 3:return "equal";
+    case 4:return "less equal"; case 5:return "greater"; case 6:return "not equal";
+    case 7:return "greater equal"; case 8:return "always"; default:return "unavailable"; }
+}
 static void drawVisualOptions() {
     bool tint=VisualTintEnabled();
     if (guiCheckbox("Enable colors",&tint)) SetVisualTintEnabled(tint);
     bool legacy=VisualLegacyMode();
     if (guiCheckbox("Old overlay (see-through)",&legacy)) SetVisualLegacyMode(legacy);
     if (!legacy) {
-        const int status=VisualOcclusionStatus();
-        realText(status==1?"World draw: submitted":status==2?"World draw: no depth":status==3?"World draw: hooks unavailable":status==4?"World draw: blocked":status==5?"World draw: no GPU draw":"World draw: waiting",nullptr);
+        if (HatPlayerPass() && !TrailEnabled()) realText("Hat uses player pass below.",nullptr);
+        else {
+            const int status=VisualOcclusionStatus();
+            realText(status==1?"World draw: submitted":status==2?"World draw: no depth":status==3?"World draw: hooks unavailable":status==4?"World draw: blocked":status==5?"World draw: no GPU draw":"World draw: waiting",nullptr);
+        }
     } else realText("Old overlay can show through walls.",nullptr);
+    if (!legacy) {
+        bool playerTiming=HatPlayerPass();
+        if (guiCheckbox("Hat at player pass (test)",&playerTiming)) SetHatPlayerPass(playerTiming);
+        if (playerTiming) {
+            const int ps=HatPlayerPassStatus();
+            realText(ps==1?"Player pass: submitted":ps==2?"Player pass: no depth":ps==3?"Player pass: hooks unavailable":ps==4?"Player pass: blocked":ps==5?"Player pass: no GPU draw":"Player pass: waiting for local player",nullptr);
+            char line[96]{}; std::snprintf(line,sizeof(line),"Player compare: %s",depthCompareLabel(HatPlayerDepthCompare())); realText(line,nullptr);
+        }
+    }
     bool gradient=VertexGradientEnabled();
     if (guiCheckbox("Vertex gradient (test)",&gradient)) SetVertexGradientEnabled(gradient);
     realText("Gradient/opacity depend on material.",nullptr);
@@ -379,6 +396,7 @@ static void drawVisualOptions() {
         realText(line,nullptr);
     };
     diagnostic("World entities",VisualDepthWorld());
+    char compareLine[96]{}; std::snprintf(compareLine,sizeof(compareLine),"World compare: %s",depthCompareLabel(WorldDepthCompare())); realText(compareLine,nullptr);
     diagnostic("Before UI",VisualDepthBefore()); diagnostic("After UI",VisualDepthAfter());
     realText("Diagnostic only, not proof of depth.",nullptr);
     realText("Resets after game closes.",nullptr);

@@ -46,6 +46,11 @@ std::atomic<bool> hatRainbow{true}, trailRainbow{true}, vertexGradient{false};
 // Default to fail-closed world rendering. Legacy screen rendering is a manual
 // fallback only and may show through walls.
 std::atomic<bool> strictDepth{true}, worldHookReady{false}, gpuHooksReady{false};
+// Off by default: preserve the current world pass until the alternate timing
+// is actually tested by the player. Does not change trail or legacy mode.
+std::atomic<bool> hatPlayerPass{false};
+std::atomic<int> hatPlayerPassStatus{0}, hatPlayerCompare{0}, worldDepthCompare{0};
+std::atomic<ULONGLONG> lastPlayerPassAttempt{0};
 // 0 waiting, 1 guarded GPU draw, 2 no scene depth, 3 hooks unavailable,
 // 4 draw blocked, 5 no GPU draw observed (e.g. waiting/busy).
 std::atomic<int> occlusionStatus{0};
@@ -101,6 +106,7 @@ TessDraw tessDraw=nullptr; TessEnd tessEnd=nullptr;
 struct PlayerFrame { china_hat::Point world{}; float height=0; std::uintptr_t entity=0; ULONGLONG at=0; bool valid=false; };
 thread_local PlayerFrame frame;
 thread_local bool inScreen=false;
+thread_local bool inEntityPass=false, entityPlayerPass=false, playerPassAttempted=false;
 void log(const char* s) { OutputDebugStringA("GAYClient China Hat: "); OutputDebugStringA(s); OutputDebugStringA("\n"); }
 
 bool read(std::uintptr_t p, void* out, std::size_t n) {
@@ -248,12 +254,21 @@ void rememberPlayer(void* entity,float partial) {
  std::uintptr_t again=0; if (!localPlayer(again) || again!=actor) return;
  frame={{value[0],value[1],value[2]},dims[1],actor,GetTickCount64(),true};
 }
+void drawHatAtPlayer(const PlayerFrame& player);
 std::intptr_t playerHook(void* self,void* entity,void* pos,void* extra,float partial) {
  const auto result=originalPlayer(self,entity,pos,extra,partial);
  // Do not clear a local-player frame when another player's renderer runs.
  if (anyVisual()) {
   std::uintptr_t local=0;
-  if (localPlayer(local) && reinterpret_cast<std::uintptr_t>(entity)==local) rememberPlayer(entity,partial);
+  const bool isLocal=localPlayer(local) && reinterpret_cast<std::uintptr_t>(entity)==local;
+  if (isLocal) {
+   rememberPlayer(entity,partial);
+   if (visual_depth_policy::playerHat(strictDepth.load(std::memory_order_acquire),entityPlayerPass,
+       inEntityPass,isLocal && enabled.load(std::memory_order_acquire),frame.valid,playerPassAttempted)) {
+    playerPassAttempted=true; lastPlayerPassAttempt.store(GetTickCount64(),std::memory_order_relaxed);
+    drawHatAtPlayer(frame);
+   }
+  }
  }
  return result;
 }
@@ -274,7 +289,14 @@ bool validDepthCompare(D3D11_COMPARISON_FUNC fn) {
 // depth state was observed bound/enabled by the user; actual content, material
 // matrices and transparency must still be tested on Windows.
 std::intptr_t entitiesDiagnosticHook(void* self,float partial) {
+ // Never recursively start another diagnostic pass or draw another hat.
+ if (inEntityPass) return originalEntities(self,partial);
+ entityPlayerPass=hatPlayerPass.load(std::memory_order_acquire);
+ playerPassAttempted=false;
+ inEntityPass=true;
+ struct EntityScope { ~EntityScope() { inEntityPass=false; } } scope;
  auto result=originalEntities(self,partial);
+ inEntityPass=false;
  if (!anyVisual()) return result;
  sampleOutputMerger(depthWorld);
  if (!strictDepth.load(std::memory_order_acquire)) return result;
@@ -287,6 +309,7 @@ std::intptr_t entitiesDiagnosticHook(void* self,float partial) {
   if (state) { D3D11_DEPTH_STENCIL_DESC desc{}; state->GetDesc(&desc); enabledDepth=desc.DepthEnable; compare=desc.DepthFunc; }
   else enabledDepth=true; // D3D11 default null state: depth enabled, LESS.
  }
+ worldDepthCompare.store(ctx?static_cast<int>(compare):0,std::memory_order_relaxed);
  const bool worldReady=worldHookReady.load(std::memory_order_acquire);
  const bool gpuReady=gpuHooksReady.load(std::memory_order_acquire) && visual_gpu_depth::matches(ctx);
  if (!visual_depth_policy::worldDraw(true,worldReady,gpuReady,ctx!=nullptr,dsv!=nullptr,enabledDepth && validDepthCompare(compare))) {
@@ -300,7 +323,8 @@ std::intptr_t entitiesDiagnosticHook(void* self,float partial) {
   visual_gpu_depth::expectedContext=ctx; visual_gpu_depth::expectedDepth=dsv; visual_gpu_depth::worldCompare=compare;
   auto rejected=visual_gpu_depth::rejected.load(std::memory_order_relaxed);
   auto submitted=visual_gpu_depth::submitted.load(std::memory_order_relaxed);
-  renderHat(visible); renderTrail(local);
+  if (visual_depth_policy::entitiesHat(entityPlayerPass)) renderHat(visible);
+  renderTrail(local);
   visual_gpu_depth::expectedContext=nullptr; visual_gpu_depth::expectedDepth=nullptr;
   const bool blocked=visual_gpu_depth::rejected.load(std::memory_order_relaxed)!=rejected;
   const bool drew=visual_gpu_depth::submitted.load(std::memory_order_relaxed)!=submitted;
@@ -308,6 +332,36 @@ std::intptr_t entitiesDiagnosticHook(void* self,float partial) {
  }
  if (state) state->Release(); if (dsv) dsv->Release(); if (ctx) ctx->Release();
  return result;
+}
+// Optional timing comparison: immediately after the *local* player renderer
+// returns, while still inside the original entity pass. Uses the same exact
+// depth/DSV checks, transparency and GPU state restoration as the world path.
+// Its camera/depth compatibility is unverified until the user tests it.
+void drawHatAtPlayer(const PlayerFrame& player) {
+ auto* ctx=sameThreadContext(); ID3D11DepthStencilView* dsv=nullptr;
+ ID3D11DepthStencilState* state=nullptr; UINT ref=0;
+ D3D11_COMPARISON_FUNC compare=D3D11_COMPARISON_LESS; bool enabledDepth=false;
+ if (ctx) {
+  ctx->OMGetRenderTargets(0,nullptr,&dsv); ctx->OMGetDepthStencilState(&state,&ref);
+  if (state) { D3D11_DEPTH_STENCIL_DESC desc{}; state->GetDesc(&desc); enabledDepth=desc.DepthEnable; compare=desc.DepthFunc; }
+  else enabledDepth=true;
+ }
+ hatPlayerCompare.store(ctx?static_cast<int>(compare):0,std::memory_order_relaxed);
+ const bool worldReady=worldHookReady.load(std::memory_order_acquire);
+ const bool gpuReady=gpuHooksReady.load(std::memory_order_acquire) && visual_gpu_depth::matches(ctx);
+ if (!visual_depth_policy::worldDraw(true,worldReady,gpuReady,ctx!=nullptr,dsv!=nullptr,enabledDepth && validDepthCompare(compare))) {
+  hatPlayerPassStatus.store(!worldReady || !gpuReady ? 3 : 2,std::memory_order_relaxed);
+ } else {
+  visual_gpu_depth::expectedContext=ctx; visual_gpu_depth::expectedDepth=dsv; visual_gpu_depth::worldCompare=compare;
+  const auto rejected=visual_gpu_depth::rejected.load(std::memory_order_relaxed);
+  const auto submitted=visual_gpu_depth::submitted.load(std::memory_order_relaxed);
+  renderHat(player);
+  visual_gpu_depth::expectedContext=nullptr; visual_gpu_depth::expectedDepth=nullptr;
+  const bool blocked=visual_gpu_depth::rejected.load(std::memory_order_relaxed)!=rejected;
+  const bool drew=visual_gpu_depth::submitted.load(std::memory_order_relaxed)!=submitted;
+  hatPlayerPassStatus.store(blocked?4:drew?1:5,std::memory_order_relaxed);
+ }
+ if (state) state->Release(); if (dsv) dsv->Release(); if (ctx) ctx->Release();
 }
 // Activate D3D guards only while this adapter calls the game's tessDraw. Other
 // game and ImGui draws pass through untouched. No write to the scene depth.
@@ -481,6 +535,18 @@ int VisualOcclusionStatus() {
  if (hookState.load(std::memory_order_acquire)==2 &&
      (!worldHookReady.load(std::memory_order_acquire) || !gpuHooksReady.load(std::memory_order_acquire))) return 3;
  return occlusionStatus.load(std::memory_order_relaxed);
+}
+bool HatPlayerPass() { return hatPlayerPass.load(std::memory_order_acquire); }
+void SetHatPlayerPass(bool value) {
+ hatPlayerPass.store(value,std::memory_order_release);
+ lastPlayerPassAttempt.store(0,std::memory_order_relaxed); hatPlayerPassStatus.store(0,std::memory_order_relaxed);
+ hatPlayerCompare.store(0,std::memory_order_relaxed);
+}
+int HatPlayerDepthCompare() { return hatPlayerCompare.load(std::memory_order_relaxed); }
+int WorldDepthCompare() { return worldDepthCompare.load(std::memory_order_relaxed); }
+int HatPlayerPassStatus() {
+ const auto then=lastPlayerPassAttempt.load(std::memory_order_relaxed),now=GetTickCount64();
+ return !then || now<then || now-then>1000 ? 0 : hatPlayerPassStatus.load(std::memory_order_relaxed);
 }
 bool VisualLegacyMode() { return !strictDepth.load(std::memory_order_acquire); }
 void SetVisualLegacyMode(bool value) { strictDepth.store(!value,std::memory_order_release); occlusionStatus.store(0,std::memory_order_relaxed); }
