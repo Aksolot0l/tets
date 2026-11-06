@@ -36,10 +36,14 @@ state and restores the global shader color. This does not prove private ABI,
 local-player chain or camera semantics. Windows runtime testing is essential.
 
 The separate draggable `Visuals` window offers China Hat and Trail editors.
-Instead of the inaccurate independent illustration, the preview now displays
-a GPU-only centered crop of the latest game frame before the client overlay.
-It depends on the game camera and can be unavailable; this is not a separate
-3D model or a guarantee the game continues rendering while a menu is open.
+The preview is now an independent, stylized Steve-like sample avatar on a
+background, not a camera crop or the player's actual skin. A front-facing head
+shows the hat; an animated example character with a simulated path shows trail.
+The hat uses the same mesh builder, timing, settings and bob as the game, and
+both previews use the same uniform-color animation and opacity settings.
+The GPU material, interpolation, exact head model and actual walking history
+are not replicated; no exact pixel match is promised. Skin extraction from this
+build is not implemented. The new preview still requires Windows testing.
 
 The user observed that the output-merger had a DSV bound and depth enabled
 after the entity pass, but depth was disabled around the screen/UI pass. The
@@ -53,8 +57,9 @@ the guarded path to skip work. Hook installation is deferred until the user
 enables a visual; partial hook failures are rolled back where possible. The
 `Old overlay (see-through)` switch opts back into the previous screen path.
 
-This is experimental: the user has not tested the new hook, game matrices,
-depth content, opacity, resource changes, or actual occlusion on Windows.
+The user reported that the new world rendering, block occlusion and opacity
+worked. Precise occlusion for all other cases and the new independent preview
+remain experimental and require more Windows testing.
 A bound DSV does not prove it contains correct depth for every object, and
 `World draw: submitted` is not proof of visibility or correct occlusion.
 Private ABI mismatch, driver behaviour, unobserved GPU paths, device changes,

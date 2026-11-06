@@ -8,8 +8,7 @@ assert bootstrap.index('suppressMouseDiagnostic()') < bootstrap.index('bridgeIni
 assert 'keys[VK_DELETE] = true;' in s
 assert 'disableHotkey.update(down, down && gameIsForeground(), editing)' in s
 assert 'getIO().WantTextInput' in s
-assert 'overlayDisabled.load(std::memory_order_acquire)) { clearGamePreview(); return; }' in s
-assert 'if (!chain || (flags & DXGI_PRESENT_TEST)) return;' in s
+assert 'overlayDisabled.load(std::memory_order_acquire) || !chain' in s
 assert 'bridgeActive(false)' in s and 'DisableUwpExtraInput();' in s
 assert 'if (!overlayDisabled.load(std::memory_order_acquire)) SampleUwpInput();' in s
 assert 'if (!arg || !inputEnabled.load(std::memory_order_acquire)) return S_OK;' in extra
