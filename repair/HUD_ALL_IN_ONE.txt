@@ -161,7 +161,9 @@ CPU, сохранения в файл или отправки в сеть. В Mi
 отдельно: из игры не извлечены mesh, кости, нестандартная геометрия и анимация.
 Для шляпы показана голова почти спереди; для трейла — персонаж сбоку и
 демонстрационное движение. Шляпа использует тот же mesh эффекта, параметры и
-функцию bob, что в игре; цвет и время рассчитываются одинаково. Трейл использует
+функцию bob, что в игре; цвет и время рассчитываются одинаково. Масштаб по
+максимальной высоте покачивания должен убрать пульсацию персонажа при постоянных
+настройках; это ещё не проверено в игре. Трейл использует
 те же настройки, но его путь демонстрационный. Материал и модель могут
 отличаться от игры. Редактор обновляется при изменении настроек, даже если эффект
 выключен. Клиентский HUD на время редактирования скрывается; игровой чат может
@@ -714,7 +716,7 @@ static void drawHatPreview(ImDrawList* d,ImVec2 o,std::uint64_t now,const visual
       GetVisualParam(VisualParam::HatOffset),GetVisualParam(VisualParam::HatBobAmplitude),GetVisualParam(VisualParam::HatBobSpeed),
       GetVisualParam(VisualParam::HatRainbowSpeed),VisualTintEnabled() && HatRainbowEnabled() && VertexGradientEnabled()};
     china_hat::Mesh mesh{}; if (!visual_avatar_preview::hat(mesh,s,now)) return;
-    const float scale=visual_avatar_preview::hatScale(s,now);
+    const float scale=visual_avatar_preview::hatScale(s);
     auto p=[&](china_hat::Point v) { auto v2=visual_avatar_preview::project(v,scale); return ImVec2(o.x+v2.x,o.y+v2.y); };
     // Back faces first, then the head, then near faces: the model masks the
     // rear of the brim like the game's depth-tested renderer should.
@@ -2578,8 +2580,11 @@ struct Point2 { float x,y; };
 inline Point2 project(china_hat::Point p,float scale=125.f) {
  return {140.f+(p.x-p.z*.22f)*scale, 205.f-(p.y+.35f)*scale+p.z*scale*.24f};
 }
-inline float hatScale(const HatSettings& s,std::uint64_t now) {
- const float top=.64f+.03f+s.offset+hat_animation::bob(now,s.bobAmount,s.bobSpeed)+s.height;
+// Fit the whole bob range once for the current settings. Basing the camera
+// scale on the instantaneous hat position makes the *character* pulse as the
+// hat moves. Only the hat should bob; fixed settings must yield a fixed scale.
+inline float hatScale(const HatSettings& s) {
+ const float top=.64f+.03f+s.offset+2.f*std::max(0.f,s.bobAmount)+s.height;
  return std::min({145.f,115.f/(s.radius*1.03f),190.f/std::max(.5f,top+.35f+s.radius*.24f)});
 }
 inline Point2 trailPoint(float t,std::uint64_t now,float lifetime) {
@@ -3530,9 +3535,17 @@ int main() {
  assert(std::fabs(m.triangles[0].position.y-(base+s.height))<1e-6f);
  assert(std::fabs(m.outline[0].position.x-s.radius)<1e-6f);
  auto y=m.outline[0].position.y; assert(hat(m,s,800)); assert(m.outline[0].position.y>y);
- float defaultScale=hatScale(s,0);
+ float defaultScale=hatScale(s);
+ // The preview camera and character stay fixed while the hat bobs.
+ for (std::uint64_t t=0;t<10000;t+=47) {
+  assert(hat(m,s,t));
+  assert(hatScale(s)==defaultScale);
+  assert(project({0.f,.64f,0.f},hatScale(s)).y==project({0.f,.64f,0.f},defaultScale).y);
+  assert(project(m.triangles[0].position,defaultScale).y>=14.f);
+ }
+ assert(hat(m,s,0));
  s.offset=.2f; s.radius=.9f; s.height=.6f; assert(hat(m,s,0));
- assert(hatScale(s,0)<defaultScale && hatScale(s,0)>0);
+ assert(hatScale(s)<defaultScale && hatScale(s)>0);
  assert(std::fabs(m.outline[0].position.y-(base+.2f))<1e-6f);
  assert(std::fabs(m.outline[0].position.x-.9f)<1e-6f);
  assert(std::fabs(m.triangles[0].position.y-(base+.2f+.6f))<1e-6f);

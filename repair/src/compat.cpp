@@ -525,7 +525,7 @@ static void drawHatPreview(ImDrawList* d,ImVec2 o,std::uint64_t now,const visual
       GetVisualParam(VisualParam::HatOffset),GetVisualParam(VisualParam::HatBobAmplitude),GetVisualParam(VisualParam::HatBobSpeed),
       GetVisualParam(VisualParam::HatRainbowSpeed),VisualTintEnabled() && HatRainbowEnabled() && VertexGradientEnabled()};
     china_hat::Mesh mesh{}; if (!visual_avatar_preview::hat(mesh,s,now)) return;
-    const float scale=visual_avatar_preview::hatScale(s,now);
+    const float scale=visual_avatar_preview::hatScale(s);
     auto p=[&](china_hat::Point v) { auto v2=visual_avatar_preview::project(v,scale); return ImVec2(o.x+v2.x,o.y+v2.y); };
     // Back faces first, then the head, then near faces: the model masks the
     // rear of the brim like the game's depth-tested renderer should.

@@ -25,8 +25,11 @@ struct Point2 { float x,y; };
 inline Point2 project(china_hat::Point p,float scale=125.f) {
  return {140.f+(p.x-p.z*.22f)*scale, 205.f-(p.y+.35f)*scale+p.z*scale*.24f};
 }
-inline float hatScale(const HatSettings& s,std::uint64_t now) {
- const float top=.64f+.03f+s.offset+hat_animation::bob(now,s.bobAmount,s.bobSpeed)+s.height;
+// Fit the whole bob range once for the current settings. Basing the camera
+// scale on the instantaneous hat position makes the *character* pulse as the
+// hat moves. Only the hat should bob; fixed settings must yield a fixed scale.
+inline float hatScale(const HatSettings& s) {
+ const float top=.64f+.03f+s.offset+2.f*std::max(0.f,s.bobAmount)+s.height;
  return std::min({145.f,115.f/(s.radius*1.03f),190.f/std::max(.5f,top+.35f+s.radius*.24f)});
 }
 inline Point2 trailPoint(float t,std::uint64_t now,float lifetime) {

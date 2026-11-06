@@ -47,7 +47,9 @@ Even when a skin texture is found, the preview is a separately projected sample,
 not the game's model: its bones, custom geometry and true animation are not
 extracted. A front-facing head shows the hat; a side-facing example character
 with a simulated path shows trail. The hat uses the same mesh builder, timing,
-settings and bob as the game. The GPU material and actual walking history are
+settings and bob as the game. Its camera scale fits the maximum bob envelope,
+not the current bob position, so the character should not pulse as the hat
+moves (Windows verification required). The GPU material and actual walking history are
 not replicated; no exact pixel match is promised. Windows testing is required.
 
 The user observed that the output-merger had a DSV bound and depth enabled

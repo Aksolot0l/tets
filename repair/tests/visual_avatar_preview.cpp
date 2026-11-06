@@ -12,9 +12,17 @@ int main() {
  assert(std::fabs(m.triangles[0].position.y-(base+s.height))<1e-6f);
  assert(std::fabs(m.outline[0].position.x-s.radius)<1e-6f);
  auto y=m.outline[0].position.y; assert(hat(m,s,800)); assert(m.outline[0].position.y>y);
- float defaultScale=hatScale(s,0);
+ float defaultScale=hatScale(s);
+ // The preview camera and character stay fixed while the hat bobs.
+ for (std::uint64_t t=0;t<10000;t+=47) {
+  assert(hat(m,s,t));
+  assert(hatScale(s)==defaultScale);
+  assert(project({0.f,.64f,0.f},hatScale(s)).y==project({0.f,.64f,0.f},defaultScale).y);
+  assert(project(m.triangles[0].position,defaultScale).y>=14.f);
+ }
+ assert(hat(m,s,0));
  s.offset=.2f; s.radius=.9f; s.height=.6f; assert(hat(m,s,0));
- assert(hatScale(s,0)<defaultScale && hatScale(s,0)>0);
+ assert(hatScale(s)<defaultScale && hatScale(s)>0);
  assert(std::fabs(m.outline[0].position.y-(base+.2f))<1e-6f);
  assert(std::fabs(m.outline[0].position.x-.9f)<1e-6f);
  assert(std::fabs(m.triangles[0].position.y-(base+.2f+.6f))<1e-6f);
