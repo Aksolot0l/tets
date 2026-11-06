@@ -11,7 +11,9 @@ assert 'module_hud::editing(menu,hudEditorOpen || visualEditor!=VisualEditor::No
 assert 'realDrawHud(runtime)' in u and 'drawModuleHud(runtime,false)' in u
 assert 'drawModuleHud(runtime,true)' in u and 'hudEditorActive.load' in u
 assert 'if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }' in u
-assert 'if (!menuOpen || (!hudEditorOpen && !editingVisual)) realDrawGui(runtime);' in u
+assert 'if (!menuOpen || (!hudEditorOpen && !editingVisual)) {' in u
+assert 'if (menuOpen) { VisualStyleScope style; realDrawGui(runtime); }' in u
+assert 'else realDrawGui(runtime);' in u
 assert u.index('if (hudHookCreated) {') > u.index('mhApply())')
 for name in ('HatOpacity','TrailOpacity'):
     assert 'VisualParam::'+name in n and 'VisualParam::'+name in u and name in settings

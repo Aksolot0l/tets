@@ -12,6 +12,7 @@
 #include "settings.h"
 #include "hud_module_list.h"
 #include "hud_theme.h"
+#include "hud_visual_kit.h"
 #include "pointer_mapping.h"
 #include "uwp_extra.h"
 #include "page_scroll.h"
@@ -87,6 +88,8 @@ using DrawImageQuadFn = void (*)(ImDrawList*,ImTextureID,const ImVec2&,const ImV
 using PushVarFloatFn = void (*)(int,float);
 using PopVarFn = void (*)(int);
 using SameLineFn = void (*)(float,float);
+using PushTextWrapFn = void (*)(float);
+using PopTextWrapFn = void (*)();
 
 static HMODULE selfModule = nullptr;
 static HMODULE core = nullptr;
@@ -144,6 +147,8 @@ static DrawImageQuadFn drawImageQuad = nullptr;
 static PushVarFloatFn guiPushVarFloat = nullptr;
 static PopVarFn guiPopVar = nullptr;
 static SameLineFn guiSameLine = nullptr;
+static PushTextWrapFn guiPushTextWrap = nullptr;
+static PopTextWrapFn guiPopTextWrap = nullptr;
 static std::atomic<bool> hudThemeReady{false};
 static thread_local bool insideLegacyHud = false;
 static thread_local float legacyOpacity = 1.f;
@@ -157,7 +162,7 @@ static float hudScale = 1.f, hudOpacity = .78f, hudX = .78f, hudY = .05f;
 static int hudPalette=0;
 static float hudRounding=8.f;
 static float widgetOpacity = .72f;
-static float hudColor[3] = {.35f,.85f,1.f};
+static float hudColor[3] = {77.f/255.f,1.f,136.f/255.f};
 static std::atomic<const WheelBridge*> externalWheel{nullptr};
 static SRWLOCK externalWheelLock = SRWLOCK_INIT;
 static HWND pointerWindow = nullptr;
@@ -414,28 +419,108 @@ static void drawVisualOptions() {
     realText("Resets after game closes.",nullptr);
     realText("Fill: turn off to use lines.",nullptr);
 }
-// Match the dark/green Home and HUD panels, without modifying the closed core.
-static void pushVisualStyle() {
-    if (!guiPushColor || !guiPopColor) return;
-    if (guiPushVarFloat && guiPopVar) {
-        guiPushVarFloat(ImGuiStyleVar_WindowBorderSize,1.f);
-        guiPushVarFloat(ImGuiStyleVar_WindowRounding,hud_theme::rounding(hudRounding));
-    }
-    guiPushColor(ImGuiCol_WindowBg,ImVec4(.035f,.065f,.055f,.96f));
-    guiPushColor(ImGuiCol_Border,ImVec4(.10f,.65f,.37f,.85f));
-    guiPushColor(ImGuiCol_TitleBg,ImVec4(.025f,.10f,.065f,.98f));
-    guiPushColor(ImGuiCol_TitleBgActive,ImVec4(.025f,.14f,.08f,1.f));
-    guiPushColor(ImGuiCol_Button,ImVec4(.02f,.22f,.11f,1.f));
-    guiPushColor(ImGuiCol_ButtonHovered,ImVec4(.04f,.42f,.21f,1.f));
-    guiPushColor(ImGuiCol_ButtonActive,ImVec4(.05f,.56f,.28f,1.f));
-    guiPushColor(ImGuiCol_CheckMark,ImVec4(.08f,.78f,.42f,1.f));
-    guiPushColor(ImGuiCol_SliderGrab,ImVec4(.08f,.72f,.38f,1.f));
-    guiPushColor(ImGuiCol_SliderGrabActive,ImVec4(.10f,.92f,.49f,1.f));
+// ---------------------------------------------------------------------------
+// VISUAL LAYER. Helpers below only set colours, spacing and text hierarchy.
+// They never read or write ag::Settings, never call game addresses and never
+// change which controls exist.
+// ---------------------------------------------------------------------------
+static hud_theme::Tokens visualTokens() {
+    return hud_theme::tokens(hudPalette, hud_theme::editorOpacity(widgetOpacity),
+                             hudRounding, 1.f);
 }
-static void popVisualStyle() {
-    if (guiPushColor && guiPopColor) {
-        guiPopColor(10); if (guiPushVarFloat && guiPopVar) guiPopVar(2);
+static ImVec4 toVec(const hud_theme::Rgba& c) { return ImVec4(c.r,c.g,c.b,c.a); }
+static void tintedText(const char* value,const hud_theme::Rgba& color) {
+    if (!value) return;
+    if (guiPushColor && guiPopColor) { guiPushColor(ImGuiCol_Text,toVec(color)); realText(value,nullptr); guiPopColor(1); }
+    else realText(value,nullptr);
+}
+struct VisualStyleScope {
+    int pushedColors=0, pushedVars=0;
+    void visualPush(const hud_theme::Rgba& c,int slot) {
+        if (guiPushColor && guiPopColor) { guiPushColor(slot,toVec(c)); ++pushedColors; }
     }
+    void visualVar(int slot,float value) {
+        if (guiPushVarFloat && guiPopVar) { guiPushVarFloat(slot,value); ++pushedVars; }
+    }
+    VisualStyleScope() {
+
+    if (!guiPushColor || !guiPopColor) return;
+    const auto t=visualTokens();
+    visualVar(ImGuiStyleVar_WindowBorderSize,t.borderSize);
+    visualVar(ImGuiStyleVar_WindowRounding,t.rounding);
+    visualVar(ImGuiStyleVar_ChildRounding,t.rounding);
+    visualVar(ImGuiStyleVar_FrameRounding,t.roundingSmall);
+    visualVar(ImGuiStyleVar_PopupRounding,t.roundingSmall);
+    visualVar(ImGuiStyleVar_ScrollbarRounding,8.f);
+    visualPush(t.window,ImGuiCol_WindowBg);
+    visualPush(t.panel,ImGuiCol_ChildBg);
+    visualPush(t.window,ImGuiCol_PopupBg);
+    visualPush(t.border,ImGuiCol_Border);
+    visualPush(t.text,ImGuiCol_Text);
+    visualPush(t.textDim,ImGuiCol_TextDisabled);
+    visualPush(t.panelSoft,ImGuiCol_FrameBg);
+    visualPush(hud_theme::withAlpha(t.accent,.10f),ImGuiCol_FrameBgHovered);
+    visualPush(hud_theme::withAlpha(t.accent,.16f),ImGuiCol_FrameBgActive);
+    visualPush(t.window,ImGuiCol_TitleBg);
+    visualPush(hud_theme::withAlpha(t.accent,.12f),ImGuiCol_TitleBgActive);
+    visualPush(t.window,ImGuiCol_TitleBgCollapsed);
+    visualPush(hud_theme::withAlpha(t.accent,.08f),ImGuiCol_Button);
+    visualPush(hud_theme::withAlpha(t.accent,.18f),ImGuiCol_ButtonHovered);
+    visualPush(hud_theme::withAlpha(t.accent,.26f),ImGuiCol_ButtonActive);
+    visualPush(t.accent,ImGuiCol_CheckMark);
+    visualPush(t.accent,ImGuiCol_SliderGrab);
+    visualPush(t.accent,ImGuiCol_SliderGrabActive);
+    visualPush(hud_theme::withAlpha(t.accent,.13f),ImGuiCol_Header);
+    visualPush(hud_theme::withAlpha(t.accent,.20f),ImGuiCol_HeaderHovered);
+    visualPush(hud_theme::withAlpha(t.accent,.26f),ImGuiCol_HeaderActive);
+    visualPush(t.borderSoft,ImGuiCol_Separator);
+    visualPush(t.inset,ImGuiCol_ScrollbarBg);
+    visualPush(hud_theme::withAlpha(t.accent,.24f),ImGuiCol_ScrollbarGrab);
+}
+    ~VisualStyleScope() {
+        if (pushedColors>0 && guiPopColor) guiPopColor(pushedColors);
+        if (pushedVars>0 && guiPopVar) guiPopVar(pushedVars);
+    }
+    VisualStyleScope(const VisualStyleScope&)=delete;
+    VisualStyleScope& operator=(const VisualStyleScope&)=delete;
+};
+
+// Visual helpers: section header, hint, status dot, full-width button.
+static void sectionTitle(const char* title,const char* subtitle=nullptr) {
+    const auto t=visualTokens();
+    // Accent bar drawn with the existing draw list; purely decorative.
+    if (guiDrawList && guiCursor && drawRect) {
+        const ImVec2 at=guiCursor();
+        const auto& bar=hud_visual::section(t).accentBar;
+        drawRect(guiDrawList(),ImVec2(at.x,at.y+2.f),ImVec2(at.x+2.f,at.y+11.f),
+                 IM_COL32(int(bar.r*255),int(bar.g*255),int(bar.b*255),int(bar.a*255)),1.f,0);
+        if (guiDummy) guiDummy(ImVec2(7.f,0.f));
+        if (guiSameLine) guiSameLine(0.f,0.f);
+    }
+    tintedText(title,t.text);
+    if (subtitle) {
+        const bool wrap=guiPushTextWrap && guiPopTextWrap;
+        if (wrap) guiPushTextWrap(0.f);
+        const auto s=hud_visual::section(t); tintedText(subtitle,s.subtitle);
+        if (wrap) guiPopTextWrap();
+    }
+}
+static void visualHint(const char* value) {
+    const bool wrap=guiPushTextWrap && guiPopTextWrap;
+    if (wrap) guiPushTextWrap(0.f);
+    tintedText(value,visualTokens().textDim);
+    if (wrap) guiPopTextWrap();
+}
+static void fullWidthSlider(const char* label,float* value,float low,float high) {
+    if (!guiSliderFloat) return;
+    const bool wrap=guiPushTextWrap && guiPopTextWrap;
+    if (wrap) guiPushTextWrap(0.f);
+    controlLabel(label);
+    if (wrap) guiPopTextWrap();
+    char id[128]{}; std::snprintf(id,sizeof(id),"##hud_%s",label);
+    if (guiPushWidth && guiPopWidth) guiPushWidth(-1.f);
+    guiSliderFloat(id,value,low,high,"%.2f",0);
+    if (guiPushWidth && guiPopWidth) guiPopWidth();
 }
 static bool canVisualPreview() {
     return hudHooksReady && guiButton && guiDrawList && guiCursor && guiDummy &&
@@ -443,13 +528,16 @@ static bool canVisualPreview() {
 }
 static void drawVisualPanel() {
     guiSetNextPos(ImVec2(548.f,35.f), ImGuiCond_FirstUseEver, ImVec2(0,0));
-    if (guiSetNextSize) guiSetNextSize(ImVec2(240.f,300.f),ImGuiCond_FirstUseEver);
-    pushVisualStyle();
-    if (guiBegin("Visuals",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoCollapse)) {
+    if (guiSetNextSize) guiSetNextSize(ImVec2(252.f,0.f),ImGuiCond_FirstUseEver);
+    VisualStyleScope style;
+    if (guiBegin("Visuals",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoCollapse|ImGuiWindowFlags_AlwaysAutoResize)) {
         if (!ChinaHatAvailable()) realText("Visuals unavailable",nullptr);
         else {
+            sectionTitle("СТИЛЬ ЭФФЕКТОВ","экспериментально · session only");
+            sectionTitle("CHINA HAT");
             bool hat=ChinaHatEnabled(); if (guiCheckbox("China Hat",&hat)) SetChinaHatEnabled(hat);
             if (canVisualPreview() && guiButton("Settings##open_hat",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Hat;
+            sectionTitle("TRAIL");
             bool trace=TrailEnabled(); if (guiCheckbox("Trail",&trace)) SetTrailEnabled(trace);
             if (canVisualPreview() && guiButton("Settings##open_trail",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Trail;
             if (canVisualPreview() && guiButton("Options",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Options;
@@ -457,9 +545,10 @@ static void drawVisualPanel() {
                 realText("Preview unavailable; inline settings:",nullptr);
                 drawHatSettings(); drawTrailSettings(); drawVisualOptions();
             }
+            visualHint("Прозрачность и depth-test не изменяются этим оформлением.");
         }
     }
-    guiEnd(); popVisualStyle();
+    guiEnd();
 }
 
 // Example avatar, not an extracted game skin. These calls only draw UI geometry.
@@ -583,7 +672,7 @@ static void drawTrailPreview(ImDrawList* d,ImVec2 o,std::uint64_t now,const visu
 static void drawEffectPreview(VisualEditor editor) {
     guiSetNextPos(ImVec2(18.f,90.f),ImGuiCond_Always,ImVec2(0,0));
     if (guiSetNextSize) guiSetNextSize(ImVec2(310.f,360.f),ImGuiCond_FirstUseEver);
-    pushVisualStyle();
+    VisualStyleScope style;
     if (guiBegin("Preview##effect",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
         if (guiCheckbox("Game model replay (test)",&previewGameModelTest)) {
             if (!previewGameModelTest) SetPlayerModelPreviewActive(false);
@@ -622,14 +711,14 @@ static void drawEffectPreview(VisualEditor editor) {
             if (!skin.view) realText("Use third person to detect skin.",nullptr);
         }
     }
-    guiEnd(); popVisualStyle();
+    guiEnd();
 }
 static void drawVisualEditor() {
     const VisualEditor current=visualEditor;
     // Read settings after editing so the model responds in this frame.
     guiSetNextPos(ImVec2(350.f,90.f),ImGuiCond_Always,ImVec2(0,0));
     if (guiSetNextSize) guiSetNextSize(ImVec2(310.f,430.f),ImGuiCond_FirstUseEver);
-    pushVisualStyle();
+    VisualStyleScope style;
     const char* title=current==VisualEditor::Hat?"China Hat settings":current==VisualEditor::Trail?"Trail settings":"Visual options";
     if (guiBegin(title,nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
         if (guiButton && guiButton("Back to menu",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::None;
@@ -637,7 +726,7 @@ static void drawVisualEditor() {
         else if (current==VisualEditor::Trail) drawTrailSettings();
         else drawVisualOptions();
     }
-    guiEnd(); popVisualStyle();
+    guiEnd();
     if (visualEditor==current && current!=VisualEditor::Options) drawEffectPreview(current);
 }
 
@@ -651,8 +740,6 @@ static bool themedBegin(const char* name,bool* open,int flags) {
     guiPushColor(ImGuiCol_Border,ImVec4(border.r,border.g,border.b,border.a));
     guiPushVarFloat(ImGuiStyleVar_WindowRounding,hud_theme::rounding(hudRounding));
     guiPushVarFloat(ImGuiStyleVar_WindowBorderSize,1.f);
-    // Keystrokes deliberately used NoBackground: add the same card, leaving
-    // the core's actual key-state drawing intact.
     if (std::strcmp(name,"##hud_keystrokes")==0) flags &= ~ImGuiWindowFlags_NoBackground;
     const bool result=realGuiBegin(name,open,flags);
     guiPopVar(2); guiPopColor(2);
@@ -662,8 +749,8 @@ static bool themedBegin(const char* name,bool* open,int flags) {
 static void drawModuleHud(void* runtime, bool preview) {
     if (!runtime || !guiPushColor || !guiPopColor || !guiFontScale) return;
     auto* s = reinterpret_cast<ag::Settings*>(reinterpret_cast<unsigned char*>(runtime)+0x48);
-    const float x = preview ? 390.f+hudX*180.f : hudX*static_cast<float>(frameWidth);
-    const float y = preview ? 90.f+hudY*180.f : hudY*static_cast<float>(frameHeight);
+    const float x = preview ? (frameWidth>240.f?frameWidth-232.f:930.f)+hudX*20.f : hudX*static_cast<float>(frameWidth);
+    const float y = preview ? 286.f+hudY*54.f : hudY*static_cast<float>(frameHeight);
     guiSetNextPos(ImVec2(x,y),ImGuiCond_Always,ImVec2(0,0));
     const auto bg=hud_theme::background(hudOpacity,hudPalette), border=hud_theme::border(hudOpacity,hudPalette);
     guiPushColor(ImGuiCol_WindowBg,ImVec4(bg.r,bg.g,bg.b,bg.a));
@@ -716,13 +803,70 @@ static void patchedNotificationDraw(void* queue, const ag::Settings& s) {
         insideLegacyHud=previous; legacyOpacity=oldOpacity; guiPopColor(1);
     } else realNotificationDraw(queue,s);
 }
-static void drawHudEditor(void* runtime) {
-    guiSetNextPos(ImVec2(18.f,90.f),ImGuiCond_Always,ImVec2(0,0));
-    if (guiSetNextSize) guiSetNextSize(ImVec2(350.f,480.f),ImGuiCond_FirstUseEver);
-    pushVisualStyle();
-    if (guiBegin("HUD editor",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
-        if (guiButton && guiButton("Back to menu",ImVec2(-1.f,0.f))) hudEditorOpen=false;
-        realText("WIDGETS",nullptr);
+static bool editorVisible[5] = {true,true,true,true,true};
+static int editorSelected = 0;
+static float editorWidth() { return frameWidth ? float(frameWidth) : 1280.f; }
+static float editorHeight() { return frameHeight ? float(frameHeight) : 720.f; }
+static const char* editorPanelName(int index) {
+    constexpr const char* names[5] = {"Home","HUD","Modules","Appearance","Settings"};
+    return index>=0 && index<5 ? names[index] : "Panel";
+}
+static void editorColumn(int index) {
+    const float width=editorWidth(), height=editorHeight();
+    const bool wide=hud_theme::columnsFit(width);
+    const float x=wide ? hud_theme::panelX(index,width) : hud_theme::editorMetrics.panelLeft;
+    guiSetNextPos(ImVec2(x,hud_theme::panelTop(width)),ImGuiCond_Always,ImVec2(0,0));
+    if (guiSetNextSize) guiSetNextSize(ImVec2(wide ? hud_theme::panelWidthFor(width) : hud_theme::compactPanelWidth(width),
+                                               hud_theme::panelHeight(index,width,height)),ImGuiCond_Always);
+}
+static void editorToolbar() {
+    const float width=editorWidth();
+    const bool wide=hud_theme::columnsFit(width);
+    guiSetNextPos(ImVec2(hud_theme::editorMetrics.panelLeft,18.f),ImGuiCond_Always,ImVec2(0,0));
+    VisualStyleScope style;
+    if (guiBegin("##gc_editor_toolbar",nullptr,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|
+                 ImGuiWindowFlags_NoMove|ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|
+                 ImGuiWindowFlags_NoFocusOnAppearing)) {
+        const auto t=visualTokens();
+        tintedText("AOGIRI GREEN",t.accent);
+        if (guiSameLine) guiSameLine(0.f,8.f);
+        if (guiButton && guiButton("Panels",ImVec2(58.f,0.f))) {
+            const bool any=editorVisible[0]||editorVisible[1]||editorVisible[2]||editorVisible[3]||editorVisible[4];
+            for (bool& visible:editorVisible) visible=!any;
+        }
+        if (guiSameLine) guiSameLine(0.f,4.f);
+        if (guiButton && guiButton("Back to menu",ImVec2(100.f,0.f))) hudEditorOpen=false;
+        if (!wide && guiButton) {
+            // One panel at a time fits on narrow screens; buttons remain
+            // available even if a user hid every panel via Settings.
+            for (int i=0;i<5;++i) {
+                if (i>0 && guiSameLine && (width>=480.f || (i%2)!=0)) guiSameLine(0.f,4.f);
+                if (guiButton(editorPanelName(i),ImVec2(0,0))) { editorSelected=i; editorVisible[i]=true; }
+            }
+        }
+    }
+    guiEnd();
+}
+static void editorHome() {
+    editorColumn(0);
+    VisualStyleScope style;
+    if (guiBegin("Home##gc",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
+        const auto t=visualTokens();
+        tintedText("AOGIRI",t.accent); tintedText("GREEN",t.accent);
+        visualHint("GAYClient · HUD redesign");
+        sectionTitle("СЕССИЯ");
+        tintedText(ag::kVersion,t.textMuted);
+        visualHint("Только визуальный слой");
+        tintedText(ChinaHatAvailable()?"Human Visuals доступны":"Visuals unavailable",t.textDim);
+        if (!notificationHookReady) visualHint("Notifications may remain visible.");
+    }
+    guiEnd();
+}
+static void editorHud(void* runtime) {
+    editorColumn(1);
+    VisualStyleScope style;
+    if (guiBegin("HUD##gc",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
+        sectionTitle("ВИДЖЕТЫ");
         if (runtime && setModule) {
             auto* settings=reinterpret_cast<ag::Settings*>(reinterpret_cast<unsigned char*>(runtime)+0x48);
             for (const auto& entry:module_hud::entries) {
@@ -730,44 +874,100 @@ static void drawHudEditor(void* runtime) {
                 if (guiCheckbox(entry.name,&enabled)) setModule(runtime,entry.id,enabled);
             }
         }
-        realText("STYLE",nullptr);
-        auto slider=[](const char* label,float* value,float low,float high) {
-            if (!guiSliderFloat) return;
-            controlLabel(label); char id[128]{}; std::snprintf(id,sizeof(id),"##hud_%s",label);
-            if (guiPushWidth && guiPopWidth) guiPushWidth(-1.f);
-            guiSliderFloat(id,value,low,high,"%.2f",0);
-            if (guiPushWidth && guiPopWidth) guiPopWidth();
-        };
-        realText("Palette",nullptr);
+        visualHint("Module List: Modules");
+    }
+    guiEnd();
+}
+static void editorModules(void* runtime) {
+    editorColumn(2);
+    VisualStyleScope style;
+    if (guiBegin("Modules##gc",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
+        sectionTitle("MODULE LIST HUD");
+        guiCheckbox("Module List HUD",&moduleHudEnabled);
+        visualHint("Preview on the right");
+        fullWidthSlider("Module list scale",&hudScale,.7f,1.6f);
+        fullWidthSlider("Module list opacity",&hudOpacity,0.f,1.f);
+        fullWidthSlider("Module list X",&hudX,0.f,.9f);
+        fullWidthSlider("Module list Y",&hudY,0.f,.9f);
+    }
+    guiEnd();
+}
+static void editorAppearance() {
+    editorColumn(3);
+    VisualStyleScope style;
+    if (guiBegin("Appearance##gc",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
+        sectionTitle("ТЕМА","Выберите цветовую схему");
         for (int i=0;i<3;i++) {
             if (guiButton && guiButton(hud_theme::palette(i).name,ImVec2(-1.f,0.f))) {
                 hudPalette=i; const auto c=hud_theme::palette(i).accent;
                 hudColor[0]=c.r; hudColor[1]=c.g; hudColor[2]=c.b;
             }
         }
-        slider("Card rounding",&hudRounding,0.f,20.f);
-        if (hudThemeReady.load(std::memory_order_acquire)) slider("Widget background opacity",&widgetOpacity,0.f,1.f);
+        sectionTitle("ОФОРМЛЕНИЕ");
+        fullWidthSlider("Card rounding",&hudRounding,0.f,20.f);
+        if (hudThemeReady.load(std::memory_order_acquire)) fullWidthSlider("Widget background opacity",&widgetOpacity,0.f,1.f);
         else realText("Widget theme unavailable; original widgets retained.",nullptr);
         if (guiColorEdit3) { realText("HUD text color",nullptr); if (guiPushWidth && guiPopWidth) guiPushWidth(-1.f);
             guiColorEdit3("##hud_color",hudColor,0); if (guiPushWidth && guiPopWidth) guiPopWidth(); }
-        realText("MODULE LIST",nullptr);
-        realText("Preview on the right",nullptr);
-        guiCheckbox("Module List HUD",&moduleHudEnabled);
-        slider("Module list scale",&hudScale,.7f,1.6f);
-        slider("Module list opacity",&hudOpacity,0.f,1.f);
-        slider("Module list X",&hudX,0.f,.9f);
-        slider("Module list Y",&hudY,0.f,.9f);
-        realText("Style resets after game exit.",nullptr);
-        if (!notificationHookReady) realText("Notifications may remain visible.",nullptr);
     }
-    guiEnd(); popVisualStyle();
-    if (hudEditorOpen) drawModuleHud(runtime,true);
+    guiEnd();
 }
+static void editorSettings() {
+    editorColumn(4);
+    VisualStyleScope style;
+    if (guiBegin("Settings##gc",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
+        sectionTitle("ПАНЕЛИ");
+        for (int i=0;i<5;++i) guiCheckbox(editorPanelName(i),&editorVisible[i]);
+        sectionTitle("СЕССИЯ");
+        visualHint("Style resets after game exit.");
+        if (!notificationHookReady) realText("Notifications may remain visible.",nullptr);
+        visualHint("Профиль ядра визуальный слой не перезаписывает.");
+    }
+    guiEnd();
+}
+static void editorPreviewCaption() {
+    const float x=hud_theme::previewX(editorWidth());
+    guiSetNextPos(ImVec2(x,hud_theme::panelTop(editorWidth())),ImGuiCond_Always,ImVec2(0,0));
+    if (guiSetNextSize) guiSetNextSize(ImVec2(hud_theme::editorMetrics.previewWidth,0.f),ImGuiCond_FirstUseEver);
+    VisualStyleScope style;
+    if (guiBegin("Preview##gc_caption",nullptr,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|
+                 ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_AlwaysAutoResize)) {
+        const auto t=visualTokens();
+        tintedText("ПРЕДПРОСМОТР",t.accent);
+        visualHint("Module List · реальные модули");
+    }
+    guiEnd();
+}
+static void drawHudEditor(void* runtime) {
+    editorToolbar();
+    const bool wide=hud_theme::columnsFit(editorWidth());
+    if (editorVisible[0] && (wide || editorSelected==0)) editorHome();
+    if (editorVisible[1] && (wide || editorSelected==1)) editorHud(runtime);
+    if (editorVisible[2] && (wide || editorSelected==2)) editorModules(runtime);
+    if (editorVisible[3] && (wide || editorSelected==3)) editorAppearance();
+    if (editorVisible[4] && (wide || editorSelected==4)) editorSettings();
+    if (editorWidth()>=600.f && editorHeight()>=350.f) {
+        editorPreviewCaption();
+        if (hudEditorOpen) drawModuleHud(runtime,true);
+    }
+}
+/*
+ * VISUAL-ONLY NOTE
+ * The editor above is a reskin of the existing controls: the same widget
+ * checkboxes, the same three palettes, the same rounding/opacity/colour
+ * sliders and the same Module List settings, now grouped into five columns.
+ * No setting, hook or render path was added.
+ */
 static void drawHudEntry() {
     if (!hudHooksReady) return;
     guiSetNextPos(ImVec2(18.f,130.f),ImGuiCond_FirstUseEver,ImVec2(0,0));
-    if (guiBegin("HUD",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoCollapse))
+    if (guiSetNextSize) guiSetNextSize(ImVec2(166.f,0.f),ImGuiCond_FirstUseEver);
+    VisualStyleScope style;
+    if (guiBegin("HUD",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoCollapse)) {
+        sectionTitle("GAYCLIENT","HUD editor");
         guiCheckbox("Open HUD editor",&hudEditorOpen);
+        guiCheckbox("Module List HUD",&moduleHudEnabled);
+    }
     guiEnd();
 }
 
@@ -796,7 +996,10 @@ static void patchedDrawGui(void* runtime) {
     SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options);
     SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && previewGameModelTest);
     SetPlayerPreviewHatActive(editingVisual && visualEditor==VisualEditor::Hat && previewGameModelTest);
-    if (!menuOpen || (!hudEditorOpen && !editingVisual)) realDrawGui(runtime);
+    if (!menuOpen || (!hudEditorOpen && !editingVisual)) {
+        if (menuOpen) { VisualStyleScope style; realDrawGui(runtime); }
+        else realDrawGui(runtime);
+    }
     if (editingVisual) { drawVisualEditor(); return; }
     if (menuOpen && hudEditorOpen && hudHooksReady) { drawHudEditor(runtime); return; }
     // Exact legacy build layout, verified against the original binary.
@@ -1035,6 +1238,8 @@ static DWORD WINAPI bootstrap(void*) {
     guiPushVarFloat = symbol<PushVarFloatFn>("_ZN5ImGui12PushStyleVarEif");
     guiPopVar = symbol<PopVarFn>("_ZN5ImGui11PopStyleVarEi");
     guiSameLine = symbol<SameLineFn>("_ZN5ImGui8SameLineEff");
+    guiPushTextWrap = symbol<PushTextWrapFn>("_ZN5ImGui15PushTextWrapPosEf");
+    guiPopTextWrap = symbol<PopTextWrapFn>("_ZN5ImGui14PopTextWrapPosEv");
     guiSetNextPos = symbol<SetNextPosFn>("_ZN5ImGui16SetNextWindowPosERK6ImVec2iS2_");
     findGameWindow = symbol<FindWindowFn>("_ZN2ag19FindMinecraftWindowEb");
     addFont = symbol<AddFontFn>("_ZN2ag15AddEmbeddedFontEfb");
