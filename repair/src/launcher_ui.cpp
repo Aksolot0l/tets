@@ -5,7 +5,9 @@
 #include "launcher_ui.h"
 #include <shellapi.h>
 #include <objbase.h>
+#include <gdiplus.h>
 #include <atomic>
+#include <cstring>
 #include <cwchar>
 #include <initializer_list>
 
@@ -16,6 +18,9 @@ bool classicVisible = false, hiddenClassicOnce = false;
 ULONGLONG launchPendingUntil = 0;
 int dpi = 96;
 HFONT fontSmall = nullptr, fontBody = nullptr, fontBold = nullptr, fontTitle = nullptr, fontBrand = nullptr;
+ULONG_PTR gdiplusToken = 0;
+Gdiplus::Image* heroImage = nullptr;
+IStream* heroStream = nullptr;
 constexpr int PLAY = 101, CLASSIC = 102, LOG = 103;
 int S(int n) { return MulDiv(n, dpi, 96); }
 COLORREF rgb(int r,int g,int b) { return RGB(r,g,b); }
@@ -29,7 +34,50 @@ HFONT font(int size, int weight) {
     return CreateFontW(-S(size),0,0,0,weight,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
                        OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
 }
-void makeFonts() { disposeFonts(); fontSmall=font(12,FW_NORMAL); fontBody=font(14,FW_NORMAL); fontBold=font(14,FW_SEMIBOLD); fontTitle=font(30,FW_BOLD); fontBrand=font(17,FW_BOLD); }
+void rounded(HDC dc, int x,int y,int w,int h,int r,COLORREF color);
+void makeFonts() { disposeFonts(); fontSmall=font(12,FW_NORMAL); fontBody=font(14,FW_NORMAL); fontBold=font(14,FW_SEMIBOLD); fontTitle=font(27,FW_BOLD); fontBrand=font(17,FW_BOLD); }
+void loadHero() {
+    Gdiplus::GdiplusStartupInput input;
+    if (Gdiplus::GdiplusStartup(&gdiplusToken, &input, nullptr) != Gdiplus::Ok) { gdiplusToken=0; return; }
+    HMODULE module=nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCWSTR>(&launcherStartUi),&module)) return;
+    HRSRC resource=FindResourceW(module,MAKEINTRESOURCEW(101),RT_RCDATA);
+    if (!resource) return;
+    DWORD size=SizeofResource(module,resource); HGLOBAL found=LoadResource(module,resource);
+    const void* bytes=found?LockResource(found):nullptr;
+    if (!bytes || !size) return;
+    HGLOBAL memory=GlobalAlloc(GMEM_MOVEABLE,size);
+    if (!memory) return;
+    void* target=GlobalLock(memory);
+    if (!target) { GlobalFree(memory); return; }
+    std::memcpy(target,bytes,size); GlobalUnlock(memory);
+    if (FAILED(CreateStreamOnHGlobal(memory,TRUE,&heroStream))) { GlobalFree(memory); return; }
+    heroImage=Gdiplus::Image::FromStream(heroStream);
+    if (!heroImage || heroImage->GetLastStatus()!=Gdiplus::Ok) { delete heroImage; heroImage=nullptr; heroStream->Release(); heroStream=nullptr; }
+}
+void unloadHero() {
+    delete heroImage; heroImage=nullptr;
+    if (heroStream) { heroStream->Release(); heroStream=nullptr; }
+    if (gdiplusToken) { Gdiplus::GdiplusShutdown(gdiplusToken); gdiplusToken=0; }
+}
+void drawHero(HDC dc) {
+    rounded(dc,226,75,650,252,18,rgb(20,43,33));
+    if (!heroImage) return; // All controls and the original GUI still work without the image.
+    Gdiplus::Graphics g(dc);
+    g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+    Gdiplus::GraphicsPath clip;
+    const int x=S(226), y=S(75), w=S(650), h=S(252), r=S(18);
+    clip.AddArc(x,y,r,r,180,90); clip.AddArc(x+w-r,y,r,r,270,90);
+    clip.AddArc(x+w-r,y+h-r,r,r,0,90); clip.AddArc(x,y+h-r,r,r,90,90); clip.CloseFigure();
+    g.SetClip(&clip);
+    g.DrawImage(heroImage,Gdiplus::Rect(S(501),y,S(375),h),0,0,
+                static_cast<int>(heroImage->GetWidth()),static_cast<int>(heroImage->GetHeight()),Gdiplus::UnitPixel);
+    Gdiplus::LinearGradientBrush shade(Gdiplus::Point(S(485),y),Gdiplus::Point(S(655),y),
+                                       Gdiplus::Color(255,20,43,33),Gdiplus::Color(0,20,43,33));
+    g.FillRectangle(&shade,S(485),y,S(170),h);
+}
+
 void fill(HDC dc, RECT rect, COLORREF color) { HBRUSH brush=CreateSolidBrush(color); FillRect(dc,&rect,brush); DeleteObject(brush); }
 void rounded(HDC dc, int x,int y,int w,int h,int r,COLORREF color) {
     HBRUSH brush=CreateSolidBrush(color); HGDIOBJ oldBrush=SelectObject(dc,brush);
@@ -81,16 +129,16 @@ const wchar_t* statusDetail(LauncherStatus s) {
     }
 }
 void placeControls() {
-    MoveWindow(playButton,S(263),S(313),S(275),S(54),TRUE);
-    MoveWindow(classicButton,S(263),S(454),S(201),S(38),TRUE);
-    MoveWindow(logButton,S(475),S(454),S(154),S(38),TRUE);
+    MoveWindow(playButton,S(252),S(255),S(205),S(48),TRUE);
+    MoveWindow(classicButton,S(226),S(462),S(205),S(40),TRUE);
+    MoveWindow(logButton,S(440),S(462),S(160),S(40),TRUE);
 }
 void drawButton(const DRAWITEMSTRUCT* d) {
     int id=static_cast<int>(d->CtlID); bool pressed=(d->itemState&ODS_SELECTED)!=0;
     bool disabled=(d->itemState&ODS_DISABLED)!=0; HDC dc=d->hDC; RECT r=d->rcItem;
     COLORREF bg = id==PLAY ? (pressed?rgb(35,168,115):rgb(50,205,142)) : (pressed?rgb(37,65,57):rgb(29,48,43));
     if (disabled) bg=rgb(34,43,40);
-    fill(dc,r,rgb(14,24,21));
+    fill(dc,r,id==PLAY?rgb(20,43,33):rgb(14,24,21));
     HBRUSH b=CreateSolidBrush(bg); HGDIOBJ ob=SelectObject(dc,b); HGDIOBJ op=SelectObject(dc,GetStockObject(NULL_PEN));
     RoundRect(dc,r.left,r.top,r.right,r.bottom,S(10),S(10)); SelectObject(dc,op); SelectObject(dc,ob); DeleteObject(b);
     wchar_t label[128]{}; GetWindowTextW(d->hwndItem,label,128);
@@ -104,30 +152,39 @@ void paint(HWND window) {
     HDC dc=CreateCompatibleDC(screen); HBITMAP bitmap=CreateCompatibleBitmap(screen,client.right,client.bottom);
     if (!dc || !bitmap) { if(bitmap) DeleteObject(bitmap); if(dc) DeleteDC(dc); EndPaint(window,&ps); return; }
     HGDIOBJ old=SelectObject(dc,bitmap); fill(dc,client,rgb(14,24,21));
-    RECT sidebar{0,0,S(218),client.bottom}; fill(dc,sidebar,rgb(9,18,15));
-    rounded(dc,24,29,38,38,10,rgb(42,195,133));
-    text(dc,L"G",24,29,38,38,fontBrand,rgb(8,38,26),DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-    text(dc,L"GAYCLIENT",74,28,130,24,fontBrand,rgb(236,247,240));
-    text(dc,L"LAUNCHER",74,50,130,17,fontSmall,rgb(108,139,123));
-    rounded(dc,16,103,185,46,10,rgb(22,51,39));
-    text(dc,L"●",30,103,18,46,fontSmall,rgb(64,217,151));
-    text(dc,L"Главная",54,103,125,46,fontBold,rgb(230,247,237));
-    text(dc,L"КЛИЕНТ  /  1.1.5",25,430,175,20,fontSmall,rgb(107,136,121));
-    text(dc,L"Оверлей и игра",25,454,175,20,fontBody,rgb(172,195,180));
-    text(dc,L"GAYCLIENT  /  ГЛАВНАЯ",263,31,500,20,fontSmall,rgb(107,154,127));
-    text(dc,L"Время играть.",263,74,500,48,fontTitle,rgb(238,248,241));
-    text(dc,L"Один запуск. Клиент подключится сам.",264,128,505,25,fontBody,rgb(157,183,168));
-    rounded(dc,263,180,500,106,14,rgb(22,39,32));
+    RECT sidebar{0,0,S(190),client.bottom}; fill(dc,sidebar,rgb(9,18,15));
+    rounded(dc,23,28,40,40,11,rgb(52,208,143));
+    text(dc,L"G",23,28,40,40,fontBrand,rgb(8,38,26),DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+    text(dc,L"GAYCLIENT",74,28,105,25,fontBrand,rgb(236,247,240));
+    text(dc,L"GAME LAUNCHER",75,52,105,17,fontSmall,rgb(111,143,125));
+    text(dc,L"НАВИГАЦИЯ",25,99,145,19,fontSmall,rgb(91,123,105));
+    rounded(dc,14,126,162,42,10,rgb(23,52,40));
+    text(dc,L"●",28,126,18,42,fontSmall,rgb(64,217,151));
+    text(dc,L"Главная",51,126,115,42,fontBold,rgb(230,247,237));
+    text(dc,L"MINECRAFT",25,430,145,19,fontSmall,rgb(91,123,105));
+    text(dc,L"Windows 10",25,454,145,22,fontBody,rgb(197,218,203));
+    text(dc,L"Версия 1.1.5",25,479,145,18,fontSmall,rgb(111,143,125));
+    text(dc,L"ВАШ ЛАУНЧЕР",226,28,230,22,fontSmall,rgb(112,158,130));
+    text(dc,L"ИГРА  /  КЛИЕНТ",697,28,179,22,fontSmall,rgb(112,143,124),DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+
+    drawHero(dc);
+    rounded(dc,252,100,124,24,12,rgb(29,75,52));
+    text(dc,L"ВАШ МИР ЖДЁТ",261,100,110,24,fontSmall,rgb(115,232,165));
+    text(dc,L"Готов к новым\nприключениям?",252,141,310,74,fontTitle,rgb(245,251,246),DT_LEFT|DT_WORDBREAK);
+    text(dc,L"Запускай игру — клиент\nподключится автоматически.",252,215,270,37,fontSmall,rgb(186,211,193),DT_LEFT|DT_WORDBREAK);
+
+    rounded(dc,226,343,650,97,14,rgb(22,37,31));
     auto s=state.load(std::memory_order_acquire);
-    rounded(dc,283,201,11,11,11,(s==LauncherStatus::Failed || s==LauncherStatus::MultipleGames)?rgb(239,168,90):rgb(59,215,148));
+    rounded(dc,246,366,10,10,10,(s==LauncherStatus::Failed || s==LauncherStatus::MultipleGames)?rgb(239,168,90):rgb(59,215,148));
     bool pending = s==LauncherStatus::Waiting && GetTickCount64()<launchPendingUntil;
-    text(dc,pending?L"Запрос на запуск отправлен":statusTitle(s),306,192,425,27,fontBold,rgb(232,244,235));
-    text(dc,pending?L"Ожидаем появления Minecraft.":statusDetail(s),306,223,432,40,fontSmall,rgb(160,185,169),DT_LEFT|DT_WORDBREAK);
-    text(dc,L"После запуска держите это окно открытым",263,379,500,24,fontSmall,rgb(125,153,136));
-    text(dc,L"ДОПОЛНИТЕЛЬНО",263,422,300,20,fontSmall,rgb(104,137,119));
+    text(dc,L"СТАТУС ПОДКЛЮЧЕНИЯ",265,354,300,18,fontSmall,rgb(108,147,122));
+    text(dc,pending?L"Запрос на запуск отправлен":statusTitle(s),265,376,560,23,fontBold,rgb(232,244,235));
+    text(dc,pending?L"Ожидаем появления Minecraft.":statusDetail(s),265,404,580,28,fontSmall,rgb(160,185,169),DT_LEFT|DT_WORDBREAK);
+    text(dc,L"Не закрывайте лаунчер во время игры",616,464,260,38,fontSmall,rgb(125,153,136),DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
     BitBlt(screen,0,0,client.right,client.bottom,dc,0,0,SRCCOPY);
     SelectObject(dc,old); DeleteObject(bitmap); DeleteDC(dc); EndPaint(window,&ps);
 }
+
 void openLog(HWND window) {
     wchar_t path[32768]{}; DWORD n=GetModuleFileNameW(nullptr,path,32768);
     if (!n || n>=32768) { MessageBoxW(window,L"Не удалось определить папку клиента.",L"Журнал",MB_OK|MB_ICONWARNING); return; }
@@ -204,20 +261,22 @@ DWORD WINAPI uiThread(void*) {
     if (setContext) setContext(reinterpret_cast<HANDLE>(-4));
     HDC dc=GetDC(nullptr); if(dc) { dpi=GetDeviceCaps(dc,LOGPIXELSX); ReleaseDC(nullptr,dc); }
     HRESULT com=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED|COINIT_DISABLE_OLE1DDE);
+    loadHero();
     HINSTANCE instance=GetModuleHandleW(nullptr);
     WNDCLASSEXW wc{}; wc.cbSize=sizeof(wc); wc.hInstance=instance; wc.lpfnWndProc=windowProc;
     wc.lpszClassName=L"GAYClientModernLauncherV1"; wc.hCursor=LoadCursorW(nullptr,IDC_ARROW); wc.hIcon=LoadIconW(nullptr,IDI_APPLICATION);
-    if (!RegisterClassExW(&wc)) { if (SUCCEEDED(com)) CoUninitialize(); return 1; }
+    if (!RegisterClassExW(&wc)) { unloadHero(); if (SUCCEEDED(com)) CoUninitialize(); return 1; }
     DWORD style=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_CLIPCHILDREN;
-    RECT rect{0,0,S(802),S(520)}; AdjustWindowRectEx(&rect,style,FALSE,0);
+    RECT rect{0,0,S(900),S(530)}; AdjustWindowRectEx(&rect,style,FALSE,0);
     HWND window=CreateWindowExW(0,wc.lpszClassName,L"GAYClient",style,CW_USEDEFAULT,CW_USEDEFAULT,
                                 rect.right-rect.left,rect.bottom-rect.top,nullptr,nullptr,instance,nullptr);
-    if (!window) { if (SUCCEEDED(com)) CoUninitialize(); return 1; }
+    if (!window) { unloadHero(); if (SUCCEEDED(com)) CoUninitialize(); return 1; }
     ShowWindow(window,SW_SHOW); UpdateWindow(window);
     MSG message{};
     while (GetMessageW(&message,nullptr,0,0)>0) {
         if (!IsDialogMessageW(window,&message)) { TranslateMessage(&message); DispatchMessageW(&message); }
     }
+    unloadHero();
     if (SUCCEEDED(com)) CoUninitialize();
     return 0;
 }

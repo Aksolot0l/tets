@@ -4,11 +4,12 @@
     {
       "source": "repair/GAYClientLauncher.dll",
       "destination": "GAYClientLauncher.dll",
-      "size": 167424,
-      "sha256": "a24ca7236568aebdb6659a62a21944fd7dd441c50cff1e32a157c431f35eedee",
+      "size": 481792,
+      "sha256": "5e25e5e8c791f2a255b626fa894f64163c7b986125592b824e5f4ac6e4cfbce4",
       "previousSha256": [
         "f96bfdf8788b85bad0ffc5b6632dbc8d792c3e487da00ed82aa6b82d85026afc",
-        "5623f671bc96ee0f3f32ced35c5f821c8699cb020224fc75f629dbd4436fe06c"
+        "5623f671bc96ee0f3f32ced35c5f821c8699cb020224fc75f629dbd4436fe06c",
+        "a24ca7236568aebdb6659a62a21944fd7dd441c50cff1e32a157c431f35eedee"
       ]
     },
     {

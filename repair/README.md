@@ -74,6 +74,11 @@ Minecraft UWP (`Microsoft.MinecraftUWP_8wekyb3d8bbwe!App`). Если у игры
 загрузку файла, а не успешную инициализацию оверлея. Оставляйте лаунчер открытым,
 пока нужна прокрутка. Закрытие лаунчера завершает его потоки. Новое окно и запуск
 приложения не проверены в реальной Windows; нужна проверка пользователем.
+Главная страница использует созданную ИИ иллюстрацию из
+`repair/assets/launcher-world.jpg`; она встроена в DLL как ресурс и не требует
+отдельной загрузки или установки файла. Для рисования используется системная
+библиотека Windows GDI+. При ошибке загрузки изображения интерфейс остаётся
+работоспособным и показывает однотонный фон.
 
 При обновлении установщик удалит только известные неизменённые версии прежнего
 `START_CLIENT.exe`; файл с неизвестным хешем будет сохранён. При ошибке появится
@@ -139,6 +144,7 @@ Windows и не гарантирует корректную прокрутку �
 
 ```
 zig c++ -target x86_64-windows-gnu -std=c++17 -shared -O2 -Irepair/vendor/imgui repair/src/compat.cpp repair/src/uwp_extra.cpp -o repair/GAYClientInternal.dll -ld3d11 -ldxgi -luser32 -lole32 -lapi-ms-win-core-winrt-l1-1-0 -lapi-ms-win-core-winrt-string-l1-1-0 -luuid -static
-zig c++ -target x86_64-windows-gnu -std=c++17 -shared -O2 repair/src/client_autoload.cpp repair/src/launcher_ui.cpp -o repair/GAYClientLauncher.dll -luser32 -lgdi32 -lshell32 -lole32 -static
+zig rc /fo repair/launcher_ui.res repair/src/launcher_ui.rc
+zig c++ -target x86_64-windows-gnu -std=c++17 -shared -O2 repair/src/client_autoload.cpp repair/src/launcher_ui.cpp repair/launcher_ui.res -o repair/GAYClientLauncher.dll -luser32 -lgdi32 -lshell32 -lole32 -lgdiplus -static
 python3 repair/src/patch_client.py
 ```

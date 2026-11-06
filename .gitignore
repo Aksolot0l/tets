@@ -5,3 +5,4 @@ repair/*.acl.local.txt
 # Optional compiler intermediates for the adapter
 repair/*.pdb
 repair/*.lib
+repair/*.res
