@@ -1,0 +1,3964 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#020805">
+  <title>GAYClient - настройки интерфейса</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --accent: #38ff7d;
+      --accent-rgb: 56, 255, 125;
+      --accent-deep: #0bb54b;
+      --accent-pale: #caffda;
+      --text: #effcf3;
+      --text-soft: #c3d9c9;
+      --muted: #7f9e89;
+      --dim: #55715f;
+      --danger: #ff6d79;
+      --bg: #000000;
+      --shell: #041009;
+      --panel: #06160d;
+      --panel-deep: #030c07;
+      --line: rgba(94, 255, 151, .15);
+      --line-mid: rgba(82, 255, 142, .25);
+      --line-strong: rgba(72, 255, 136, .48);
+      --glow: 0 0 24px rgba(var(--accent-rgb), .25);
+      --font: "Manrope", "Segoe UI", sans-serif;
+      --mono: "JetBrains Mono", "Consolas", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+    button, input, select { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 2px solid rgba(var(--accent-rgb), .75);
+      outline-offset: 2px;
+    }
+    ::selection { background: rgba(var(--accent-rgb), .28); color: #fff; }
+
+    /* ── Сцена: чёрный кадр игры, без имитации игрового мира ───────────── */
+    .scene {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      background:
+        radial-gradient(ellipse 58% 56% at 51% 48%, rgba(7, 33, 17, .30) 0%, rgba(0, 8, 3, .18) 43%, transparent 72%),
+        linear-gradient(180deg, #000 0%, #010503 52%, #000 100%);
+    }
+    .scene::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(53, 255, 117, .022) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(53, 255, 117, .022) 1px, transparent 1px);
+      background-size: 64px 64px;
+      mask-image: radial-gradient(ellipse at center, black 5%, transparent 72%);
+      pointer-events: none;
+    }
+    .scene::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, .80) 100%);
+      pointer-events: none;
+    }
+    .scene-glow {
+      position: absolute;
+      width: 61vw;
+      height: 70vh;
+      left: 18vw;
+      top: 12vh;
+      border-radius: 50%;
+      background: rgba(15, 103, 45, .15);
+      filter: blur(120px);
+      pointer-events: none;
+    }
+    .scene-pixel {
+      position: absolute;
+      background: rgba(50, 255, 116, .24);
+      box-shadow: 0 0 12px rgba(50, 255, 116, .28);
+      pointer-events: none;
+    }
+    .scene-pixel.p1 { width: 16px; height: 16px; left: 12%; top: 11%; }
+    .scene-pixel.p2 { width: 8px; height: 8px; left: 14%; top: 16%; opacity: .6; }
+    .scene-pixel.p3 { width: 12px; height: 12px; left: 17%; top: 9%; opacity: .4; }
+    .scene-pixel.p4 { width: 18px; height: 18px; right: 9%; top: 21%; opacity: .32; }
+    .scene-pixel.p5 { width: 9px; height: 9px; right: 7%; top: 17%; opacity: .6; }
+    .scene-pixel.p6 { width: 14px; height: 14px; right: 12%; top: 13%; opacity: .3; }
+    .scene-pixel.p7 { width: 10px; height: 10px; left: 7%; bottom: 16%; opacity: .54; }
+    .scene-pixel.p8 { width: 22px; height: 22px; left: 11%; bottom: 11%; opacity: .16; }
+    .scene-pixel.p9 { width: 13px; height: 13px; right: 8%; bottom: 8%; opacity: .45; }
+    .scene-pixel.p10 { width: 7px; height: 7px; right: 13%; bottom: 15%; opacity: .7; }
+    .scene-caption {
+      position: absolute;
+      left: 50%;
+      bottom: 12px;
+      transform: translateX(-50%);
+      z-index: 1;
+      color: rgba(179, 211, 188, .33);
+      font-size: 10px;
+      letter-spacing: .22em;
+      text-transform: uppercase;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    /* ── Оболочка одного окна ───────────────────────────────────────────── */
+    .menu-shell {
+      position: relative;
+      z-index: 3;
+      width: min(1560px, calc(100vw - 56px));
+      height: min(870px, calc(100vh - 48px));
+      min-height: 630px;
+      display: grid;
+      grid-template-columns: 268px minmax(0, 1fr);
+      border-radius: 24px;
+      border: 1px solid rgba(80, 255, 142, .36);
+      background: linear-gradient(142deg, #07180e 0%, #030b06 42%, #06150c 100%);
+      box-shadow:
+        0 0 0 1px rgba(0, 0, 0, .75),
+        0 0 0 4px rgba(15, 50, 27, .40),
+        0 30px 90px rgba(0, 0, 0, .92),
+        0 0 64px rgba(39, 255, 111, .14),
+        inset 0 0 60px rgba(22, 112, 51, .08);
+      isolation: isolate;
+    }
+    .menu-shell::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      border-radius: inherit;
+      background:
+        radial-gradient(ellipse 26% 40% at 0% 14%, rgba(47, 255, 117, .08), transparent 70%),
+        radial-gradient(ellipse 36% 28% at 100% 0%, rgba(45, 255, 116, .06), transparent 76%),
+        repeating-linear-gradient(90deg, transparent 0 79px, rgba(82, 255, 143, .017) 79px 80px);
+      pointer-events: none;
+    }
+
+    /* ── Левая колонка ─────────────────────────────────────────────────── */
+    .sidebar {
+      min-width: 0;
+      min-height: 0;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 16px 14px 14px;
+      border-right: 1px solid rgba(84, 255, 143, .13);
+      border-radius: 23px 0 0 23px;
+      background:
+        radial-gradient(ellipse 125% 32% at 50% 0%, rgba(46, 255, 116, .10), transparent 70%),
+        linear-gradient(160deg, rgba(4, 16, 9, .82), rgba(2, 8, 5, .62));
+    }
+    .brand-zone {
+      position: relative;
+      flex: 0 0 202px;
+      width: 100%;
+      user-select: none;
+    }
+    .brand-cat {
+      position: absolute;
+      z-index: 3;
+      width: 176px;
+      height: 180px;
+      left: 50%;
+      top: -22px;
+      transform: translateX(-50%);
+      filter: drop-shadow(0 0 14px rgba(35, 255, 108, .38));
+      pointer-events: none;
+      animation: mascotFloat 6s ease-in-out infinite;
+    }
+    @keyframes mascotFloat {
+      0%, 100% { transform: translateX(-50%) translateY(0); }
+      50% { transform: translateX(-50%) translateY(-4px); }
+    }
+    .brand-card {
+      position: absolute;
+      left: 2px;
+      right: 2px;
+      bottom: 0;
+      padding: 13px 10px 12px;
+      text-align: center;
+      border: 1px solid var(--line-strong);
+      border-radius: 14px;
+      background:
+        linear-gradient(180deg, rgba(12, 45, 23, .96), rgba(3, 13, 7, .97));
+      box-shadow:
+        0 0 22px rgba(42, 255, 116, .16),
+        inset 0 0 24px rgba(64, 255, 135, .055),
+        inset 0 1px rgba(181, 255, 204, .16);
+      overflow: hidden;
+    }
+    .brand-card::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(112deg, transparent 20%, rgba(255, 255, 255, .035) 40%, transparent 60%);
+      pointer-events: none;
+    }
+    .brand-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+    .brand-word {
+      font-size: 21px;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: .035em;
+      color: #f5fff7;
+      text-shadow: 0 0 14px rgba(var(--accent-rgb), .44);
+      white-space: nowrap;
+    }
+    .brand-word em { color: var(--accent); font-style: normal; }
+    .brand-ver {
+      flex: 0 0 auto;
+      padding: 2px 4px;
+      border-radius: 3px;
+      border: 1px solid rgba(var(--accent-rgb), .25);
+      background: rgba(var(--accent-rgb), .07);
+      color: rgba(var(--accent-rgb), .85);
+      font-family: var(--mono);
+      font-size: 6.5px;
+      font-weight: 600;
+      letter-spacing: .02em;
+    }
+    .brand-sub {
+      margin-top: 7px;
+      color: #a2bcaa;
+      font-size: 7.5px;
+      line-height: 1;
+      font-weight: 700;
+      letter-spacing: .34em;
+      white-space: nowrap;
+    }
+    .nav-caption {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 5px;
+      margin: 12px 0 8px;
+      color: #506e5b;
+      font-size: 8.5px;
+      font-weight: 800;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+    .nav-caption::after { content: ""; height: 1px; flex: 1; background: rgba(93, 255, 150, .08); }
+    .side-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      min-height: 0;
+    }
+    .nav-btn {
+      position: relative;
+      width: 100%;
+      height: 46px;
+      flex: 0 0 46px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 0 11px;
+      border-radius: 10px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: #99b3a1;
+      cursor: pointer;
+      text-align: left;
+      font-size: 13px;
+      font-weight: 600;
+      transition: background .16s ease, border-color .16s ease, color .16s ease, transform .16s ease;
+    }
+    .nav-btn:hover {
+      color: #edfff2;
+      background: rgba(var(--accent-rgb), .055);
+      border-color: rgba(var(--accent-rgb), .14);
+      transform: translateX(1px);
+    }
+    .nav-btn.is-active {
+      color: #f7fff9;
+      border-color: rgba(78, 255, 141, .42);
+      background: linear-gradient(90deg, rgba(52, 255, 122, .20), rgba(47, 255, 117, .055));
+      box-shadow: inset 0 0 22px rgba(46, 255, 113, .08), 0 0 18px rgba(43, 255, 111, .10);
+    }
+    .nav-btn.is-active::before {
+      content: "";
+      position: absolute;
+      width: 3px;
+      height: 23px;
+      border-radius: 0 4px 4px 0;
+      left: -5px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: var(--accent);
+      box-shadow: 0 0 10px rgba(var(--accent-rgb), .85);
+    }
+    .nav-icon {
+      width: 29px;
+      height: 28px;
+      flex: 0 0 29px;
+      display: grid;
+      place-items: center;
+      border-radius: 7px;
+      color: var(--accent);
+      background: rgba(var(--accent-rgb), .06);
+      border: 1px solid rgba(var(--accent-rgb), .13);
+      box-shadow: inset 0 0 12px rgba(var(--accent-rgb), .035);
+      transition: background .16s ease, box-shadow .16s ease;
+    }
+    .nav-btn.is-active .nav-icon {
+      background: rgba(var(--accent-rgb), .15);
+      border-color: rgba(var(--accent-rgb), .34);
+      box-shadow: 0 0 12px rgba(var(--accent-rgb), .12), inset 0 0 10px rgba(var(--accent-rgb), .09);
+    }
+    .nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sidebar-spacer { flex: 1 1 auto; min-height: 8px; }
+    .sidebar-fill {
+      position: relative;
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      margin-top: 12px;
+      padding: 10px 11px 10px;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid rgba(var(--accent-rgb), .17);
+      background:
+        radial-gradient(ellipse 120% 90% at 100% 0%, rgba(var(--accent-rgb), .10), transparent 68%),
+        linear-gradient(160deg, rgba(8, 30, 16, .82), rgba(2, 10, 6, .86));
+      box-shadow: inset 0 1px rgba(204, 255, 222, .05), inset 0 0 22px rgba(var(--accent-rgb), .022);
+    }
+    .sidebar-fill::before {
+      content: "";
+      position: absolute;
+      left: 11px; right: 11px; top: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb), .55), transparent);
+      pointer-events: none;
+    }
+    .fill-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 7px; }
+    .fill-status {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 8px;
+      margin-bottom: 8px;
+      border-radius: 7px;
+      border: 1px solid rgba(var(--accent-rgb), .15);
+      background: rgba(var(--accent-rgb), .045);
+    }
+    .fill-status .online-dot { width: 6px; height: 6px; flex-basis: 6px; }
+    .fill-status-copy { min-width: 0; }
+    .fill-status-copy b { display: block; color: #dff8e6; font-size: 9.5px; font-weight: 700; line-height: 1.2; }
+    .fill-status-copy small { display: block; margin-top: 2px; color: #6d8b79; font-size: 7px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .fill-chart { position: relative; flex: 1 1 auto; min-height: 44px; max-height: 158px; margin: 8px 0 0; display: flex; flex-direction: column; }
+    .fill-chart .fill-chart-svg {
+      flex: 1 1 auto;
+      min-height: 0;
+      width: 100%;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid rgba(var(--accent-rgb), .09);
+      background:
+        linear-gradient(rgba(var(--accent-rgb), .045) 1px, transparent 1px) 0 0 / 100% 14px,
+        rgba(2, 12, 7, .5);
+    }
+    .fill-chart .fill-chart-svg svg { width: 100%; height: 100%; display: block; }
+    .fill-chart .fill-chart-cap {
+      display: block;
+      margin-top: 4px;
+      color: rgba(var(--accent-rgb), .38);
+      font-family: var(--mono);
+      font-size: 6px;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .fill-title {
+      display: flex; align-items: center; gap: 6px;
+      color: #a7c7b1; font-size: 8px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase;
+    }
+    .fill-title::before { content: ""; width: 4px; height: 4px; border-radius: 1px; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+    .fill-badge {
+      padding: 2px 5px; border-radius: 3px;
+      border: 1px solid rgba(var(--accent-rgb), .22);
+      background: rgba(var(--accent-rgb), .07);
+      color: rgba(var(--accent-rgb), .85);
+      font-family: var(--mono); font-size: 6.5px; letter-spacing: .08em;
+    }
+    .fill-meter { display: flex; align-items: flex-end; gap: 2px; height: 20px; margin-bottom: 8px; }
+    .fill-meter i {
+      flex: 1; height: 6px; border-radius: 1px;
+      background: rgba(var(--accent-rgb), .12);
+      transition: background .2s ease, height .2s ease, box-shadow .2s ease;
+    }
+    .fill-meter i:nth-child(3n) { height: 10px; }
+    .fill-meter i:nth-child(4n) { height: 14px; }
+    .fill-meter i:nth-child(5n) { height: 8px; }
+    .fill-meter i.on {
+      background: linear-gradient(180deg, rgba(var(--accent-rgb), .95), rgba(var(--accent-rgb), .42));
+      box-shadow: 0 0 6px rgba(var(--accent-rgb), .28);
+    }
+    .fill-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      min-height: 17px; font-size: 8.5px;
+    }
+    .fill-row + .fill-row { border-top: 1px solid rgba(var(--accent-rgb), .055); }
+    .fill-label { color: #6d8b79; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .fill-value { color: #c3dfcb; font-family: var(--mono); font-size: 8px; white-space: nowrap; }
+    .fill-value.mono { color: #93b5a0; }
+    .fill-value.dim { color: #7d9a86; }
+    .fill-pixels { position: absolute; right: 7px; top: 25px; width: 30px; height: 26px; pointer-events: none; opacity: .5; }
+    .fill-pixels span {
+      position: absolute;
+      width: 3px; height: 3px;
+      background: var(--accent);
+      box-shadow: 0 0 4px rgba(var(--accent-rgb), .35);
+    }
+    .fill-pixels span:nth-child(3n) { width: 2px; height: 2px; }
+    .fill-pixels span:nth-child(4n) { width: 4px; height: 4px; }
+    .fill-links { display: flex; flex-direction: column; gap: 4px; margin-top: auto; padding-top: 8px; }
+    .fill-link {
+      width: 100%;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 8px;
+      border-radius: 6px;
+      border: 1px solid rgba(var(--accent-rgb), .12);
+      background: rgba(var(--accent-rgb), .035);
+      color: #93b19d;
+      font-size: 9.5px;
+      font-weight: 600;
+      text-align: left;
+      cursor: pointer;
+      transition: .15s ease;
+    }
+    .fill-link .ic { color: var(--accent); opacity: .8; }
+    .fill-link span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fill-link:hover {
+      color: #eafff0;
+      border-color: rgba(var(--accent-rgb), .34);
+      background: rgba(var(--accent-rgb), .09);
+      transform: translateX(1px);
+    }
+    .fill-link:hover .ic { opacity: 1; }
+    .mono { font-family: var(--mono); }
+    @media (max-height: 800px) and (min-width: 901px) {
+      .sidebar-fill { min-height: 0; flex: 1 1 auto; padding-top: 8px; padding-bottom: 8px; }
+      .fill-links { flex-direction: row; flex-wrap: wrap; margin-top: 4px; }
+      .fill-link { flex: 1 1 auto; height: 24px; padding: 0 6px; font-size: 8.5px; gap: 4px; }
+      .fill-pixels, .fill-chart { display: none; }
+    }
+    @media (max-height: 660px) and (min-width: 901px) { .sidebar-fill { display: none; } }
+    @media (max-width: 900px) { .sidebar-fill { display: none; } }
+    .sidebar-status {
+      flex: 0 0 auto;
+      margin-top: auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 11px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(82, 255, 143, .24);
+      background: linear-gradient(160deg, rgba(8, 31, 17, .88), rgba(2, 10, 6, .9));
+      box-shadow: inset 0 1px rgba(204, 255, 222, .06);
+      position: relative;
+      overflow: hidden;
+    }
+    .sidebar-status::after {
+      content: "";
+      width: 22px; height: 22px;
+      position: absolute; right: 8px; bottom: 7px;
+      background:
+        linear-gradient(var(--accent), var(--accent)) 0 0 / 8px 8px no-repeat,
+        linear-gradient(var(--accent), var(--accent)) 12px 8px / 6px 6px no-repeat,
+        linear-gradient(var(--accent), var(--accent)) 6px 15px / 5px 5px no-repeat;
+      opacity: .24;
+    }
+    .online-dot {
+      width: 8px; height: 8px; flex: 0 0 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 9px var(--accent);
+      animation: dotPulse 2.4s ease-in-out infinite;
+    }
+    @keyframes dotPulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+    .status-copy { min-width: 0; }
+    .status-title { color: #eafff0; font-size: 11.5px; font-weight: 700; line-height: 1.3; }
+    .status-meta { color: #789381; font-size: 9.5px; line-height: 1.4; margin-top: 2px; white-space: nowrap; }
+    .sidebar-mini-version {
+      margin: 9px 3px 0;
+      display: flex;
+      justify-content: space-between;
+      color: #496252;
+      font-size: 8px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    /* ── Правая рабочая область ─────────────────────────────────────────── */
+    .workspace {
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .topbar {
+      flex: 0 0 58px;
+      min-width: 0;
+      height: 58px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 17px;
+      border-bottom: 1px solid rgba(85, 255, 145, .12);
+      position: relative;
+      background: linear-gradient(180deg, rgba(6, 24, 13, .42), rgba(3, 12, 7, .08));
+    }
+    .top-heading { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .top-mark {
+      width: 31px;
+      height: 31px;
+      flex: 0 0 31px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      color: var(--accent);
+      border: 1px solid rgba(var(--accent-rgb), .3);
+      background: linear-gradient(145deg, rgba(var(--accent-rgb), .13), rgba(3, 14, 8, .82));
+      box-shadow: inset 0 1px rgba(220, 255, 232, .09), 0 0 14px rgba(var(--accent-rgb), .08);
+    }
+    .top-mark .ic { width: 16px; height: 16px; }
+    .top-copy { min-width: 0; }
+    .top-eyebrow {
+      color: #5f806c;
+      font-size: 7px;
+      font-weight: 700;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .top-title {
+      margin-top: 2px;
+      color: #f1fff5;
+      font-size: 15px;
+      line-height: 1.1;
+      font-weight: 800;
+      letter-spacing: -.02em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .top-ornament { flex: 1; display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-width: 10px; padding-right: 2px; }
+    .top-ornament i {
+      display: block;
+      height: 3px;
+      border-radius: 2px;
+      background: rgba(var(--accent-rgb), .30);
+      box-shadow: 0 0 6px rgba(var(--accent-rgb), .12);
+    }
+    .top-ornament i:nth-child(1) { width: 28px; opacity: .30; }
+    .top-ornament i:nth-child(2) { width: 15px; opacity: .45; }
+    .top-ornament i:nth-child(3) { width: 8px; opacity: .75; background: var(--accent); }
+    .top-ornament i:nth-child(4) { width: 4px; opacity: .40; }
+    .top-ornament i:nth-child(5) { width: 2px; opacity: .25; }
+    .top-status {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 8px;
+      border-radius: 5px;
+      border: 1px solid rgba(var(--accent-rgb), .18);
+      background: rgba(4, 18, 9, .7);
+      color: #85a58e;
+      font-size: 7.5px;
+      font-weight: 600;
+      letter-spacing: .03em;
+      white-space: nowrap;
+    }
+    .top-status-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+    .window-chrome { margin-left: 2px; }
+    .topbar::after {
+      content: "";
+      position: absolute;
+      left: 0; right: 0; bottom: -1px; height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(79, 255, 139, .18) 18%, rgba(79, 255, 139, .08) 76%, transparent);
+      pointer-events: none;
+    }
+    .top-tabs { display: flex; align-items: flex-end; gap: 7px; min-width: 0; height: 52px; flex: 1 1 auto; }
+    .top-tab {
+      position: relative;
+      flex: 0 1 182px;
+      min-width: 96px;
+      height: 46px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 0 16px;
+      border-radius: 12px 12px 8px 8px;
+      border: 1px solid rgba(83, 255, 143, .13);
+      background: linear-gradient(180deg, rgba(16, 42, 24, .54), rgba(4, 15, 8, .50));
+      color: #789783;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+      transition: color .16s, border-color .16s, background .16s, box-shadow .16s, transform .16s;
+    }
+    .top-tab:hover {
+      color: #e8fff0;
+      border-color: rgba(84, 255, 143, .26);
+      background: linear-gradient(180deg, rgba(21, 60, 33, .62), rgba(4, 19, 10, .6));
+    }
+    .top-tab .tab-icon { color: #6e9179; transition: color .16s, filter .16s; display: inline-flex; }
+    .top-tab.is-active {
+      color: #ffffff;
+      border-color: rgba(77, 255, 139, .52);
+      background: linear-gradient(180deg, rgba(31, 91, 48, .75), rgba(7, 31, 17, .90));
+      box-shadow: inset 0 1px rgba(207, 255, 223, .15), inset 0 0 24px rgba(65, 255, 132, .06), 0 0 22px rgba(46, 255, 113, .10);
+      transform: translateY(1px);
+    }
+    .top-tab.is-active::after {
+      content: "";
+      position: absolute;
+      left: 13%; right: 13%; bottom: -1px;
+      height: 3px;
+      border-radius: 3px 3px 0 0;
+      background: var(--accent);
+      box-shadow: 0 0 13px rgba(var(--accent-rgb), .85);
+    }
+    .top-tab.is-active .tab-icon { color: var(--accent); filter: drop-shadow(0 0 5px rgba(var(--accent-rgb), .5)); }
+    .window-chrome {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      padding: 4px;
+      border: 1px solid rgba(84, 255, 143, .16);
+      border-radius: 10px;
+      background: rgba(3, 14, 8, .68);
+      margin-bottom: 1px;
+    }
+    .chrome-btn {
+      width: 27px; height: 27px;
+      border-radius: 6px;
+      display: grid; place-items: center;
+      border: 1px solid transparent;
+      background: transparent;
+      color: #7d9b88;
+      cursor: pointer;
+      transition: .15s ease;
+    }
+    .chrome-btn:hover { background: rgba(var(--accent-rgb), .11); border-color: rgba(var(--accent-rgb), .20); color: #edfff2; }
+    .chrome-btn.danger:hover { background: rgba(255, 85, 103, .13); border-color: rgba(255, 109, 121, .25); color: #ff9da6; }
+
+    .workspace-main {
+      flex: 1 1 auto;
+      min-height: 0;
+      min-width: 0;
+      display: grid;
+      grid-template-columns: minmax(0, .96fr) minmax(0, 1.38fr);
+      gap: 13px;
+      padding: 13px 16px 9px;
+    }
+    .content-column {
+      min-width: 0;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding: 14px;
+      border-radius: 15px;
+      border: 1px solid rgba(85, 255, 146, .16);
+      background:
+        linear-gradient(180deg, rgba(7, 24, 14, .72), rgba(3, 12, 7, .62));
+      box-shadow: inset 0 1px rgba(203, 255, 220, .035), inset 0 0 40px rgba(44, 255, 114, .015);
+      scrollbar-width: thin;
+      scrollbar-color: rgba(var(--accent-rgb), .28) transparent;
+    }
+    .content-column::-webkit-scrollbar { width: 6px; }
+    .content-column::-webkit-scrollbar-track { background: transparent; }
+    .content-column::-webkit-scrollbar-thumb { background: rgba(var(--accent-rgb), .26); border-radius: 20px; }
+    .content-column::-webkit-scrollbar-thumb:hover { background: rgba(var(--accent-rgb), .40); }
+
+    /* ── Заголовки и настройки ──────────────────────────────────────────── */
+    .section-head {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      min-width: 0;
+      padding: 1px 0 11px;
+    }
+    .section-icon {
+      width: 38px; height: 38px; flex: 0 0 38px;
+      display: grid; place-items: center;
+      border-radius: 10px;
+      color: var(--accent);
+      border: 1px solid rgba(var(--accent-rgb), .21);
+      background: linear-gradient(145deg, rgba(var(--accent-rgb), .12), rgba(var(--accent-rgb), .025));
+      box-shadow: inset 0 1px rgba(214, 255, 228, .07), 0 0 16px rgba(var(--accent-rgb), .06);
+    }
+    .section-copy { min-width: 0; flex: 1; }
+    .section-title { margin: 0; color: #f4fff7; font-size: 19px; line-height: 1.16; font-weight: 800; letter-spacing: -.025em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .section-subtitle { margin: 4px 0 0; color: #7f9d89; font-size: 10.5px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .section-badge {
+      flex: 0 0 auto;
+      padding: 5px 8px;
+      border-radius: 6px;
+      border: 1px solid rgba(var(--accent-rgb), .18);
+      background: rgba(var(--accent-rgb), .055);
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: 8px;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+    .content-divider { height: 1px; background: linear-gradient(90deg, rgba(85, 255, 145, .18), rgba(85,255,145,.03) 80%, transparent); margin-bottom: 10px; }
+    .settings-group {
+      margin-top: 9px;
+      border-radius: 12px;
+      border: 1px solid rgba(84, 255, 143, .15);
+      background: linear-gradient(160deg, rgba(11, 31, 18, .58), rgba(4, 15, 8, .66));
+      box-shadow: inset 0 1px rgba(198, 255, 218, .035);
+      overflow: hidden;
+    }
+    .settings-group:first-of-type { margin-top: 0; }
+    .group-header {
+      min-height: 36px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 11px 8px;
+      border-bottom: 1px solid rgba(84, 255, 143, .08);
+    }
+    .group-title { color: #e9fff0; font-size: 12px; font-weight: 800; letter-spacing: -.01em; flex: 1 1 auto; }
+    .group-mark { width: 5px; height: 5px; border-radius: 1px; background: var(--accent); box-shadow: 0 0 7px var(--accent); flex: 0 0 5px; }
+    .group-note { color: #587360; font-family: var(--mono); font-size: 7.5px; text-transform: uppercase; letter-spacing: .04em; }
+    .group-body { padding: 2px 6px 5px; }
+    .setting-row {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-height: 39px;
+      padding: 4px 5px;
+      border-radius: 7px;
+      transition: background .14s ease;
+    }
+    .setting-row:hover { background: rgba(var(--accent-rgb), .035); }
+    .setting-row + .setting-row { border-top: 1px solid rgba(110, 255, 159, .035); }
+    .row-icon {
+      width: 25px; height: 25px; flex: 0 0 25px;
+      display: grid; place-items: center;
+      color: var(--accent);
+      border-radius: 6px;
+      border: 1px solid rgba(var(--accent-rgb), .20);
+      background: rgba(var(--accent-rgb), .045);
+    }
+    .row-icon.plain { border-color: transparent; background: transparent; }
+    .row-label { flex: 1 1 auto; min-width: 0; color: var(--text-soft); font-size: 11.5px; font-weight: 500; line-height: 1.3; }
+    .row-note {
+      display: inline-block;
+      margin-left: 4px;
+      color: #607e69;
+      font-size: 8px;
+      font-weight: 500;
+      border-left: 1px solid rgba(104, 255, 153, .15);
+      padding-left: 5px;
+    }
+    .row-control { flex: 0 0 auto; display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
+    .setting-row .row-control.wide { flex: 1 1 auto; }
+    .muted-value { color: #6b8774; font-size: 9.5px; white-space: nowrap; }
+
+    /* Переключатели */
+    .switch {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      flex: 0 0 39px;
+      width: 39px; height: 21px;
+      border-radius: 999px;
+      padding: 2px;
+      border: 1px solid rgba(143, 164, 150, .35);
+      background: #29382e;
+      cursor: pointer;
+      transition: background .18s, border-color .18s, box-shadow .18s;
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, .38);
+    }
+    .switch::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background: radial-gradient(circle at 24% 50%, rgba(255,255,255,.10), transparent 50%);
+      pointer-events: none;
+    }
+    .switch-knob {
+      position: relative;
+      width: 15px; height: 15px;
+      border-radius: 50%;
+      background: #e3ece6;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, .4);
+      transform: translateX(0);
+      transition: transform .20s cubic-bezier(.2,.85,.25,1), background .18s, box-shadow .18s;
+      z-index: 1;
+    }
+    .switch.is-on {
+      background: linear-gradient(180deg, #45ff8c, #1bcd5d);
+      border-color: rgba(117, 255, 164, .85);
+      box-shadow: 0 0 13px rgba(var(--accent-rgb), .26), inset 0 1px rgba(234, 255, 242, .33);
+    }
+    .switch.is-on .switch-knob {
+      transform: translateX(18px);
+      background: #fff;
+      box-shadow: 0 0 6px rgba(255, 255, 255, .70);
+    }
+    .switch:hover { border-color: rgba(var(--accent-rgb), .58); }
+    .switch.is-on:hover { box-shadow: 0 0 17px rgba(var(--accent-rgb), .38), inset 0 1px rgba(234, 255, 242, .4); }
+    .switch.small { width: 34px; flex-basis: 34px; height: 19px; }
+    .switch.small .switch-knob { width: 13px; height: 13px; }
+    .switch.small.is-on .switch-knob { transform: translateX(15px); }
+
+    /* Ползунки */
+    .range-wrap { display: flex; align-items: center; gap: 8px; min-width: 176px; max-width: 217px; width: 100%; }
+    .range {
+      --p: 50%;
+      -webkit-appearance: none;
+      appearance: none;
+      display: block;
+      flex: 1 1 auto;
+      min-width: 80px;
+      height: 16px;
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      cursor: pointer;
+    }
+    .range::-webkit-slider-runnable-track {
+      width: 100%;
+      height: 4px;
+      border-radius: 99px;
+      background: linear-gradient(90deg, var(--accent) 0 var(--p), rgba(139, 166, 147, .20) var(--p) 100%);
+      box-shadow: 0 0 7px rgba(var(--accent-rgb), .11);
+    }
+    .range::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 13px; height: 13px;
+      margin-top: -4.5px;
+      border-radius: 50%;
+      border: 3px solid var(--accent);
+      background: #f2fff5;
+      box-shadow: 0 0 9px rgba(var(--accent-rgb), .65), 0 1px 3px rgba(0,0,0,.4);
+      transition: transform .13s ease, box-shadow .13s ease;
+    }
+    .range:hover::-webkit-slider-thumb { transform: scale(1.12); box-shadow: 0 0 14px rgba(var(--accent-rgb), .9); }
+    .range::-moz-range-track { height: 4px; border-radius: 99px; background: rgba(139, 166, 147, .20); }
+    .range::-moz-range-progress { height: 4px; border-radius: 99px; background: var(--accent); }
+    .range::-moz-range-thumb { width: 11px; height: 11px; border: 3px solid var(--accent); border-radius: 50%; background: #f2fff5; box-shadow: 0 0 9px rgba(var(--accent-rgb), .65); }
+    .range-val { flex: 0 0 41px; min-width: 41px; text-align: right; color: #d3e8d9; font-family: var(--mono); font-size: 9.5px; white-space: nowrap; }
+    .range-wrap.compact { min-width: 145px; }
+    .range-wrap.compact .range-val { flex-basis: 34px; min-width: 34px; }
+
+    /* Списки и поля */
+    .select-shell { position: relative; min-width: 152px; max-width: 208px; }
+    .select-shell::after {
+      content: "";
+      position: absolute;
+      right: 11px; top: 50%;
+      width: 6px; height: 6px;
+      border-right: 1.6px solid var(--accent);
+      border-bottom: 1.6px solid var(--accent);
+      transform: translateY(-68%) rotate(45deg);
+      pointer-events: none;
+    }
+    .select-shell select {
+      width: 100%;
+      appearance: none;
+      -webkit-appearance: none;
+      height: 31px;
+      border-radius: 8px;
+      border: 1px solid rgba(100, 255, 153, .26);
+      background: #071d10;
+      color: #dff7e7;
+      font-size: 10.5px;
+      font-weight: 600;
+      padding: 0 29px 0 10px;
+      cursor: pointer;
+      box-shadow: inset 0 1px rgba(210, 255, 225, .05);
+      text-overflow: ellipsis;
+    }
+    .select-shell select:hover { border-color: rgba(100, 255, 153, .45); }
+    .select-shell select option { background: #06170d; color: #edfff3; }
+    .color-control {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      height: 31px;
+      border: 1px solid rgba(99, 255, 152, .23);
+      background: #06190f;
+      border-radius: 8px;
+      padding: 0 8px 0 4px;
+      cursor: pointer;
+    }
+    .color-control:hover { border-color: rgba(99, 255, 152, .5); }
+    .color-control input[type="color"] {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 23px; height: 23px;
+      padding: 0; border: none; border-radius: 5px;
+      background: transparent;
+      cursor: pointer;
+      overflow: hidden;
+    }
+    .color-control input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+    .color-control input[type="color"]::-webkit-color-swatch { border: none; border-radius: 5px; }
+    .color-control input[type="color"]::-moz-color-swatch { border: none; border-radius: 5px; }
+    .color-hex { color: #aec8b7; font-family: var(--mono); font-size: 8.5px; text-transform: uppercase; letter-spacing: .02em; }
+    .text-input {
+      width: 100%;
+      min-width: 0;
+      height: 37px;
+      border: 1px solid rgba(92, 255, 146, .20);
+      border-radius: 9px;
+      background: rgba(2, 12, 7, .75);
+      color: #eafff0;
+      padding: 0 12px 0 34px;
+      font-size: 11.5px;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .text-input::placeholder { color: #58715f; }
+    .text-input:focus { outline: none; border-color: rgba(var(--accent-rgb), .6); box-shadow: 0 0 0 3px rgba(var(--accent-rgb), .08); }
+    .search-wrap { position: relative; }
+    .search-wrap .search-icon { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: #648471; pointer-events: none; display: inline-flex; }
+    .search-wrap:focus-within .search-icon { color: var(--accent); }
+
+    /* Кнопки */
+    .action-row { display: flex; gap: 7px; flex-wrap: wrap; padding-top: 9px; }
+    .btn {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      min-height: 36px;
+      padding: 0 13px;
+      border-radius: 8px;
+      border: 1px solid rgba(98, 255, 151, .23);
+      background: linear-gradient(180deg, rgba(13, 39, 22, .78), rgba(4, 17, 9, .82));
+      color: #ccdfd2;
+      font-size: 10.5px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: .16s ease;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .btn:hover {
+      color: #f5fff8;
+      border-color: rgba(var(--accent-rgb), .54);
+      background: linear-gradient(180deg, rgba(22, 59, 34, .88), rgba(6, 24, 13, .92));
+      box-shadow: 0 0 16px rgba(var(--accent-rgb), .10);
+    }
+    .btn.primary {
+      color: #f5fff8;
+      border-color: rgba(var(--accent-rgb), .53);
+      background: linear-gradient(180deg, rgba(37, 103, 56, .75), rgba(6, 37, 18, .90));
+      box-shadow: inset 0 1px rgba(209, 255, 224, .12), 0 0 15px rgba(var(--accent-rgb), .09);
+    }
+    .btn.primary:hover { box-shadow: inset 0 1px rgba(209, 255, 224, .17), 0 0 21px rgba(var(--accent-rgb), .20); }
+    .btn.ghost { background: transparent; border-color: rgba(99, 255, 151, .11); color: #799781; }
+    .btn.danger { color: #ffadb5; border-color: rgba(255, 107, 123, .27); background: rgba(70, 14, 21, .22); }
+    .btn.danger:hover { border-color: rgba(255, 107, 123, .58); box-shadow: 0 0 16px rgba(255, 85, 104, .11); color: #ffd2d6; }
+    .btn.grow { flex: 1 1 auto; }
+    .btn:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; }
+    .btn.tiny { min-height: 29px; padding: 0 10px; font-size: 9px; }
+    .icon-btn {
+      display: inline-grid;
+      place-items: center;
+      width: 30px; height: 30px;
+      border: 1px solid rgba(106, 255, 157, .16);
+      border-radius: 7px;
+      background: rgba(7, 24, 14, .6);
+      color: #8eae99;
+      cursor: pointer;
+      transition: .15s;
+    }
+    .icon-btn:hover { color: var(--accent); border-color: rgba(var(--accent-rgb), .4); background: rgba(var(--accent-rgb), .07); }
+
+    /* Мини-виджеты */
+    .home-hero {
+      position: relative;
+      overflow: hidden;
+      margin-bottom: 9px;
+      padding: 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(84, 255, 144, .24);
+      background:
+        radial-gradient(ellipse 80% 130% at 100% 0%, rgba(var(--accent-rgb), .13), transparent 62%),
+        linear-gradient(150deg, rgba(11, 38, 21, .82), rgba(3, 15, 8, .92));
+      box-shadow: inset 0 1px rgba(212, 255, 227, .06);
+    }
+    .home-hero::after {
+      content: "";
+      position: absolute; width: 76px; height: 76px; right: 2px; top: -15px;
+      background-image:
+        linear-gradient(var(--accent), var(--accent)), linear-gradient(var(--accent), var(--accent)),
+        linear-gradient(var(--accent), var(--accent)), linear-gradient(var(--accent), var(--accent));
+      background-size: 9px 9px, 5px 5px, 4px 4px, 7px 7px;
+      background-position: 0 0, 12px 8px, 7px 17px, 47px 45px;
+      background-repeat: no-repeat;
+      opacity: .14;
+      pointer-events: none;
+    }
+    .hero-eyebrow { display: flex; align-items: center; gap: 6px; color: var(--accent); font-size: 8px; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
+    .hero-title { margin: 7px 0 4px; font-size: 25px; font-weight: 800; line-height: 1; letter-spacing: -.035em; color: #f5fff8; }
+    .hero-desc { margin: 0; max-width: 310px; color: #8daa96; font-size: 10.5px; line-height: 1.55; }
+    .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      min-height: 21px;
+      padding: 3px 7px;
+      border-radius: 5px;
+      color: #a7c4af;
+      font-size: 8.5px;
+      font-weight: 600;
+      line-height: 1.15;
+      border: 1px solid rgba(99, 255, 152, .17);
+      background: rgba(8, 28, 16, .65);
+    }
+    .pill.green { color: #d6ffdf; background: rgba(var(--accent-rgb), .09); border-color: rgba(var(--accent-rgb), .25); }
+    .pill.demo { color: #a9c8b2; border-style: dashed; }
+    .pill.warn { color: #f1d191; border-color: rgba(240, 202, 103, .25); background: rgba(75, 58, 16, .18); }
+    .mini-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 9px; }
+    .quick-card {
+      display: flex; align-items: center; gap: 8px; min-height: 36px;
+      padding: 6px 8px; border-radius: 8px;
+      border: 1px solid rgba(91, 255, 146, .12);
+      background: rgba(6, 22, 12, .55);
+      color: #b9d3c0; font-size: 9.5px; font-weight: 600; cursor: pointer;
+      text-align: left; transition: .15s;
+    }
+    .quick-card:hover { color: #f2fff5; border-color: rgba(var(--accent-rgb), .35); background: rgba(var(--accent-rgb), .065); }
+    .quick-card .ic { color: var(--accent); }
+    .value-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .metric-mini {
+      border: 1px solid rgba(92, 255, 146, .10);
+      border-radius: 8px;
+      background: rgba(3, 14, 8, .58);
+      padding: 8px;
+    }
+    .metric-mini .label { color: #73907e; font-size: 8px; letter-spacing: .02em; }
+    .metric-mini .value { color: #e1f8e7; font-family: var(--mono); font-size: 12px; font-weight: 600; margin-top: 3px; }
+    .metric-mini .value.dim { color: #657c6b; }
+
+    /* Позиции HUD */
+    .position-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 2px 5px 5px; }
+    .position-tile {
+      height: 27px; border-radius: 6px;
+      border: 1px solid rgba(90, 255, 145, .12);
+      background: rgba(4, 17, 9, .55);
+      color: #5e7a67; cursor: pointer;
+      display: grid; place-items: center; transition: .14s;
+    }
+    .position-tile:hover { color: #cdebd6; border-color: rgba(var(--accent-rgb), .3); }
+    .position-tile.is-active { color: var(--accent); border-color: rgba(var(--accent-rgb), .45); background: rgba(var(--accent-rgb), .08); box-shadow: inset 0 0 10px rgba(var(--accent-rgb), .05); }
+    .position-tile .dot-grid { width: 13px; height: 11px; display: grid; grid-template-columns: 1fr 1fr; gap: 2px; }
+    .position-tile .dot-grid i { display: block; background: currentColor; border-radius: 1px; opacity: .58; }
+    .position-tile.is-active .dot-grid i { opacity: 1; }
+
+    /* Темы */
+    .theme-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 2px 5px 6px; }
+    .theme-card {
+      position: relative;
+      padding: 7px;
+      border-radius: 8px;
+      text-align: left;
+      border: 1px solid rgba(87, 255, 143, .15);
+      background: rgba(4, 17, 9, .64);
+      cursor: pointer;
+      transition: .17s;
+    }
+    .theme-card:hover { border-color: rgba(90, 255, 146, .32); transform: translateY(-1px); }
+    .theme-card.is-active { border-color: var(--theme-color, var(--accent)); box-shadow: 0 0 14px color-mix(in srgb, var(--theme-color, var(--accent)) 18%, transparent), inset 0 0 20px rgba(0,0,0,.2); }
+    .theme-preview { height: 30px; border-radius: 4px; background: var(--theme-bg, #04110a); border: 1px solid rgba(255,255,255,.06); position: relative; overflow: hidden; }
+    .theme-preview::before { content: ""; position: absolute; left: 5px; top: 6px; width: 12px; height: 3px; background: var(--theme-color, var(--accent)); box-shadow: 0 6px 0 rgba(255,255,255,.35), 14px 0 0 rgba(255,255,255,.18), 0 12px 0 rgba(255,255,255,.10); opacity: .95; }
+    .theme-preview::after { content: ""; position: absolute; right: 4px; top: 5px; width: 12px; height: 20px; border-radius: 2px; border: 1px solid var(--theme-color, var(--accent)); opacity: .38; }
+    .theme-name { margin-top: 6px; color: #c0d9c8; font-size: 7.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .theme-check { position: absolute; right: 4px; bottom: 6px; color: var(--theme-color); display: none; }
+    .theme-card.is-active .theme-check { display: inline-flex; }
+
+    /* Графика — сворачиваемые группы */
+    .effect-card { margin-top: 8px; }
+    .effect-card .group-header { padding: 0; border-bottom: 1px solid rgba(84,255,143,.08); min-height: 41px; }
+    .effect-name { display: flex; align-items: center; gap: 8px; flex: 1; padding: 8px 11px; cursor: pointer; }
+    .effect-name .row-label { font-weight: 700; color: #e0f4e5; font-size: 11.5px; }
+    .effect-header-actions { display: flex; align-items: center; gap: 8px; padding-right: 8px; }
+    .collapse-btn { width: 22px; height: 22px; display: grid; place-items: center; color: #6f9079; background: transparent; border: 0; cursor: pointer; transition: transform .18s, color .15s; }
+    .collapse-btn:hover { color: var(--accent); }
+    .effect-card.is-open .collapse-btn { transform: rotate(180deg); }
+    .effect-body { display: none; }
+    .effect-card.is-open .effect-body { display: block; }
+    .effect-note { padding: 7px 11px 3px; color: #67836f; font-size: 8.5px; line-height: 1.45; }
+
+    /* Моды */
+    .mod-toolbar { display: flex; gap: 7px; align-items: center; margin: 2px 0 8px; }
+    .mod-toolbar .search-wrap { flex: 1; min-width: 0; }
+    .category-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+    .chip-btn {
+      height: 24px; padding: 0 8px; border-radius: 5px;
+      border: 1px solid rgba(92, 255, 148, .13);
+      background: rgba(5, 18, 10, .5);
+      color: #75927f; font-size: 8.5px; font-weight: 700; cursor: pointer;
+    }
+    .chip-btn:hover { border-color: rgba(var(--accent-rgb), .34); color: #d4f2de; }
+    .chip-btn.is-active { border-color: rgba(var(--accent-rgb), .44); background: rgba(var(--accent-rgb), .10); color: #e5ffed; }
+    .mod-list { display: flex; flex-direction: column; gap: 4px; }
+    .mod-card {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 7px;
+      border-radius: 8px;
+      border: 1px solid rgba(89, 255, 145, .10);
+      background: rgba(5, 20, 11, .52);
+      cursor: pointer;
+      transition: .14s;
+    }
+    .mod-card:hover { border-color: rgba(var(--accent-rgb), .28); background: rgba(var(--accent-rgb), .04); }
+    .mod-card.is-selected { border-color: rgba(var(--accent-rgb), .36); background: linear-gradient(90deg, rgba(var(--accent-rgb), .09), rgba(5, 20, 11, .5)); }
+    .mod-card[hidden] { display: none; }
+    .mod-icon { width: 27px; height: 27px; flex: 0 0 27px; display: grid; place-items: center; border-radius: 6px; color: var(--accent); background: rgba(var(--accent-rgb), .06); border: 1px solid rgba(var(--accent-rgb), .15); }
+    .mod-copy { flex: 1; min-width: 0; }
+    .mod-name { color: #d8eddf; font-size: 10px; line-height: 1.2; font-weight: 700; }
+    .mod-desc { color: #66816e; font-size: 7.7px; line-height: 1.35; margin-top: 2px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .mod-tag { color: #53705e; font-family: var(--mono); font-size: 6.8px; letter-spacing: .04em; padding: 2px 4px; border-radius: 3px; background: rgba(90, 255, 148, .045); flex: 0 0 auto; }
+    .no-results { padding: 18px 10px; text-align: center; color: #6c8774; font-size: 10px; }
+    .mod-detail-head { display: flex; gap: 9px; align-items: center; padding: 10px 11px 8px; }
+    .mod-detail-head .mod-name { font-size: 12px; }
+    .mod-detail-desc { color: #7d9986; font-size: 9.5px; line-height: 1.5; padding: 0 11px 7px; }
+    .module-details-footer { display: flex; justify-content: space-between; align-items: center; padding: 7px 10px; border-top: 1px solid rgba(88,255,145,.07); color: #5f7d68; font-size: 8px; }
+    .data-note {
+      display: flex; align-items: flex-start; gap: 7px;
+      margin-top: 8px; padding: 8px 9px;
+      border-radius: 8px;
+      border: 1px dashed rgba(97, 255, 151, .17);
+      background: rgba(8, 24, 14, .45);
+      color: #789482; font-size: 8.5px; line-height: 1.5;
+    }
+    .data-note .ic { color: #9bbda5; flex: 0 0 auto; margin-top: 1px; }
+
+    /* Профили */
+    .profile-list { display: flex; flex-direction: column; gap: 5px; }
+    .profile-card {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px;
+      border-radius: 9px;
+      border: 1px solid rgba(92,255,147,.11);
+      background: rgba(5, 20, 11, .52);
+      cursor: pointer;
+      transition: .15s;
+    }
+    .profile-card:hover { border-color: rgba(var(--accent-rgb), .28); }
+    .profile-card.is-active { border-color: rgba(var(--accent-rgb), .40); background: rgba(var(--accent-rgb), .065); box-shadow: inset 0 0 22px rgba(var(--accent-rgb), .035); }
+    .profile-avatar { width: 29px; height: 29px; flex: 0 0 29px; border-radius: 7px; display: grid; place-items: center; color: var(--accent); background: rgba(var(--accent-rgb), .09); border: 1px solid rgba(var(--accent-rgb), .18); }
+    .profile-info { flex: 1; min-width: 0; }
+    .profile-name { color: #e0f6e7; font-size: 10.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .profile-meta { color: #6c8775; font-size: 8px; margin-top: 2px; }
+    .profile-active-tag { color: var(--accent); border: 1px solid rgba(var(--accent-rgb), .25); background: rgba(var(--accent-rgb), .055); border-radius: 4px; font-size: 7px; padding: 2px 5px; white-space: nowrap; }
+    .selected-profile {
+      display: flex; gap: 9px; align-items: center;
+      padding: 10px;
+      border-radius: 9px;
+      border: 1px solid rgba(var(--accent-rgb), .25);
+      background: radial-gradient(ellipse 80% 130% at 0% 0%, rgba(var(--accent-rgb), .08), transparent 60%), rgba(4,18,10,.65);
+    }
+    .selected-profile .profile-avatar { width: 35px; height: 35px; flex-basis: 35px; }
+    .profile-actions { display: flex; flex-direction: column; gap: 5px; margin-top: 7px; }
+    .profile-actions .action-row { padding-top: 0; }
+    .profile-actions .btn { flex: 1 1 auto; }
+
+    /* Статистика */
+    .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .stat-card {
+      position: relative; overflow: hidden;
+      padding: 9px;
+      border-radius: 9px;
+      border: 1px solid rgba(92, 255, 148, .14);
+      background: linear-gradient(150deg, rgba(9, 30, 17, .68), rgba(3, 14, 8, .66));
+    }
+    .stat-card::after {
+      content: ""; position: absolute; right: -14px; bottom: -19px; width: 51px; height: 51px;
+      border-radius: 50%; border: 1px solid rgba(var(--accent-rgb), .10);
+      box-shadow: 0 0 0 8px rgba(var(--accent-rgb), .018);
+    }
+    .stat-head { display: flex; align-items: center; gap: 6px; color: #77947f; font-size: 8px; font-weight: 600; }
+    .stat-icon { width: 22px; height: 22px; flex: 0 0 22px; display: grid; place-items: center; color: var(--accent); background: rgba(var(--accent-rgb), .055); border: 1px solid rgba(var(--accent-rgb), .15); border-radius: 5px; }
+    .stat-value { margin-top: 8px; color: #dcefe2; font-family: var(--mono); font-size: 16px; font-weight: 600; letter-spacing: -.03em; }
+    .stat-value.dim { color: #607867; font-size: 10.5px; letter-spacing: 0; }
+    .stat-foot { margin-top: 3px; color: #567261; font-size: 7.5px; line-height: 1.35; }
+    .stat-card.wide { grid-column: 1 / -1; }
+    .empty-chart {
+      margin-top: 8px; height: 61px; border-radius: 6px; position: relative; overflow: hidden;
+      border: 1px solid rgba(88, 255, 145, .08);
+      background-image: linear-gradient(rgba(88,255,145,.055) 1px, transparent 1px), linear-gradient(90deg, rgba(88,255,145,.055) 1px, transparent 1px);
+      background-size: 22px 16px;
+    }
+    .empty-chart::after {
+      content: "Ожидание данных клиента";
+      position: absolute; inset: 0; display: grid; place-items: center;
+      color: #516c5b; font-size: 8px; letter-spacing: .02em;
+      background: radial-gradient(ellipse at center, rgba(3,13,7,.46), transparent 70%);
+    }
+    .stat-banner { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border: 1px solid rgba(240, 202, 103, .17); background: rgba(65, 52, 17, .16); border-radius: 8px; color: #cbb781; font-size: 8.5px; line-height: 1.45; }
+    .stat-banner .ic { flex: 0 0 auto; }
+
+    /* ── Предпросмотр ───────────────────────────────────────────────────── */
+    .preview-panel {
+      min-width: 0; min-height: 0;
+      display: flex; flex-direction: column;
+      position: relative;
+      padding: 13px 13px 12px;
+      border-radius: 15px;
+      border: 1px solid rgba(85, 255, 146, .19);
+      background: linear-gradient(160deg, rgba(7, 24, 14, .76), rgba(2, 10, 6, .68));
+      box-shadow: inset 0 1px rgba(199, 255, 218, .045), inset 0 0 44px rgba(44, 255, 115, .018);
+    }
+    .preview-head { flex: 0 0 auto; min-height: 36px; display: flex; align-items: center; gap: 9px; padding: 0 1px 10px; }
+    .preview-head-icon { width: 27px; height: 27px; flex: 0 0 27px; display: grid; place-items: center; color: var(--accent); border-radius: 7px; background: rgba(var(--accent-rgb), .08); border: 1px solid rgba(var(--accent-rgb), .20); box-shadow: 0 0 13px rgba(var(--accent-rgb), .07); }
+    .preview-head-copy { flex: 1; min-width: 0; }
+    .preview-title { margin: 0; color: #f4fff7; font-size: 16px; line-height: 1.2; font-weight: 800; letter-spacing: -.025em; }
+    .preview-title small { margin-left: 6px; color: #5c7966; font-size: 8px; font-weight: 600; letter-spacing: .03em; }
+    .preview-subtitle { margin: 2px 0 0; color: #688271; font-size: 8.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .preview-expand {
+      flex: 0 0 auto; width: 29px; height: 29px;
+      display: grid; place-items: center;
+      color: #92ad9b; border: 1px solid rgba(82, 255, 142, .15); border-radius: 7px;
+      background: rgba(4, 16, 9, .6); cursor: pointer; transition: .15s;
+    }
+    .preview-expand:hover { color: var(--accent); border-color: rgba(var(--accent-rgb), .40); background: rgba(var(--accent-rgb), .055); }
+    .preview-stage {
+      position: relative;
+      flex: 1 1 auto;
+      min-height: 240px;
+      overflow: hidden;
+      border-radius: 12px;
+      border: 1px solid rgba(var(--accent-rgb), .54);
+      background:
+        radial-gradient(ellipse 62% 54% at 52% 44%, rgba(12, 54, 27, .34), transparent 72%),
+        #010604;
+      box-shadow:
+        0 0 0 4px rgba(var(--accent-rgb), .045),
+        0 0 23px rgba(var(--accent-rgb), .19),
+        inset 0 0 70px rgba(0, 0, 0, .78),
+        inset 0 1px rgba(188, 255, 209, .10);
+    }
+    .preview-stage::before {
+      content: "";
+      position: absolute;
+      inset: 7px;
+      border-radius: 7px;
+      border: 1px solid rgba(var(--accent-rgb), .14);
+      pointer-events: none;
+      z-index: 3;
+    }
+    .preview-stage::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 2;
+      background: linear-gradient(180deg, rgba(0, 0, 0, .18), transparent 12%, transparent 84%, rgba(0, 0, 0, .32));
+    }
+    .stage-grid {
+      position: absolute; inset: 0; opacity: .5;
+      background-image: linear-gradient(rgba(91,255,148,.065) 1px, transparent 1px), linear-gradient(90deg, rgba(91,255,148,.065) 1px, transparent 1px);
+      background-size: 34px 34px;
+      mask-image: radial-gradient(ellipse at center, black 5%, rgba(0,0,0,.7) 55%, transparent 100%);
+    }
+    .stage-catbg {
+      position: absolute;
+      width: min(45%, 290px);
+      right: 7%;
+      bottom: 2%;
+      opacity: .12;
+      filter: blur(.2px) saturate(130%);
+      pointer-events: none;
+    }
+    .stage-scanlines {
+      position: absolute; inset: 0; pointer-events: none; opacity: .20;
+      background: repeating-linear-gradient(0deg, transparent 0 3px, rgba(77, 255, 138, .055) 3px 4px);
+    }
+    .preview-mode {
+      position: absolute; z-index: 4; top: 13px; left: 14px;
+      display: inline-flex; align-items: center; gap: 5px;
+      min-height: 20px; padding: 3px 7px;
+      border: 1px solid rgba(var(--accent-rgb), .29);
+      border-radius: 4px;
+      background: rgba(2, 15, 8, .82);
+      color: var(--accent);
+      font-size: 7px; font-weight: 800; letter-spacing: .13em; text-transform: uppercase;
+      box-shadow: 0 0 10px rgba(var(--accent-rgb), .08);
+      backdrop-filter: blur(6px);
+    }
+    .preview-mode .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 5px var(--accent); }
+    .preview-scale { position: absolute; z-index: 4; right: 14px; top: 13px; font-family: var(--mono); font-size: 7.5px; color: #5f8069; letter-spacing: .05em; }
+    .empty-preview {
+      position: absolute; z-index: 3;
+      left: 50%; top: 46%;
+      transform: translate(-50%, -50%);
+      width: min(80%, 340px);
+      display: flex; flex-direction: column; align-items: center;
+      text-align: center;
+      pointer-events: none;
+      padding: 18px 18px 16px;
+      border-radius: 13px;
+      border: 1px dashed rgba(var(--accent-rgb), .17);
+      background:
+        radial-gradient(ellipse 80% 90% at 50% 0%, rgba(var(--accent-rgb), .055), transparent 72%),
+        rgba(1, 8, 4, .52);
+      box-shadow: inset 0 1px rgba(214, 255, 227, .035), 0 12px 34px rgba(0, 0, 0, .25);
+      backdrop-filter: blur(2px);
+    }
+    .empty-icon-wrap {
+      width: 54px; height: 54px;
+      border-radius: 13px;
+      display: grid; place-items: center;
+      border: 1px solid rgba(var(--accent-rgb), .20);
+      background: linear-gradient(145deg, rgba(var(--accent-rgb), .08), rgba(1, 8, 4, .50));
+      color: var(--accent);
+      box-shadow: 0 0 22px rgba(var(--accent-rgb), .09), inset 0 1px rgba(211,255,224,.07);
+      margin-bottom: 10px;
+    }
+    .empty-preview h3 { margin: 0; color: #cfe6d6; font-size: 13.5px; font-weight: 700; text-shadow: 0 1px 4px #000; }
+    .empty-preview p { margin: 6px 0 0; max-width: 278px; color: #85a190; font-size: 9.5px; line-height: 1.55; text-shadow: 0 1px 4px #000; }
+    .no-texture-tag {
+      display: inline-flex; align-items: center; gap: 5px;
+      margin-top: 9px; padding: 4px 7px;
+      border: 1px dashed rgba(97, 255, 151, .25);
+      border-radius: 4px;
+      color: #72907b; font-size: 7.5px; font-weight: 600;
+      background: rgba(3, 14, 8, .6);
+    }
+    .preview-watermark {
+      position: absolute; z-index: 3; left: 15px; bottom: 33px;
+      display: flex; align-items: center; gap: 5px;
+      padding: 4px 7px;
+      border: 1px solid rgba(var(--accent-rgb), .18);
+      border-radius: 4px;
+      background: rgba(2, 13, 7, .8);
+      color: #d3f4dd; font-family: var(--mono); font-size: 7.5px; letter-spacing: .06em;
+    }
+    .hud-sample {
+      position: absolute; z-index: 5;
+      right: 17px; top: 40px;
+      width: 150px;
+      padding: 7px;
+      border-radius: 10px;
+      border: 1px solid rgba(var(--accent-rgb), .34);
+      background: linear-gradient(150deg, rgba(4, 23, 12, .94), rgba(1, 9, 5, .92));
+      box-shadow: 0 5px 20px rgba(0,0,0,.45), 0 0 16px rgba(var(--accent-rgb), .11), inset 0 1px rgba(192,255,209,.06);
+      backdrop-filter: blur(7px);
+    }
+    .hud-sample[data-pos="Сверху слева"] { right: auto; left: 17px; top: 41px; }
+    .hud-sample[data-pos="Снизу слева"] { right: auto; left: 17px; top: auto; bottom: 17px; }
+    .hud-sample[data-pos="Снизу справа"] { top: auto; right: 17px; bottom: 17px; }
+    .hud-sample[data-pos="Собственная позиция"] { right: 24%; top: 42%; }
+    .hud-sample-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0 1px 5px; border-bottom: 1px solid rgba(var(--accent-rgb), .10); margin-bottom: 4px; }
+    .hud-sample-top span:first-child { color: #7d9a87; font-size: 6px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    .hud-sample-top span:last-child { color: var(--accent); font-size: 5.6px; font-family: var(--mono); border: 1px solid rgba(var(--accent-rgb),.18); border-radius: 2px; padding: 1px 3px; }
+    .hud-sample-row { display: flex; align-items: center; gap: 6px; height: 20px; color: #d7f2df; font-family: var(--mono); font-size: 8px; }
+    .hud-sample-row .ic { color: var(--accent); }
+    .hud-sample-row .hud-val { margin-left: auto; color: #9ec4aa; font-size: 7.5px; }
+    .hud-sample-empty { color: #64816e; font-size: 7.5px; line-height: 1.45; padding: 3px 1px 4px; }
+    .preview-chips { position: absolute; z-index: 4; left: 15px; bottom: 33px; right: 15px; display: flex; flex-wrap: wrap; gap: 4px; }
+    .preview-chips .pill { font-size: 7.5px; min-height: 18px; padding: 2px 5px; background: rgba(2,14,8,.74); backdrop-filter: blur(5px); }
+    .graphics-status {
+      position: absolute; z-index: 4; left: 15px; top: 43px;
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .graphics-status-row {
+      display: flex; align-items: center; gap: 6px;
+      min-width: 123px;
+      padding: 5px 7px;
+      border: 1px solid rgba(97,255,151,.13);
+      border-radius: 5px;
+      background: rgba(2, 14, 8, .78);
+      color: #819e8b; font-size: 7.5px;
+      backdrop-filter: blur(5px);
+    }
+    .graphics-status-row .status-led { width: 4px; height: 4px; background: #526b5b; border-radius: 50%; }
+    .graphics-status-row.is-on { color: #cae7d2; border-color: rgba(var(--accent-rgb), .23); }
+    .graphics-status-row.is-on .status-led { background: var(--accent); box-shadow: 0 0 5px var(--accent); }
+    .graphics-status-row .g-state { margin-left: auto; font-family: var(--mono); font-size: 6px; color: #5f7d69; }
+    .graphics-status-row.is-on .g-state { color: var(--accent); }
+    .sound-preview { position: absolute; z-index: 4; right: 16px; top: 43px; width: 132px; display: flex; flex-direction: column; gap: 7px; padding: 8px; border: 1px solid rgba(var(--accent-rgb), .18); background: rgba(2,14,8,.80); border-radius: 7px; backdrop-filter: blur(6px); }
+    .sound-line { display: flex; align-items: center; gap: 5px; color: #809a88; font-size: 6.5px; }
+    .sound-line .sound-bar { flex: 1; height: 3px; border-radius: 5px; background: rgba(100,130,110,.18); overflow: hidden; }
+    .sound-line .sound-bar i { display: block; height: 100%; background: var(--accent); border-radius: inherit; box-shadow: 0 0 5px rgba(var(--accent-rgb), .4); }
+    .sound-line .sound-num { color: #abc4b3; font-family: var(--mono); font-size: 6px; min-width: 17px; text-align: right; }
+    .content-column::after {
+      content: "";
+      position: sticky;
+      bottom: 0;
+      z-index: 5;
+      display: block;
+      height: 22px;
+      margin-top: -22px;
+      background: linear-gradient(180deg, rgba(3, 12, 7, 0), rgba(3, 12, 7, .92));
+      pointer-events: none;
+    }
+    @media (max-height: 800px) {
+      .preview-note { display: none; }
+      .preview-tip { min-height: 62px; margin-top: 9px; padding-top: 8px; padding-bottom: 8px; }
+      .preview-tip .tip-text { font-size: 8.5px; }
+      .preview-stage { min-height: 210px; }
+    }
+    .stage-meta { font-family: var(--mono); }
+    .preview-tip {
+      position: relative;
+      flex: 0 0 auto;
+      min-height: 74px;
+      margin-top: 11px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 84px 10px 11px;
+      border-radius: 11px;
+      border: 1px solid rgba(85, 255, 145, .25);
+      background:
+        radial-gradient(ellipse 52% 130% at 100% 50%, rgba(var(--accent-rgb), .10), transparent 70%),
+        linear-gradient(145deg, rgba(7, 26, 14, .82), rgba(2, 12, 7, .82));
+      box-shadow: inset 0 1px rgba(194, 255, 213, .05), 0 0 18px rgba(var(--accent-rgb), .04);
+      overflow: hidden;
+    }
+    .tip-icon { width: 32px; height: 32px; flex: 0 0 32px; display: grid; place-items: center; border-radius: 8px; color: var(--accent); background: rgba(var(--accent-rgb), .07); border: 1px solid rgba(var(--accent-rgb), .18); box-shadow: 0 0 16px rgba(var(--accent-rgb), .07); }
+    .tip-content { min-width: 0; }
+    .tip-title { color: #d8f5e1; font-size: 10.5px; font-weight: 700; }
+    .tip-text { margin-top: 3px; color: #809b88; font-size: 8.5px; line-height: 1.45; }
+    .tip-cat { position: absolute; right: 7px; bottom: -9px; width: 86px; height: 86px; opacity: .85; pointer-events: none; }
+    .preview-note {
+      flex: 0 0 auto;
+      margin-top: 8px;
+      display: flex; justify-content: space-between; gap: 10px;
+      color: #4c6756;
+      font-size: 7px;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    /* ── Нижняя строка ──────────────────────────────────────────────────── */
+    .shell-footer {
+      flex: 0 0 34px;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 17px 8px;
+      color: #4e6957;
+      font-size: 8px;
+    }
+    .footer-hint { display: flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; }
+    .keycap {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 23px; height: 17px;
+      padding: 0 5px;
+      border: 1px solid rgba(94, 255, 149, .20);
+      border-bottom-color: rgba(94, 255, 149, .30);
+      border-radius: 4px;
+      background: rgba(5, 22, 12, .8);
+      color: #a3c3ac;
+      font-family: var(--mono);
+      font-size: 7px;
+      box-shadow: 0 1px 0 rgba(0,0,0,.35);
+    }
+    .footer-hint .sep { color: #35493b; }
+    .footer-spacer { flex: 1; }
+    .footer-meta { color: #425b4b; font-size: 7.5px; white-space: nowrap; display: flex; align-items: center; gap: 5px; }
+    .footer-meta .online { width: 4px; height: 4px; background: var(--accent); border-radius: 50%; box-shadow: 0 0 5px var(--accent); opacity: .7; }
+    .footer-meta b { color: #63806d; font-weight: 600; }
+
+    /* ── Иконки ─────────────────────────────────────────────────────────── */
+    .ic { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; color: currentColor; }
+    .ic svg { width: 100%; height: 100%; stroke-width: 1.8; }
+    .ic-11 { width: 11px; height: 11px; }
+    .ic-12 { width: 12px; height: 12px; }
+    .ic-13 { width: 13px; height: 13px; }
+    .ic-14 { width: 14px; height: 14px; }
+    .ic-15 { width: 15px; height: 15px; }
+    .ic-16 { width: 16px; height: 16px; }
+    .ic-17 { width: 17px; height: 17px; }
+    .ic-18 { width: 18px; height: 18px; }
+    .ic-19 { width: 19px; height: 19px; }
+    .ic-20 { width: 20px; height: 20px; }
+    .ic-22 { width: 22px; height: 22px; }
+    .ic-24 { width: 24px; height: 24px; }
+    .ic-26 { width: 26px; height: 26px; }
+    .nav-icon .ic { width: 15px; height: 15px; }
+    .tab-icon .ic { width: 16px; height: 16px; }
+
+    /* Пиксельный кот */
+    .pixel-cat-svg { display: block; width: 100%; height: 100%; overflow: visible; }
+    .pixel-cat-svg .cat-outline { filter: drop-shadow(0 0 3px rgba(48,255,119,.52)); }
+    .pixel-cat-svg .cat-eye { animation: catBlink 7s infinite; transform-origin: center; }
+
+    /* Модальное окно и уведомления */
+    .modal-layer {
+      position: fixed; inset: 0; z-index: 50;
+      display: none; align-items: center; justify-content: center;
+      padding: 18px;
+      background: rgba(0, 4, 1, .72);
+      backdrop-filter: blur(6px);
+    }
+    .modal-layer.is-open { display: flex; animation: fadeIn .16s ease; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .dialog {
+      position: relative;
+      width: min(370px, 100%);
+      padding: 16px;
+      border-radius: 14px;
+      border: 1px solid rgba(var(--accent-rgb), .40);
+      background: linear-gradient(150deg, #0a2011, #030c07);
+      box-shadow: 0 25px 80px rgba(0,0,0,.8), 0 0 30px rgba(var(--accent-rgb), .13), inset 0 1px rgba(208,255,223,.08);
+      animation: dialogIn .18s cubic-bezier(.2,.8,.2,1);
+    }
+    @keyframes dialogIn { from { transform: translateY(7px) scale(.98); opacity: 0; } to { transform: none; opacity: 1; } }
+    .dialog::before { content: ""; position: absolute; left: 16px; right: 16px; top: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--accent), transparent); opacity: .7; }
+    .dialog-head { display: flex; gap: 9px; align-items: center; margin-bottom: 8px; }
+    .dialog-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 7px; color: var(--accent); border: 1px solid rgba(var(--accent-rgb), .23); background: rgba(var(--accent-rgb), .06); }
+    .dialog-title { flex: 1; color: #effff4; font-size: 14px; font-weight: 800; }
+    .dialog-desc { margin: 0 0 11px; color: #80998a; font-size: 10px; line-height: 1.5; }
+    .dialog-input { padding-left: 12px; margin-bottom: 7px; }
+    .dialog-error { color: #ff9da6; font-size: 9px; min-height: 14px; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 6px; padding-top: 4px; }
+    .dialog-close { width: 25px; height: 25px; border: 0; border-radius: 5px; background: transparent; color: #7f9b87; display: grid; place-items: center; cursor: pointer; }
+    .dialog-close:hover { color: #e6fff0; background: rgba(var(--accent-rgb), .08); }
+    .toast {
+      position: fixed;
+      z-index: 70;
+      left: 50%;
+      bottom: 22px;
+      transform: translate(-50%, 12px);
+      display: flex; align-items: center; gap: 8px;
+      max-width: calc(100vw - 32px);
+      padding: 9px 13px;
+      border: 1px solid rgba(var(--accent-rgb), .35);
+      border-radius: 8px;
+      color: #d8f5e1;
+      background: rgba(4, 20, 11, .96);
+      box-shadow: 0 14px 35px rgba(0,0,0,.55), 0 0 20px rgba(var(--accent-rgb), .12);
+      font-size: 10.5px;
+      line-height: 1.4;
+      opacity: 0;
+      pointer-events: none;
+      transition: .22s ease;
+    }
+    .toast.is-visible { opacity: 1; transform: translate(-50%, 0); }
+    .toast .ic { color: var(--accent); }
+
+    /* ── Адаптивность ───────────────────────────────────────────────────── */
+    @media (max-width: 1280px) {
+      .menu-shell { width: calc(100vw - 34px); height: calc(100vh - 34px); grid-template-columns: 242px minmax(0, 1fr); border-radius: 21px; }
+      .sidebar { padding-left: 13px; padding-right: 13px; border-radius: 20px 0 0 20px; }
+      .brand-cat { width: 157px; height: 164px; top: -14px; }
+      .brand-zone { flex-basis: 184px; }
+      .brand-word { font-size: 19px; }
+      .nav-btn { height: 42px; flex-basis: 42px; font-size: 12px; }
+      .topbar { padding-left: 13px; padding-right: 13px; }
+      .top-tab { flex-basis: 155px; padding: 0 11px; font-size: 11px; gap: 7px; }
+      .workspace-main { padding: 11px 13px 7px; gap: 11px; }
+      .content-column { padding: 12px; }
+      .preview-panel { padding: 11px; }
+      .range-wrap { min-width: 154px; }
+      .select-shell { min-width: 140px; }
+    }
+    @media (max-width: 1110px) {
+      .menu-shell { grid-template-columns: 224px minmax(0, 1fr); }
+      .brand-cat { width: 144px; height: 153px; top: -9px; }
+      .brand-zone { flex-basis: 174px; }
+      .brand-word { font-size: 17px; }
+      .brand-sub { letter-spacing: .24em; font-size: 6.5px; }
+      .nav-btn { gap: 8px; padding: 0 8px; }
+      .nav-icon { width: 26px; height: 25px; flex-basis: 26px; }
+      .nav-label { font-size: 11px; }
+      .workspace-main { grid-template-columns: minmax(0, 1fr) minmax(0, 1.08fr); gap: 9px; padding: 9px; }
+      .top-tab { min-width: 0; }
+      .top-tab .tab-icon { display: none; }
+      .content-column { padding: 10px; }
+      .preview-title { font-size: 14px; }
+      .setting-row { gap: 6px; }
+      .row-label { font-size: 10.5px; }
+      .range-wrap { min-width: 127px; gap: 5px; }
+      .range-val { flex-basis: 34px; min-width: 34px; font-size: 8px; }
+      .select-shell { min-width: 124px; }
+      .select-shell select { font-size: 9.5px; padding-left: 8px; }
+      .preview-tip { padding-right: 67px; min-height: 69px; }
+      .tip-cat { width: 72px; height: 72px; right: 2px; }
+      .hud-sample { width: 136px; right: 12px; }
+      .preview-mode { left: 12px; top: 12px; }
+      .preview-scale { right: 12px; top: 13px; }
+    }
+    @media (max-width: 900px) {
+      body { overflow: auto; }
+      .scene { position: relative; min-height: 100vh; padding: 12px; align-items: flex-start; }
+      .scene-caption { display: none; }
+      .menu-shell {
+        width: 100%;
+        height: calc(100vh - 24px);
+        min-height: 580px;
+        grid-template-columns: 74px minmax(0, 1fr);
+        border-radius: 16px;
+      }
+      .sidebar { padding: 10px 8px; border-radius: 15px 0 0 15px; align-items: center; }
+      .brand-zone { flex: 0 0 87px; width: 100%; }
+      .brand-cat { width: 87px; height: 92px; top: -4px; }
+      .brand-card { padding: 8px 2px; left: 0; right: 0; border-radius: 8px; }
+      .brand-word { font-size: 9px; letter-spacing: 0; }
+      .brand-ver { display: none; }
+      .brand-sub { display: none; }
+      .nav-caption { display: none; }
+      .side-nav { gap: 5px; width: 100%; margin-top: 8px; padding: 3px; border-radius: 9px; }
+      .nav-btn { justify-content: center; height: 40px; flex-basis: 40px; padding: 0; }
+      .nav-btn.is-active::before { left: -4px; }
+      .nav-icon { width: 28px; height: 27px; flex-basis: 28px; }
+      .nav-label { display: none; }
+      .sidebar-status { width: 34px; height: 34px; padding: 0; justify-content: center; }
+      .status-copy, .sidebar-mini-version { display: none; }
+      .topbar { flex-basis: 54px; height: 54px; padding: 0 9px; }
+      .top-ornament { display: none; }
+      .top-status { display: none; }
+      .top-tabs { gap: 4px; height: 46px; }
+      .top-tab { height: 40px; font-size: 0; gap: 0; padding: 0; flex-basis: 50px; }
+      .top-tab .tab-icon { display: inline-flex; }
+      .top-tab .tab-icon .ic { width: 18px; height: 18px; }
+      .window-chrome { padding: 2px; }
+      .chrome-btn { width: 23px; height: 23px; }
+      .workspace-main {
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        padding: 8px;
+        gap: 8px;
+        scrollbar-width: thin;
+      }
+      .content-column { overflow: visible; flex: 0 0 auto; }
+      .preview-panel { flex: 0 0 auto; min-height: 390px; }
+      .preview-stage { min-height: 270px; }
+      .shell-footer { flex-basis: 30px; padding: 0 10px 7px; }
+      .footer-meta { font-size: 6.5px; }
+    }
+    @media (max-width: 620px) {
+      .menu-shell { height: calc(100vh - 16px); min-height: 560px; grid-template-columns: calc(54px + env(safe-area-inset-left, 0px)) minmax(0, 1fr); }
+      .sidebar { padding: 8px 5px; }
+      .brand-zone { flex-basis: 68px; }
+      .brand-cat { width: 70px; height: 76px; top: 0; }
+      .brand-card { padding: 5px 1px; }
+      .brand-word { font-size: 6.6px; }
+      .brand-ver, .brand-sub { display: none; }
+      .nav-btn { height: 36px; flex-basis: 36px; }
+      .nav-icon { width: 25px; height: 24px; flex-basis: 25px; }
+      .nav-icon .ic { width: 14px; height: 14px; }
+      .topbar { flex-basis: 48px; height: 48px; padding: 0 7px; }
+      .top-mark { width: 26px; height: 26px; flex-basis: 26px; }
+      .top-title { font-size: 12px; }
+      .top-eyebrow { font-size: 6px; }
+      .top-tab { flex-basis: 41px; height: 36px; border-radius: 8px; }
+      .window-chrome .chrome-btn:first-child { display: none; }
+      .workspace-main { padding: 6px; }
+      .content-column { padding: 9px; border-radius: 11px; }
+      .section-title { font-size: 16px; }
+      .section-icon { width: 33px; height: 33px; flex-basis: 33px; }
+      .section-subtitle { font-size: 9px; white-space: normal; }
+      .row-label { font-size: 10px; }
+      .setting-row { min-height: 37px; padding: 4px 2px; }
+      .row-icon { width: 22px; height: 22px; flex-basis: 22px; }
+      .row-control { max-width: 54%; }
+      .range-wrap { min-width: 103px; width: 128px; }
+      .select-shell { min-width: 110px; max-width: 138px; }
+      .preview-panel { min-height: 350px; padding: 9px; }
+      .preview-stage { min-height: 240px; }
+      .hud-sample { width: 128px; right: 11px; }
+      .theme-grid { gap: 4px; }
+      .theme-name { font-size: 6.5px; }
+      .stats-grid { gap: 4px; }
+      .mini-cards { grid-template-columns: 1fr; }
+      .preview-tip { padding: 9px 58px 9px 9px; }
+      .tip-cat { width: 60px; height: 60px; bottom: -3px; }
+      .tip-text { font-size: 8px; }
+      .footer-hint span:not(.keycap):not(.sep) { display: none; }
+      .footer-meta { font-size: 6px; }
+      .preview-note { display: none; }
+    }
+    @media (max-height: 720px) and (min-width: 901px) {
+      .menu-shell { height: calc(100vh - 22px); min-height: 560px; }
+      .topbar { flex-basis: 52px; height: 52px; }
+      .top-tabs { height: 46px; }
+      .top-tab { height: 41px; }
+      .brand-zone { flex-basis: 162px; }
+      .brand-cat { width: 135px; height: 143px; top: -5px; }
+      .brand-word { font-size: 17px; }
+      .nav-btn { height: 37px; flex-basis: 37px; font-size: 11px; }
+      .nav-icon { width: 25px; height: 24px; flex-basis: 25px; }
+      .nav-caption { margin-top: 7px; margin-bottom: 5px; }
+      .sidebar-status { padding: 8px 9px; }
+      .workspace-main { padding-top: 9px; padding-bottom: 4px; }
+      .shell-footer { flex-basis: 27px; padding-bottom: 4px; }
+      .preview-tip { min-height: 63px; }
+      .preview-title { font-size: 14px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="scene">
+    <div class="scene-glow" aria-hidden="true"></div>
+    <span class="scene-pixel p1"></span><span class="scene-pixel p2"></span><span class="scene-pixel p3"></span>
+    <span class="scene-pixel p4"></span><span class="scene-pixel p5"></span><span class="scene-pixel p6"></span>
+    <span class="scene-pixel p7"></span><span class="scene-pixel p8"></span><span class="scene-pixel p9"></span>
+    <span class="scene-pixel p10"></span>
+    <span class="scene-caption">GAYClient - визуальный интерфейс - демонстрация</span>
+
+    <main class="menu-shell" id="menuShell" aria-label="Меню GAYClient">
+      <span class="shell-corner sc-tl" aria-hidden="true"></span>
+      <span class="shell-corner sc-tr" aria-hidden="true"></span>
+      <span class="shell-corner sc-bl" aria-hidden="true"></span>
+      <span class="shell-corner sc-br" aria-hidden="true"></span>
+      <span class="shell-ornament so-top" aria-hidden="true"></span>
+      <span class="shell-ornament so-bottom" aria-hidden="true"></span>
+      <aside class="sidebar" id="sidebar"></aside>
+      <section class="workspace">
+        <header class="topbar">
+          <div class="top-heading">
+            <span class="top-mark" id="topMark" aria-hidden="true"></span>
+            <div class="top-copy">
+              <div class="top-eyebrow" id="topEyebrow">GAYClient</div>
+              <div class="top-title" id="topTitle">HUD</div>
+            </div>
+          </div>
+          <div class="top-ornament" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="top-status"><span class="top-status-dot"></span><span id="topStatus">демо режим</span></div>
+          <div class="window-chrome" aria-label="Управление окном">
+            <button class="chrome-btn" data-action="window-minimize" title="Свернуть" aria-label="Свернуть"><span class="ic ic-13"><i data-lucide="minus"></i></span></button>
+            <button class="chrome-btn" data-action="window-maximize" title="Развернуть" aria-label="Развернуть"><span class="ic ic-13"><i data-lucide="square"></i></span></button>
+            <button class="chrome-btn danger" data-action="window-close" title="Закрыть" aria-label="Закрыть"><span class="ic ic-13"><i data-lucide="x"></i></span></button>
+          </div>
+        </header>
+        <div class="workspace-main">
+          <section class="content-column" id="contentColumn" aria-live="polite"></section>
+          <aside class="preview-panel" id="previewPanel" aria-label="Предпросмотр"></aside>
+        </div>
+        <footer class="shell-footer">
+          <div class="footer-hint">
+            <span class="keycap">Right Shift</span><span>Открыть меню</span>
+            <span class="sep"></span><span class="keycap">ЛКМ</span><span>Выбрать</span>
+            <span class="sep"></span><span class="keycap">Колесо</span><span>Прокрутка</span>
+          </div>
+          <div class="footer-spacer"></div>
+          <div class="footer-meta"><span class="online"></span><span>GAYClient</span><b>1.1.5</b><span class="sep"></span><span>демонстрационный интерфейс</span></div>
+        </footer>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-layer" id="modalLayer" role="presentation">
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialogTitle" id="dialogBox"></div>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    "use strict";
+
+    /* ───────────────────────────────────────────────────────────────────────
+       СОСТОЯНИЕ
+       Всё визуальное состояние находится здесь. Подключение к игровому
+       клиенту сводится к записи значений в state и рендеру через render().
+       Значения по умолчанию — только демонстрационные.
+    ─────────────────────────────────────────────────────────────────────── */
+
+    const DEFAULT_POSITIONS = ["Сверху слева", "Сверху справа", "Снизу слева", "Снизу справа", "Собственная позиция"];
+    const DEFAULT_MODULES = [
+      {
+        id: "fps", name: "FPS", category: "HUD", icon: "activity", enabledPath: "hud.fps",
+        desc: "Счётчик кадров в игровом HUD",
+        fields: [
+          { type: "select", label: "Положение", path: "hud.position", options: DEFAULT_POSITIONS },
+          { type: "range", label: "Масштаб", path: "hud.hudScale", min: 0.5, max: 2, step: 0.05, suffix: "x", decimals: 2 },
+          { type: "range", label: "Прозрачность", path: "hud.opacity", min: 0, max: 100, step: 1, suffix: "%" },
+          { type: "color", label: "Цвет текста", path: "hud.textColor" }
+        ]
+      },
+      {
+        id: "cps", name: "CPS", category: "HUD", icon: "mouse-pointer-click", enabledPath: "hud.cps",
+        desc: "Счётчик кликов и нажатий в секунду",
+        fields: [
+          { type: "range", label: "Ширина карточки", path: "hud.hudSize", min: 0.6, max: 1.6, step: 0.05, suffix: "x", decimals: 2 },
+          { type: "range", label: "Прозрачность", path: "hud.opacity", min: 0, max: 100, step: 1, suffix: "%" },
+          { type: "color", label: "Цвет текста", path: "hud.textColor" },
+          { type: "select", label: "Положение", path: "hud.position", options: DEFAULT_POSITIONS }
+        ]
+      },
+      {
+        id: "clock", name: "Clock", category: "HUD", icon: "clock", enabledPath: "hud.clock",
+        desc: "Часы в выбранном формате",
+        fields: [
+          { type: "toggle", label: "Показывать секунды", path: "hud.clockSeconds" },
+          { type: "select", label: "Формат", path: "hud.clockFormat", options: ["24 часа", "12 часов"] },
+          { type: "color", label: "Цвет текста", path: "hud.textColor" }
+        ]
+      },
+      {
+        id: "keystrokes", name: "Keystrokes", category: "HUD", icon: "keyboard", enabledPath: "hud.keystrokes",
+        desc: "Отображение нажатых клавиш",
+        fields: [
+          { type: "range", label: "Масштаб", path: "hud.hudScale", min: 0.5, max: 2, step: 0.05, suffix: "x", decimals: 2 },
+          { type: "range", label: "Прозрачность", path: "hud.opacity", min: 0, max: 100, step: 1, suffix: "%" },
+          { type: "range", label: "Скругление", path: "hud.radius", min: 0, max: 20, step: 1, suffix: "px" }
+        ]
+      },
+      {
+        id: "watermark", name: "Watermark", category: "HUD", icon: "droplet", enabledPath: "hud.watermark",
+        desc: "Водяной знак клиента",
+        fields: [
+          { type: "select", label: "Положение", path: "hud.position", options: DEFAULT_POSITIONS },
+          { type: "color", label: "Цвет", path: "hud.textColor" },
+          { type: "range", label: "Прозрачность", path: "hud.opacity", min: 0, max: 100, step: 1, suffix: "%" }
+        ]
+      },
+      {
+        id: "coords", name: "Coordinates", category: "HUD", icon: "crosshair", enabledPath: "hud.coordinates",
+        desc: "Координаты игрока - данные передает клиент",
+        fields: [
+          { type: "select", label: "Положение", path: "hud.position", options: DEFAULT_POSITIONS },
+          { type: "range", label: "Масштаб", path: "hud.hudScale", min: 0.5, max: 2, step: 0.05, suffix: "x", decimals: 2 },
+          { type: "color", label: "Цвет текста", path: "hud.textColor" }
+        ]
+      },
+      {
+        id: "ping", name: "Ping", category: "HUD", icon: "wifi", enabledPath: "hud.ping",
+        desc: "Сетевой индикатор, если значение доступно",
+        fields: [
+          { type: "range", label: "Прозрачность", path: "hud.opacity", min: 0, max: 100, step: 1, suffix: "%" },
+          { type: "color", label: "Цвет", path: "hud.textColor" }
+        ]
+      },
+      {
+        id: "cpuram", name: "CPU / RAM", category: "HUD", icon: "cpu", enabledPath: "hud.perf",
+        desc: "Производительность системы - данных пока нет",
+        fields: [
+          { type: "range", label: "Масштаб", path: "hud.hudScale", min: 0.5, max: 2, step: 0.05, suffix: "x", decimals: 2 },
+          { type: "range", label: "Ширина элементов", path: "hud.hudSize", min: 0.6, max: 1.6, step: 0.05, suffix: "x", decimals: 2 },
+          { type: "toggle", label: "Компактный вид", path: "hud.perfCompact" }
+        ]
+      },
+      {
+        id: "resolution", name: "Resolution", category: "HUD", icon: "scan", enabledPath: "hud.resolution",
+        desc: "Разрешение игрового окна",
+        fields: [
+          { type: "select", label: "Положение", path: "hud.position", options: DEFAULT_POSITIONS },
+          { type: "color", label: "Цвет текста", path: "hud.textColor" }
+        ]
+      },
+      {
+        id: "modulelist", name: "Список модулей", category: "HUD", icon: "layers", enabledPath: "hud.modulesEnabled",
+        desc: "Активные модули отдельной карточкой",
+        fields: [
+          { type: "range", label: "Масштаб", path: "hud.modulesScale", min: 0.5, max: 2, step: 0.05, suffix: "x", decimals: 2 },
+          { type: "range", label: "Прозрачность фона", path: "hud.modulesBgOpacity", min: 0, max: 100, step: 1, suffix: "%" },
+          { type: "select", label: "Положение", path: "hud.modulesPosition", options: DEFAULT_POSITIONS },
+          { type: "color", label: "Цвет текста", path: "hud.modulesTextColor" }
+        ]
+      },
+      {
+        id: "chinahat", name: "China Hat", category: "Графика", icon: "crown", enabledPath: "graphics.chinaHat.enabled",
+        desc: "Конус над головой персонажа",
+        fields: [
+          { type: "toggle", label: "Заливка", path: "graphics.chinaHat.fill" },
+          { type: "color", label: "Цвет конуса", path: "graphics.chinaHat.color" },
+          { type: "toggle", label: "Радужный режим", path: "graphics.chinaHat.rainbow" },
+          { type: "range", label: "Скорость радуги", path: "graphics.chinaHat.rainbowSpeed", min: 0, max: 100, step: 1, suffix: "%" },
+          { type: "range", label: "Радиус", path: "graphics.chinaHat.radius", min: 0.2, max: 3, step: 0.05, suffix: "ед.", decimals: 2 },
+          { type: "range", label: "Высота конуса", path: "graphics.chinaHat.height", min: 0.2, max: 3, step: 0.05, suffix: "ед.", decimals: 2 }
+        ]
+      },
+      {
+        id: "trail", name: "Trail", category: "Графика", icon: "wind", enabledPath: "graphics.trail.enabled",
+        desc: "След за движением персонажа",
+        fields: [
+          { type: "toggle", label: "Заливка", path: "graphics.trail.fill" },
+          { type: "color", label: "Цвет следа", path: "graphics.trail.color" },
+          { type: "toggle", label: "Радужный режим", path: "graphics.trail.rainbow" },
+          { type: "range", label: "Скорость радуги", path: "graphics.trail.rainbowSpeed", min: 0, max: 100, step: 1, suffix: "%" },
+          { type: "range", label: "Высота следа", path: "graphics.trail.height", min: 0.2, max: 3, step: 0.05, suffix: "ед.", decimals: 2 },
+          { type: "range", label: "Время жизни", path: "graphics.trail.life", min: 0.2, max: 4, step: 0.1, suffix: "с", decimals: 1 }
+        ]
+      },
+      {
+        id: "jumpr", name: "Jump Rings", category: "Графика", icon: "sparkles", enabledPath: "graphics.jumpRings.enabled",
+        desc: "Кольца при прыжке",
+        fields: [
+          { type: "color", label: "Цвет", path: "graphics.jumpRings.color" },
+          { type: "toggle", label: "Радужный режим", path: "graphics.jumpRings.rainbow" },
+          { type: "range", label: "Скорость радуги", path: "graphics.jumpRings.rainbowSpeed", min: 0, max: 100, step: 1, suffix: "%" },
+          { type: "range", label: "Радиус", path: "graphics.jumpRings.radius", min: 0.2, max: 3, step: 0.05, suffix: "ед.", decimals: 2 },
+          { type: "range", label: "Длительность", path: "graphics.jumpRings.duration", min: 0.1, max: 3, step: 0.1, suffix: "с", decimals: 1 }
+        ]
+      }
+    ];
+
+    const TABS = [
+      { id: "settings", label: "Настройки", icon: "settings" },
+      { id: "mods", label: "Моды", icon: "box" },
+      { id: "profiles", label: "Профили", icon: "user-round" },
+      { id: "stats", label: "Статистика", icon: "bar-chart-3" }
+    ];
+
+    const SECTIONS = [
+      { id: "main", label: "Главная", icon: "home" },
+      { id: "hud", label: "HUD", icon: "monitor" },
+      { id: "interface", label: "Интерфейс", icon: "palette" },
+      { id: "graphics", label: "Графика", icon: "gamepad-2" },
+      { id: "sound", label: "Звук", icon: "volume-2" },
+      { id: "controls", label: "Управление", icon: "sliders-horizontal" },
+      { id: "other", label: "Прочее", icon: "ellipsis" }
+    ];
+
+    const THEMES = [
+      { id: "aogiri", name: "Aogiri Green", accent: "#38ff7d", bg: "#04110a" },
+      { id: "emerald", name: "Emerald", accent: "#2be3b0", bg: "#041311" },
+      { id: "graphite", name: "Graphite", accent: "#b4c1b7", bg: "#0c100d" }
+    ];
+
+    function makeDefaultState() {
+      return {
+        activeTab: "settings",
+        activeSection: "hud",
+        hud: {
+          fps: true, cps: true, keystrokes: false, clock: true, watermark: false,
+          coordinates: false, perf: false, resolution: false, modulesEnabled: true, ping: false,
+          hudScale: 1, hudSize: 1, opacity: 88, textColor: "#b7ffcd", spacing: 6, padding: 8, radius: 10,
+          position: "Сверху слева",
+          modulesScale: 1, modulesTextColor: "#b7ffcd", modulesBgOpacity: 42, modulesPosition: "Сверху справа",
+          clockSeconds: false, clockFormat: "24 часа", perfCompact: true
+        },
+        interface: {
+          theme: "Aogiri Green", accent: "#38ff7d", textColor: "#effcf3", bgColor: "#041009",
+          menuScale: 100, brightness: 100, opacity: 92, radius: 16,
+          glow: true, glowIntensity: 55, animations: true, animationSpeed: 55
+        },
+        graphics: {
+          chinaHat: {
+            enabled: false, fill: true, color: "#4bff8a", rainbow: false, rainbowSpeed: 45,
+            opacity: 72, radius: 0.85, height: 0.65, offset: 0.18, floatAmplitude: 0.08, floatSpeed: 1.2
+          },
+          trail: {
+            enabled: false, fill: true, color: "#48ffb0", rainbow: false, rainbowSpeed: 40,
+            opacity: 65, height: 0.8, life: 1.2
+          },
+          jumpRings: {
+            enabled: false, color: "#7cff7d", rainbow: false, rainbowSpeed: 50,
+            radius: 0.75, opacity: 70, duration: 0.8
+          }
+        },
+        sound: { muted: false, master: 70, ui: 60, effects: 75, device: "Системное устройство" },
+        controls: { menuKey: "Right Shift", moduleHotkeys: true, cursor: true, scroll: true },
+        profiles: [
+          { id: "default", name: "Aogiri - базовый", note: "Демонстрационный профиль по умолчанию", active: true },
+          { id: "compact", name: "Компактный HUD", note: "Пример профиля для PvP-раскладки", active: false },
+          { id: "cinematic", name: "Кинематографичный", note: "Пример профиля с крупным HUD", active: false }
+        ],
+        selectedProfile: "default",
+        selectedMod: "fps",
+        modsQuery: "",
+        modsCategory: "all",
+        openEffects: { chinaHat: true, trail: false, jumpRings: false },
+        previewImage: ""
+      };
+    }
+
+    const state = makeDefaultState();
+
+    const ui = {
+      modalHandler: null,
+      toastTimer: null,
+      capturedKey: false
+    };
+
+    /* ───────────────────────────────────────────────────────────────────────
+       БАЗОВЫЕ УТИЛИТЫ
+    ─────────────────────────────────────────────────────────────────────── */
+
+    const $ = (selector, root = document) => root.querySelector(selector);
+    const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+
+    const clone = (value) => JSON.parse(JSON.stringify(value));
+
+    const esc = (value) => String(value ?? "")
+      .replace(/[—–―−]/g, "-")
+      .replaceAll("·", "")
+      .replace(/\s{2,}/g, " ")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+
+    // Единая очистка текста: длинные тире заменяются на "-", средняя точка удаляется.
+    function sanitizeTextNodes(root = document.body) {
+      if (!root) return;
+      const clean = (value) => String(value)
+        .replace(/[—–―−]/g, "-")
+        .replaceAll("·", "")
+        .replace(/\s{2,}/g, " ");
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      for (const node of nodes) {
+        const parent = node.parentElement;
+        if (!parent || /^(SCRIPT|STYLE)$/.test(parent.tagName)) continue;
+        const cleaned = clean(node.nodeValue);
+        if (cleaned !== node.nodeValue) node.nodeValue = cleaned;
+      }
+      root.querySelectorAll?.("[placeholder], [title], [aria-label]").forEach((element) => {
+        for (const attribute of ["placeholder", "title", "aria-label"]) {
+          if (!element.hasAttribute(attribute)) continue;
+          const value = element.getAttribute(attribute);
+          const cleaned = clean(value);
+          if (cleaned !== value) element.setAttribute(attribute, cleaned);
+        }
+      });
+    }
+
+    function getPath(object, path) {
+      return path.split(".").reduce((acc, part) => (acc == null ? undefined : acc[part]), object);
+    }
+
+    function setPath(object, path, value) {
+      const parts = path.split(".");
+      const last = parts.pop();
+      const target = parts.reduce((acc, part) => {
+        if (!acc[part] || typeof acc[part] !== "object") acc[part] = {};
+        return acc[part];
+      }, object);
+      target[last] = value;
+      return value;
+    }
+
+    function clamp(value, min, max) {
+      return Math.min(max, Math.max(min, Number(value)));
+    }
+
+    function hexToRgb(hex) {
+      const clean = String(hex).replace("#", "");
+      const full = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
+      const value = Number.parseInt(full, 16);
+      if (Number.isNaN(value)) return "56, 255, 125";
+      return `${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}`;
+    }
+
+    function icon(name, size = 14, extra = "") {
+      return `<span class="ic ic-${size} ${extra}"><i data-lucide="${esc(name)}"></i></span>`;
+    }
+
+    let iconRefreshTimer = 0;
+    function refreshIcons() {
+      if (!window.lucide || typeof window.lucide.createIcons !== "function") return;
+      window.clearTimeout(iconRefreshTimer);
+      iconRefreshTimer = window.setTimeout(() => {
+        try {
+          window.lucide.createIcons({ attrs: { "stroke-width": 1.8 } });
+        } catch (error) {
+          console.warn("GAYClient UI: не удалось обновить иконки", error);
+        }
+      }, 0);
+    }
+
+    function formatNumber(value, decimals) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) return "—";
+      const places = Number.isInteger(decimals) ? decimals : (Number.isInteger(number) ? 0 : 2);
+      return number.toFixed(places).replace(/\.?0+$/, (match) => (match.includes(".") ? "" : match));
+    }
+
+    function formatFieldValue(path, field = {}) {
+      const value = getPath(state, path);
+      if (value === undefined || value === null) return "—";
+      if (typeof value === "boolean") return value ? "Да" : "Нет";
+      if (field.min !== undefined || field.max !== undefined) {
+        const suffix = field.suffix || "";
+        return `${formatNumber(value, field.decimals)}${suffix}`;
+      }
+      return String(value);
+    }
+
+    function rangePercent(value, min, max) {
+      const span = max - min;
+      if (!span) return 0;
+      return clamp(((Number(value) - min) / span) * 100, 0, 100);
+    }
+
+    function countEnabledModules() {
+      return DEFAULT_MODULES.filter((module) => Boolean(getPath(state, module.enabledPath))).length;
+    }
+
+    function applyThemeVars() {
+      const accent = state.interface.accent || "#38ff7d";
+      const root = document.documentElement;
+      root.style.setProperty("--accent", accent);
+      root.style.setProperty("--accent-rgb", hexToRgb(accent));
+      root.style.setProperty("--text", state.interface.textColor || "#effcf3");
+      root.style.setProperty("--ui-bg", state.interface.bgColor || "#041009");
+      const brightness = clamp(state.interface.brightness, 55, 115);
+      document.body.style.filter = `brightness(${brightness / 100})`;
+      document.body.classList.toggle("motion-off", !state.interface.animations);
+      const shell = $("#menuShell");
+      if (shell) {
+        shell.classList.toggle("quiet-glow", !state.interface.glow);
+        shell.style.setProperty("--glow-strength", String(clamp(state.interface.glowIntensity, 0, 100) / 100));
+      }
+    }
+
+    function toast(message, iconName = "check") {
+      const node = $("#toast");
+      if (!node) return;
+      node.innerHTML = `${icon(iconName, 15)}<span>${esc(message)}</span>`;
+      sanitizeTextNodes(node);
+      node.classList.add("is-visible");
+      refreshIcons();
+      window.clearTimeout(ui.toastTimer);
+      ui.toastTimer = window.setTimeout(() => node.classList.remove("is-visible"), 2800);
+    }
+
+    /* ───────────────────────────────────────────────────────────────────────
+       ПИКСЕЛЬНЫЙ КОТ
+    ─────────────────────────────────────────────────────────────────────── */
+
+    function catSVG(uid = "cat", extraClass = "") {
+      const safeUid = esc(uid);
+      const pixels = [
+        [12, 169, 8, .30], [21, 152, 4, .45], [31, 137, 6, .25], [197, 176, 7, .40],
+        [17, 124, 3, .66], [192, 68, 4, .44], [203, 154, 5, .31], [47, 45, 3, .44],
+        [207, 108, 3, .25], [161, 185, 3, .38], [99, 16, 3, .28], [75, 182, 4, .34]
+      ].map(([x, y, size, opacity]) => `<rect x="${x}" y="${y}" width="${size}" height="${size}" rx="0.6" opacity="${opacity}"/>`).join("");
+
+      return `
+        <svg class="pixel-cat-svg ${extraClass}" viewBox="0 0 220 210" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Пиксельный кот GAYClient">
+          <defs>
+            <filter id="catGlow-${safeUid}" x="-40%" y="-40%" width="180%" height="180%">
+              <feGaussianBlur stdDeviation="4.4" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <linearGradient id="catFace-${safeUid}" x1="0" y1="0" x2="0.7" y2="1">
+              <stop offset="0%" stop-color="#0b3e20"/>
+              <stop offset="55%" stop-color="#062714"/>
+              <stop offset="100%" stop-color="#03160b"/>
+            </linearGradient>
+          </defs>
+          <g fill="#40ff83" filter="url(#catGlow-${safeUid})" opacity=".9">
+            <g opacity=".72">${pixels}</g>
+            <path d="M58 158 L58 97 L32 97 L32 43 L61 43 L76 62 L94 62 L104 46 L116 62 L136 62 L151 43 L180 43 L180 97 L154 97 L154 158 Q154 182 128 182 L84 182 Q58 182 58 158 Z"
+              fill="url(#catFace-${safeUid})" stroke="#3aff7e" stroke-width="4" stroke-linejoin="miter" shape-rendering="geometricPrecision"/>
+            <path d="M45 86 L45 55 L62 55 L76 73" fill="#34ff78" opacity=".83"/>
+            <path d="M167 86 L167 55 L150 55 L136 73" fill="#34ff78" opacity=".83"/>
+            <path d="M43 89 L31 87 L29 105 L43 105 Z" fill="#34ff78" opacity=".32"/>
+            <path d="M169 89 L181 87 L183 105 L169 105 Z" fill="#34ff78" opacity=".32"/>
+            <g class="cat-eye">
+              <path d="M63 106 L94 110 L94 128 L67 125 Z" fill="#010b05" stroke="#45ff89" stroke-width="3.5" stroke-linejoin="miter"/>
+              <path d="M149 106 L118 110 L118 128 L145 125 Z" fill="#010b05" stroke="#45ff89" stroke-width="3.5" stroke-linejoin="miter"/>
+              <rect x="74" y="114" width="8" height="6" rx=".5" fill="#60ff9a" opacity=".92"/>
+              <rect x="131" y="114" width="8" height="6" rx=".5" fill="#60ff9a" opacity=".92"/>
+            </g>
+            <path d="M101 134 L111 134 L106 141 Z" fill="#4aff8c"/>
+            <path d="M92 146 Q106 158 120 146" fill="none" stroke="#46ff89" stroke-width="2.6" stroke-linecap="square"/>
+            <path d="M51 118 L39 114 M51 125 L38 125 M163 118 L175 114 M163 125 L176 125" stroke="#3aff7e" stroke-width="2.4" opacity=".62"/>
+            <rect x="70" y="85" width="15" height="3" fill="#3aff7e" opacity=".34"/>
+            <rect x="129" y="85" width="15" height="3" fill="#3aff7e" opacity=".34"/>
+          </g>
+        </svg>`;
+    }
+
+    /* ───────────────────────────────────────────────────────────────────────
+       ОБЩИЕ ФРАГМЕНТЫ
+    ─────────────────────────────────────────────────────────────────────── */
+
+    function renderSidebar() {
+      const sidebar = $("#sidebar");
+      if (!sidebar) return;
+      const activeSection = state.activeTab === "settings" ? state.activeSection : "";
+      const settingsNav = SECTIONS.map((section) => `
+        <button class="nav-btn ${activeSection === section.id ? "is-active" : ""}"
+          type="button" data-action="section" data-section="${section.id}"
+          aria-current="${activeSection === section.id ? "page" : "false"}"
+          title="${esc(section.label)}">
+          <span class="nav-icon">${icon(section.icon, 15)}</span>
+          <span class="nav-label">${esc(section.label)}</span>
+        </button>`).join("");
+
+      sidebar.innerHTML = `
+        <div class="brand-zone">
+          <button class="brand-card" type="button" data-action="section" data-section="main" aria-label="GAYClient, открыть главную">
+            <div class="brand-row">
+              <div class="brand-word">GAY<em>CLIENT</em></div>
+              <span class="brand-ver">1.1.5</span>
+            </div>
+            <div class="brand-sub">ИГРОВОЙ КЛИЕНТ</div>
+          </button>
+        </div>
+        <div class="nav-caption">Настройки</div>
+        <nav class="side-nav" aria-label="Настройки клиента">${settingsNav}</nav>
+        <div class="sidebar-fill">
+          <div class="fill-head">
+            <span class="fill-title">Состояние</span>
+            <span class="fill-badge">демо</span>
+          </div>
+          <div class="fill-status">
+            <span class="online-dot"></span>
+            <div class="fill-status-copy">
+              <b>Демо-режим</b>
+              <small>данные игры не подключены</small>
+            </div>
+          </div>
+          <div class="fill-meter" aria-hidden="true">
+            ${Array.from({ length: 14 }, (_, i) => `<i class="${i < Math.max(3, Math.round(countEnabledModules() / DEFAULT_MODULES.length * 14)) ? "on" : ""}"></i>`).join("")}
+          </div>
+          <div class="fill-row"><span class="fill-label">Активно модулей</span><span class="fill-value" data-side-modules>${countEnabledModules()} / ${DEFAULT_MODULES.length}</span></div>
+          <div class="fill-row"><span class="fill-label">Версия</span><span class="fill-value mono">1.1.5</span></div>
+          <div class="fill-chart" aria-hidden="true">
+            <div class="fill-chart-svg">
+              <svg viewBox="0 0 200 44" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="fillChartGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="var(--accent)" stop-opacity=".28"/>
+                    <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
+                  </linearGradient>
+                </defs>
+                <path d="M0 34 L22 26 L40 30 L58 18 L76 23 L94 12 L112 19 L132 9 L150 16 L170 8 L200 12 L200 44 L0 44 Z" fill="url(#fillChartGrad)"/>
+                <path d="M0 34 L22 26 L40 30 L58 18 L76 23 L94 12 L112 19 L132 9 L150 16 L170 8 L200 12" fill="none" stroke="var(--accent)" stroke-width="1.2" opacity=".7"/>
+              </svg>
+            </div>
+            <span class="fill-chart-cap">активность - демо</span>
+          </div>
+          <div class="fill-links" aria-label="Быстрый переход">
+            <button class="fill-link" type="button" data-action="section" data-section="hud" title="Настроить HUD">${icon("monitor", 12)}<span>HUD</span></button>
+            <button class="fill-link" type="button" data-action="section" data-section="graphics" title="Настроить эффекты">${icon("sparkles", 12)}<span>Эффекты</span></button>
+            <button class="fill-link" type="button" data-action="section" data-section="interface" title="Оформление меню">${icon("palette", 12)}<span>Тема</span></button>
+          </div>
+          <div class="fill-pixels" aria-hidden="true">
+            ${Array.from({ length: 16 }, (_, i) => `<span style="left:${(i * 17) % 97}%;top:${(i * 29) % 91}%;opacity:${(0.16 + (i % 5) * 0.12).toFixed(2)}"></span>`).join("")}
+          </div>
+        </div>`;
+      refreshIcons();
+    }
+
+    function renderTopHeader() {
+      const section = SECTIONS.find((item) => item.id === state.activeSection);
+      const tab = TABS.find((item) => item.id === state.activeTab);
+      const title = state.activeTab === "settings" ? (section ? section.label : "HUD") : (tab ? tab.label : "GAYClient");
+      const eyebrow = state.activeTab === "settings" ? "GAYClient / настройки" : `GAYClient / ${title}`;
+      const mark = $("#topMark");
+      const eyebrowNode = $("#topEyebrow");
+      const titleNode = $("#topTitle");
+      const statusNode = $("#topStatus");
+      if (mark) mark.innerHTML = icon("shield-check", 15);
+      if (eyebrowNode) eyebrowNode.textContent = eyebrow;
+      if (titleNode) titleNode.textContent = title;
+      if (statusNode) statusNode.textContent = state.activeTab === "settings" ? "демо режим" : "раздел клиента";
+      document.title = `GAYClient - ${title}`;
+    }
+
+    function previewContext() {
+      if (state.activeTab === "mods") {
+        return { title: "Предпросмотр", mode: "Модуль", icon: "box", subtitle: "Визуальная область для модулей", tipTitle: "Модуль не подключён", tipText: "Переключение демонстрирует состояние. Передача данных появится позже.", tipIcon: "puzzle" };
+      }
+      if (state.activeTab === "profiles") {
+        return { title: "Предпросмотр", mode: "Профиль", icon: "user-round", subtitle: "Выбранный профиль интерфейса", tipTitle: "Профиль - это набор настроек", tipText: "Сохранение профилей будет подключено к клиенту позже.", tipIcon: "folder" };
+      }
+      if (state.activeTab === "stats") {
+        return { title: "Предпросмотр", mode: "Статистика", icon: "bar-chart-3", subtitle: "Область будущих игровых показателей", tipTitle: "Данные не переданы", tipText: "FPS, CPS и системные показатели появятся после подключения клиента.", tipIcon: "activity" };
+      }
+      const map = {
+        main: { title: "Предпросмотр", mode: "Главная", icon: "home", subtitle: "Краткая информация о клиенте", tipTitle: "GAYClient", tipText: "Используйте быстрые действия для перехода к нужному разделу настроек.", tipIcon: "sparkles" },
+        hud: { title: "Предпросмотр", mode: "HUD", icon: "eye", subtitle: "Условное расположение элементов", tipTitle: "Совет", tipText: "Измените положение HUD, чтобы он не перекрывал важные элементы игры.", tipIcon: "lightbulb" },
+        interface: { title: "Предпросмотр", mode: "Интерфейс", icon: "palette", subtitle: "Демонстрация выбранной темы", tipTitle: "Совет", tipText: "Тема применяется ко всему меню. Контраст текста сохранён для читаемости.", tipIcon: "lightbulb" },
+        graphics: { title: "Предпросмотр эффектов", mode: "Графика", icon: "gamepad-2", subtitle: "Область для будущего рендера", tipTitle: "Область зарезервирована", tipText: "Текстура или готовая сцена персонажа передаётся внешним кодом клиента.", tipIcon: "layers" },
+        sound: { title: "Предпросмотр", mode: "Звук", icon: "volume-2", subtitle: "Условные уровни громкости", tipTitle: "Без подключения", tipText: "Ползунки меняют только демонстрационное состояние интерфейса.", tipIcon: "headphones" },
+        controls: { title: "Предпросмотр", mode: "Управление", icon: "sliders-horizontal", subtitle: "Клавиши и работа курсора", tipTitle: "Клавиши не захватываются", tipText: "Right Shift показан как назначение по умолчанию. Подключение клавиш — позже.", tipIcon: "keyboard" },
+        other: { title: "Предпросмотр", mode: "Клиент", icon: "info", subtitle: "Сведения о демонстрационном интерфейсе", tipTitle: "GAYClient 1.1.5", tipText: "Это визуальная часть. Игровые модули и рендер не подключены.", tipIcon: "info" }
+      };
+      return map[state.activeSection] || map.hud;
+    }
+
+    function hudPreviewItems() {
+      const items = [
+        { on: state.hud.fps, icon: "activity", label: "FPS", value: "—" },
+        { on: state.hud.cps, icon: "mouse-pointer-click", label: "CPS", value: "—" },
+        { on: state.hud.clock, icon: "clock", label: "Часы", value: "--:--" },
+        { on: state.hud.coordinates, icon: "crosshair", label: "Координаты", value: "— / —" },
+        { on: state.hud.keystrokes, icon: "keyboard", label: "Клавиши", value: "W A S D" },
+        { on: state.hud.perf, icon: "cpu", label: "CPU / RAM", value: "нет данных" },
+        { on: state.hud.resolution, icon: "scan", label: "Разрешение", value: "—" },
+        { on: state.hud.ping, icon: "wifi", label: "Пинг", value: "нет данных" }
+      ];
+      return items.filter((item) => item.on);
+    }
+
+    function hudSampleMarkup() {
+      const items = hudPreviewItems();
+      const visible = items.slice(0, 4);
+      const hiddenCount = items.length - visible.length;
+      const pos = DEFAULT_POSITIONS.includes(state.hud.position) ? state.hud.position : "Сверху слева";
+      return `
+        <div class="hud-sample" data-pos="${esc(pos)}" aria-label="Пример расположения HUD">
+          <div class="hud-sample-top"><span>HUD · макет</span><span>пример</span></div>
+          ${visible.length ? visible.map((item) => `
+            <div class="hud-sample-row">${icon(item.icon, 11)}<span>${esc(item.label)}</span><span class="hud-val">${esc(item.value)}</span></div>`).join("")
+            : `<div class="hud-sample-empty">Все элементы HUD выключены. Включите их на панели слева.</div>`}
+          ${hiddenCount > 0 ? `<div class="hud-sample-row" style="height:14px;color:#617d69;font-size:6.5px;">ещё ${hiddenCount} элем.</div>` : ""}
+        </div>
+        ${state.hud.watermark ? `<div class="preview-watermark">${icon("droplet", 10)}GAYCLIENT</div>` : ""}`;
+    }
+
+    function graphicsStatusMarkup() {
+      const entries = [
+        ["chinaHat", "China Hat"],
+        ["trail", "Trail"],
+        ["jumpRings", "Jump Rings"]
+      ];
+      return `<div class="graphics-status">${entries.map(([key, label]) => {
+        const on = Boolean(state.graphics[key].enabled);
+        return `<div class="graphics-status-row ${on ? "is-on" : ""}"><span class="status-led"></span><span>${esc(label)}</span><span class="g-state">${on ? "ВКЛ" : "ВЫКЛ"}</span></div>`;
+      }).join("")}</div>`;
+    }
+
+    function soundPreviewMarkup() {
+      const lines = [
+        ["Общая", state.sound.master],
+        ["Интерфейс", state.sound.ui],
+        ["Эффекты", state.sound.effects]
+      ];
+      return `<div class="sound-preview">${lines.map(([label, value]) => `
+        <div class="sound-line"><span>${esc(label)}</span><span class="sound-bar"><i style="width:${clamp(value, 0, 100)}%"></i></span><span class="sound-num">${Math.round(value)}</span></div>`).join("")}</div>`;
+    }
+
+    function renderPreview() {
+      const context = previewContext();
+      const image = state.previewImage
+        ? `<img class="preview-image" src="${esc(state.previewImage)}" alt="Переданная текстура предпросмотра">`
+        : "";
+      let overlay = "";
+      if (state.activeTab === "settings" && ["main", "hud"].includes(state.activeSection) && !state.previewImage) overlay = hudSampleMarkup();
+      if (state.activeTab === "settings" && state.activeSection === "graphics") overlay = graphicsStatusMarkup();
+      if (state.activeTab === "settings" && state.activeSection === "sound") overlay = soundPreviewMarkup();
+      if (state.activeTab === "mods") {
+        const mod = DEFAULT_MODULES.find((item) => item.id === state.selectedMod) || DEFAULT_MODULES[0];
+        const enabled = Boolean(getPath(state, mod.enabledPath));
+        overlay = `<div class="graphics-status">
+          <div class="graphics-status-row ${enabled ? "is-on" : ""}"><span class="status-led"></span><span>${esc(mod.name)}</span><span class="g-state">${enabled ? "ВКЛ" : "ВЫКЛ"}</span></div>
+          <div class="graphics-status-row"><span class="status-led"></span><span>${esc(mod.category)}</span><span class="g-state">демо</span></div>
+        </div>`;
+      }
+      if (state.activeTab === "profiles") {
+        const profile = state.profiles.find((item) => item.id === state.selectedProfile) || state.profiles.find((item) => item.active);
+        overlay = `<div class="graphics-status">
+          <div class="graphics-status-row is-on"><span class="status-led"></span><span>${esc(profile ? profile.name : "Нет профиля")}</span><span class="g-state">профиль</span></div>
+          <div class="graphics-status-row"><span class="status-led"></span><span>Тема: ${esc(state.interface.theme)}</span><span class="g-state">демо</span></div>
+        </div>`;
+      }
+      if (state.activeTab === "stats") {
+        overlay = `<div class="graphics-status">
+          <div class="graphics-status-row"><span class="status-led"></span><span>FPS / CPS</span><span class="g-state">нет данных</span></div>
+          <div class="graphics-status-row"><span class="status-led"></span><span>CPU / RAM</span><span class="g-state">нет данных</span></div>
+        </div>`;
+      }
+      const extraNote = state.activeTab === "settings" && state.activeSection === "hud" ? "Условная схема" : "Нет данных";
+
+      return `
+        <div class="preview-head">
+          <span class="preview-head-icon">${icon(context.icon, 15)}</span>
+          <div class="preview-head-copy">
+            <h2 class="preview-title">${esc(context.title)}<small>${esc(context.mode)}</small></h2>
+            <p class="preview-subtitle">${esc(context.subtitle)}</p>
+          </div>
+          <button class="preview-expand" type="button" data-action="expand-preview" title="Развернуть предпросмотр" aria-label="Развернуть предпросмотр">${icon("maximize-2", 14)}</button>
+        </div>
+        <div class="preview-stage">
+          <div class="stage-grid"></div>
+          <div class="stage-scanlines"></div>
+          <div class="stage-halo" aria-hidden="true"></div>
+          <div class="stage-corners" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          <div class="stage-ruler" aria-hidden="true">${Array.from({ length: 18 }, (_, i) => `<i class="${i % 3 === 0 ? "major" : ""}"></i>`).join("")}</div>
+          ${image}
+          <div class="preview-mode"><span class="dot"></span>Демонстрация</div>
+          <div class="preview-scale">16:9 - область предпросмотра</div>
+          ${overlay}
+          ${state.previewImage ? "" : `
+            <div class="empty-preview">
+              <div class="empty-icon-wrap">${icon("image-off", 24)}</div>
+              <h3>${state.activeTab === "settings" && state.activeSection === "graphics" ? "Предпросмотр эффектов недоступен" : "Предпросмотр недоступен"}</h3>
+              <p>${state.activeTab === "settings" && state.activeSection === "graphics"
+                ? "Здесь будет изображение персонажа или сцены, переданное клиентом. Игровая модель не имитируется."
+                : "Область готова принять изображение или текстуру из существующего клиента."}</p>
+              <span class="no-texture-tag">${icon("image", 10)}Нет переданной текстуры</span>
+            </div>`}
+          ${state.activeTab !== "settings" || !["hud", "main"].includes(state.activeSection) ? `
+            <div class="preview-chips"><span class="pill demo">пример</span><span class="pill">${esc(extraNote)}</span></div>` : ""}
+          <div class="stage-meta" aria-hidden="true">
+            <span><b>Источник</b> клиент не подключен</span>
+            <span><b>Размер</b> - x -</span>
+            <span><b>Текстура</b> не передана</span>
+            <span class="stage-meta-right">GAYClient 1.1.5</span>
+          </div>
+        </div>
+        <div class="preview-tip">
+          <span class="tip-icon">${icon(context.tipIcon, 16)}</span>
+          <div class="tip-content"><div class="tip-title">${esc(context.tipTitle)}</div><div class="tip-text">${esc(context.tipText)}</div></div>
+        </div>
+        <div class="preview-note"><span>предпросмотр - визуальная заглушка</span><span>${state.activeTab === "settings" && state.activeSection === "hud" ? "макет - без игровых данных" : "ожидание данных клиента"}</span></div>`;
+    }
+
+    function render() {
+      applyThemeVars();
+      renderSidebar();
+      renderTopHeader();
+      const content = $("#contentColumn");
+      if (content) content.innerHTML = renderContent();
+      const preview = $("#previewPanel");
+      if (preview) preview.innerHTML = renderPreview();
+      sanitizeTextNodes($("#menuShell"));
+      refreshIcons();
+    }
+  </script>
+
+  <script>
+    "use strict";
+
+    /* ───────────────────────────────────────────────────────────────────────
+       КОМПОНЕНТЫ НАСТРОЕК
+    ─────────────────────────────────────────────────────────────────────── */
+
+    function sectionHead(iconName, title, subtitle, badge = "демо") {
+      return `
+        <div class="section-head">
+          <div class="section-icon">${icon(iconName, 19)}</div>
+          <div class="section-copy">
+            <h1 class="section-title">${esc(title)}</h1>
+            <p class="section-subtitle">${esc(subtitle)}</p>
+          </div>
+          ${badge ? `<span class="section-badge">${esc(badge)}</span>` : ""}
+        </div>
+        <div class="content-divider"></div>`;
+    }
+
+    function group(title, body, options = {}) {
+      return `
+        <section class="settings-group ${options.className || ""}">
+          <div class="group-header">
+            <span class="group-mark"></span>
+            <div class="group-title">${esc(title)}</div>
+            ${options.note ? `<span class="group-note">${esc(options.note)}</span>` : ""}
+            ${options.header || ""}
+          </div>
+          <div class="group-body">${body}</div>
+        </section>`;
+    }
+
+    function switchMarkup(path, on, small = false) {
+      return `<button class="switch ${small ? "small " : ""}${on ? "is-on" : ""}" type="button"
+        role="switch" aria-checked="${on}" aria-label="Переключить ${esc(path)}"
+        data-toggle="${esc(path)}"><span class="switch-knob"></span></button>`;
+    }
+
+    function toggleRow(path, label, iconName = "circle", note = "", options = {}) {
+      const on = Boolean(getPath(state, path));
+      return `
+        <div class="setting-row">
+          <span class="row-icon ${options.plain ? "plain" : ""}">${icon(iconName, 12)}</span>
+          <span class="row-label">${esc(label)}${note ? `<span class="row-note">${esc(note)}</span>` : ""}</span>
+          <span class="row-control">${switchMarkup(path, on, Boolean(options.small))}</span>
+        </div>`;
+    }
+
+    function rangeRow(path, label, options = {}) {
+      const min = options.min ?? 0;
+      const max = options.max ?? 100;
+      const step = options.step ?? 1;
+      const decimals = options.decimals ?? (Number.isInteger(step) ? 0 : 2);
+      const value = clamp(getPath(state, path) ?? min, min, max);
+      const suffix = options.suffix || "";
+      const readable = `${formatNumber(value, decimals)}${suffix}`;
+      return `
+        <div class="setting-row">
+          ${options.noIcon ? "" : `<span class="row-icon">${icon(options.icon || "sliders-horizontal", 12)}</span>`}
+          <span class="row-label">${esc(label)}${options.note ? `<span class="row-note">${esc(options.note)}</span>` : ""}</span>
+          <span class="row-control ${options.wide ? "wide" : ""}">
+            <span class="range-wrap ${options.compact ? "compact" : ""}">
+              <input class="range" type="range" value="${value}" min="${min}" max="${max}" step="${step}"
+                data-range="${esc(path)}" data-min="${min}" data-max="${max}" data-step="${step}"
+                data-decimals="${decimals}" data-suffix="${esc(suffix)}"
+                style="--p:${rangePercent(value, min, max)}%"
+                aria-label="${esc(label)}">
+              <output class="range-val" data-value-for="${esc(path)}">${readable}</output>
+            </span>
+          </span>
+        </div>`;
+    }
+
+    function selectRow(path, label, options = [], iconName = "list", note = "") {
+      const value = getPath(state, path);
+      return `
+        <div class="setting-row">
+          <span class="row-icon">${icon(iconName, 12)}</span>
+          <span class="row-label">${esc(label)}${note ? `<span class="row-note">${esc(note)}</span>` : ""}</span>
+          <span class="row-control">
+            <span class="select-shell">
+              <select data-select="${esc(path)}" aria-label="${esc(label)}">
+                ${options.map((option) => `<option value="${esc(option)}" ${String(value) === String(option) ? "selected" : ""}>${esc(option)}</option>`).join("")}
+              </select>
+            </span>
+          </span>
+        </div>`;
+    }
+
+    function colorRow(path, label, iconName = "palette") {
+      const value = getPath(state, path) || "#38ff7d";
+      return `
+        <div class="setting-row">
+          <span class="row-icon">${icon(iconName, 12)}</span>
+          <span class="row-label">${esc(label)}</span>
+          <span class="row-control">
+            <label class="color-control" title="${esc(label)}">
+              <input type="color" value="${esc(value)}" data-color="${esc(path)}" aria-label="${esc(label)}">
+              <span class="color-hex" data-color-label="${esc(path)}">${esc(value)}</span>
+            </label>
+          </span>
+        </div>`;
+    }
+
+    function staticRow(label, value, iconName = "dot") {
+      return `
+        <div class="setting-row">
+          <span class="row-icon">${icon(iconName, 12)}</span>
+          <span class="row-label">${esc(label)}</span>
+          <span class="row-control"><span class="muted-value">${esc(value)}</span></span>
+        </div>`;
+    }
+
+    function dataNote(text) {
+      return `<div class="data-note">${icon("info", 11)}<span>${esc(text)}</span></div>`;
+    }
+
+    function positionTiles() {
+      const entries = [
+        ["Сверху слева", "СЛ"],
+        ["Сверху справа", "СП"],
+        ["Снизу слева", "НЛ"],
+        ["Снизу справа", "НП"],
+        ["Собственная позиция", "Своя"]
+      ];
+      return `
+        <div class="position-grid" style="grid-template-columns:repeat(5,1fr)" aria-label="Быстрый выбор положения">
+          ${entries.map(([position, short]) => `
+            <button class="position-tile ${state.hud.position === position ? "is-active" : ""}" type="button"
+              data-position="${esc(position)}" title="${esc(position)}" aria-label="${esc(position)}">
+              <span>${esc(short)}</span>
+            </button>`).join("")}
+        </div>`;
+    }
+
+    function actionButtons() {
+      return `
+        <div class="action-row">
+          <button class="btn primary grow" type="button" data-action="open-hud-editor">${icon("panels-top-left", 13)}Открыть редактор HUD</button>
+          <button class="btn" type="button" data-action="reset-hud">${icon("rotate-ccw", 13)}Сбросить</button>
+        </div>`;
+    }
+
+    /* ───────────────────────────────────────────────────────────────────────
+       СОДЕРЖИМОЕ РАЗДЕЛОВ
+    ─────────────────────────────────────────────────────────────────────── */
+
+    function renderSettingsContent() {
+      switch (state.activeSection) {
+        case "main": return renderMain();
+        case "hud": return renderHud();
+        case "interface": return renderInterface();
+        case "graphics": return renderGraphics();
+        case "sound": return renderSound();
+        case "controls": return renderControls();
+        case "other": return renderOther();
+        default: return renderHud();
+      }
+    }
+
+    function renderMain() {
+      const enabled = DEFAULT_MODULES.filter((module) => Boolean(getPath(state, module.enabledPath)));
+      return `
+        ${sectionHead("home", "Главная", "Обзор демонстрационного интерфейса GAYClient", "1.1.5")}
+        <div class="home-hero">
+          <div class="hero-eyebrow">${icon("shield-check", 11)}Визуальная часть клиента</div>
+          <div class="hero-title">GAYCLIENT</div>
+          <p class="hero-desc">Единое внутриигровое меню для Minecraft Bedrock. Настройте HUD, оформление и эффекты в одном окне.</p>
+          <div class="chips">
+            <span class="pill green">${icon("power", 9)}Демо-режим</span>
+            <span class="pill">Версия 1.1.5</span>
+            <span class="pill demo">Клиент не подключён</span>
+          </div>
+        </div>
+        ${group("Быстрые действия", `
+          <div class="mini-cards">
+            <button class="quick-card" type="button" data-action="section" data-section="hud">${icon("monitor", 14)}<span>Настроить HUD</span></button>
+            <button class="quick-card" type="button" data-action="section" data-section="graphics">${icon("sparkles", 14)}<span>Эффекты графики</span></button>
+            <button class="quick-card" type="button" data-action="section" data-section="interface">${icon("palette", 14)}<span>Оформление меню</span></button>
+            <button class="quick-card" type="button" data-action="tab" data-tab="mods">${icon("box", 14)}<span>Моды</span></button>
+            <button class="quick-card" type="button" data-action="tab" data-tab="profiles">${icon("user-round", 14)}<span>Профили</span></button>
+            <button class="quick-card" type="button" data-action="tab" data-tab="stats">${icon("bar-chart-3", 14)}<span>Статистика</span></button>
+          </div>
+        `, { note: "переход" })}
+        ${group("Включённые модули", `
+          <div class="chips">
+            ${enabled.length ? enabled.map((module) => `<span class="pill green">${icon(module.icon, 9)}${esc(module.name)}</span>`).join("") : `<span class="muted-value">Нет включённых модулей</span>`}
+          </div>
+          <div class="module-details-footer" style="padding-left:0;padding-right:0;margin-top:6px;">
+            <span>Всего активно: <b data-enabled-count style="color:var(--accent);font-weight:700;">${enabled.length}</b></span>
+            <span>демонстрационные переключатели</span>
+          </div>
+        `, { note: "состояние демо" })}
+        ${group("Сведения о клиенте", `
+          ${staticRow("Название клиента", "GAYClient", "badge-info")}
+          ${staticRow("Версия интерфейса", "1.1.5 · демонстрация", "tag")}
+          ${staticRow("Подключение к игре", "Не подключено", "unplug")}
+        `)}
+        ${dataNote("Значения модулей здесь условные. Реальные игровые данные будет передавать существующий клиент после подключения.")}`;
+    }
+
+    function renderHud() {
+      return `
+        ${sectionHead("monitor", "HUD", "Настройте отображение игрового интерфейса", "визуал")}
+        ${group("Основные настройки", `
+          ${toggleRow("hud.fps", "Показывать FPS", "activity")}
+          ${toggleRow("hud.cps", "Показывать CPS", "mouse-pointer-click")}
+          ${toggleRow("hud.keystrokes", "Показывать нажатые клавиши", "keyboard")}
+          ${toggleRow("hud.clock", "Показывать часы", "clock")}
+          ${toggleRow("hud.watermark", "Показывать водяной знак", "droplet")}
+          ${toggleRow("hud.coordinates", "Показывать координаты", "crosshair")}
+          ${toggleRow("hud.perf", "Показывать производительность CPU и RAM", "cpu")}
+          ${toggleRow("hud.resolution", "Показывать разрешение", "scan")}
+          ${toggleRow("hud.modulesEnabled", "Показывать список активных модулей", "layers")}
+          ${toggleRow("hud.ping", "Показывать пинг", "wifi", "если доступен")}
+        `, { note: "10 параметров" })}
+        ${group("Размер и внешний вид", `
+          ${rangeRow("hud.hudScale", "Масштаб HUD", { min: 0.5, max: 2, step: 0.05, suffix: "x", decimals: 2, icon: "scaling" })}
+          ${rangeRow("hud.hudSize", "Размер элементов", { min: 0.5, max: 2, step: 0.05, suffix: "x", decimals: 2, icon: "maximize" })}
+          ${rangeRow("hud.opacity", "Прозрачность", { min: 0, max: 100, step: 1, suffix: "%", icon: "eye" })}
+          ${colorRow("hud.textColor", "Цвет текста", "type")}
+          ${rangeRow("hud.spacing", "Отступы между элементами", { min: 0, max: 24, step: 1, suffix: "px", icon: "move" })}
+          ${rangeRow("hud.padding", "Внутренние отступы", { min: 0, max: 24, step: 1, suffix: "px", icon: "box" })}
+          ${rangeRow("hud.radius", "Скругление карточек", { min: 0, max: 24, step: 1, suffix: "px", icon: "circle-dot" })}
+        `)}
+        ${group("Положение", `
+          ${selectRow("hud.position", "Позиция HUD", DEFAULT_POSITIONS, "layout-grid")}
+          ${positionTiles()}
+        `)}
+        ${group("Список модулей", `
+          ${toggleRow("hud.modulesEnabled", "Показывать список модулей", "list", "", { small: true })}
+          ${rangeRow("hud.modulesScale", "Масштаб списка", { min: 0.5, max: 2, step: 0.05, suffix: "x", decimals: 2, icon: "scaling" })}
+          ${colorRow("hud.modulesTextColor", "Цвет текста", "type")}
+          ${rangeRow("hud.modulesBgOpacity", "Прозрачность фона", { min: 0, max: 100, step: 1, suffix: "%", icon: "layers" })}
+          ${selectRow("hud.modulesPosition", "Положение списка", DEFAULT_POSITIONS, "move")}
+        `, { note: "доп. карточка" })}
+        ${actionButtons()}
+        ${dataNote("Предпросмотр справа — условный макет. Числа не являются показателями игры и заменены прочерками.")}`;
+    }
+
+    function renderInterface() {
+      return `
+        ${sectionHead("palette", "Интерфейс", "Оформление меню, темы и анимации", "тема")}
+        ${group("Цветовая тема", `
+          <div class="theme-grid">
+            ${THEMES.map((theme) => `
+              <button class="theme-card ${state.interface.theme === theme.name ? "is-active" : ""}" type="button"
+                data-action="theme" data-theme="${esc(theme.name)}" data-accent="${esc(theme.accent)}"
+                style="--theme-color:${theme.accent};--theme-bg:${theme.bg}" aria-pressed="${state.interface.theme === theme.name}">
+                <span class="theme-preview"></span>
+                <span class="theme-name">${esc(theme.name)}</span>
+                <span class="theme-check">${icon("check", 10)}</span>
+              </button>`).join("")}
+          </div>
+        `, { note: "3 темы" })}
+        ${group("Цвета", `
+          ${colorRow("interface.accent", "Акцентный цвет", "pipette")}
+          ${colorRow("interface.textColor", "Цвет текста", "type")}
+          ${colorRow("interface.bgColor", "Цвет фона", "square")}
+        `)}
+        ${group("Размер и прозрачность", `
+          ${rangeRow("interface.menuScale", "Масштаб меню", { min: 80, max: 120, step: 1, suffix: "%", icon: "maximize" })}
+          ${rangeRow("interface.brightness", "Яркость", { min: 55, max: 115, step: 1, suffix: "%", icon: "sun" })}
+          ${rangeRow("interface.opacity", "Прозрачность", { min: 40, max: 100, step: 1, suffix: "%", icon: "eye" })}
+          ${rangeRow("interface.radius", "Скругление", { min: 0, max: 24, step: 1, suffix: "px", icon: "circle-dot" })}
+        `)}
+        ${group("Эффекты", `
+          ${toggleRow("interface.glow", "Свечение элементов", "sparkles")}
+          ${rangeRow("interface.glowIntensity", "Интенсивность свечения", { min: 0, max: 100, step: 1, suffix: "%", icon: "sun-medium" })}
+          ${toggleRow("interface.animations", "Анимации интерфейса", "play")}
+          ${rangeRow("interface.animationSpeed", "Скорость анимаций", { min: 0, max: 100, step: 1, suffix: "%", icon: "gauge" })}
+        `)}
+        <div class="action-row">
+          <button class="btn primary grow" type="button" data-action="reset-interface">${icon("rotate-ccw", 13)}Сбросить оформление</button>
+          <button class="btn" type="button" data-action="section" data-section="main">${icon("home", 13)}На главную</button>
+        </div>`;
+    }
+
+    function effectCard(key, title, description, iconName, rows) {
+      const effect = state.graphics[key];
+      const open = Boolean(state.openEffects[key]);
+      return `
+        <section class="settings-group effect-card ${open ? "is-open" : ""}">
+          <div class="group-header">
+            <div class="effect-name">
+              <span class="row-icon">${icon(iconName, 12)}</span>
+              <div>
+                <div class="row-label">${esc(title)}</div>
+                <div class="mod-desc">${esc(description)}</div>
+              </div>
+            </div>
+            <div class="effect-header-actions">
+              ${switchMarkup(`graphics.${key}.enabled`, Boolean(effect.enabled), true)}
+              <button class="collapse-btn" type="button" data-action="toggle-effect-group" data-key="${key}"
+                aria-label="${open ? "Свернуть" : "Развернуть"} ${esc(title)}" aria-expanded="${open}">${icon("chevron-down", 14)}</button>
+            </div>
+          </div>
+          <div class="effect-body">
+            <div class="effect-note">${esc(title)} — визуальные параметры. Эффект не подключён к игровому рендеру.</div>
+            ${rows}
+          </div>
+        </section>`;
+    }
+
+    function renderGraphics() {
+      const china = state.graphics.chinaHat;
+      const trail = state.graphics.trail;
+      const rings = state.graphics.jumpRings;
+      return `
+        ${sectionHead("gamepad-2", "Графика", "China Hat, Trail и Jump Rings", "визуал")}
+        ${dataNote("Это настройки внешнего вида. Реальные эффекты, модель и рендер подключаются другой частью клиента.")}
+        ${effectCard("chinaHat", "China Hat", "Конус над головой персонажа", "crown", `
+          ${toggleRow("graphics.chinaHat.fill", "Заливка конуса", "paint-bucket", "", { small: true })}
+          ${colorRow("graphics.chinaHat.color", "Цвет", "palette")}
+          ${toggleRow("graphics.chinaHat.rainbow", "Радужный режим", "rainbow", "", { small: true })}
+          ${rangeRow("graphics.chinaHat.rainbowSpeed", "Скорость радуги", { min: 0, max: 100, step: 1, suffix: "%", icon: "gauge" })}
+          ${rangeRow("graphics.chinaHat.opacity", "Прозрачность", { min: 0, max: 100, step: 1, suffix: "%", icon: "eye" })}
+          ${rangeRow("graphics.chinaHat.radius", "Радиус", { min: 0.2, max: 3, step: 0.05, decimals: 2, suffix: "ед.", icon: "circle" })}
+          ${rangeRow("graphics.chinaHat.height", "Высота конуса", { min: 0.2, max: 3, step: 0.05, decimals: 2, suffix: "ед.", icon: "move-vertical" })}
+          ${rangeRow("graphics.chinaHat.offset", "Смещение над головой", { min: 0, max: 2, step: 0.05, decimals: 2, suffix: "ед.", icon: "move-up" })}
+          ${rangeRow("graphics.chinaHat.floatAmplitude", "Амплитуда плавания", { min: 0, max: 1, step: 0.05, decimals: 2, suffix: "ед.", icon: "waves" })}
+          ${rangeRow("graphics.chinaHat.floatSpeed", "Скорость плавания", { min: 0, max: 3, step: 0.1, decimals: 1, suffix: "x", icon: "wind" })}
+        `)}
+        ${effectCard("trail", "Trail", "След за движением персонажа", "wind", `
+          ${toggleRow("graphics.trail.fill", "Заливка следа", "paint-bucket", "", { small: true })}
+          ${colorRow("graphics.trail.color", "Цвет следа", "palette")}
+          ${toggleRow("graphics.trail.rainbow", "Радужный режим", "rainbow", "", { small: true })}
+          ${rangeRow("graphics.trail.rainbowSpeed", "Скорость радуги", { min: 0, max: 100, step: 1, suffix: "%", icon: "gauge" })}
+          ${rangeRow("graphics.trail.opacity", "Прозрачность", { min: 0, max: 100, step: 1, suffix: "%", icon: "eye" })}
+          ${rangeRow("graphics.trail.height", "Высота следа", { min: 0.2, max: 3, step: 0.05, decimals: 2, suffix: "ед.", icon: "move-vertical" })}
+          ${rangeRow("graphics.trail.life", "Время жизни следа", { min: 0.2, max: 4, step: 0.1, decimals: 1, suffix: "с", icon: "timer" })}
+        `)}
+        ${effectCard("jumpRings", "Jump Rings", "Кольца при прыжке", "sparkles", `
+          ${colorRow("graphics.jumpRings.color", "Цвет", "palette")}
+          ${toggleRow("graphics.jumpRings.rainbow", "Радужный режим", "rainbow", "", { small: true })}
+          ${rangeRow("graphics.jumpRings.rainbowSpeed", "Скорость радуги", { min: 0, max: 100, step: 1, suffix: "%", icon: "gauge" })}
+          ${rangeRow("graphics.jumpRings.radius", "Радиус", { min: 0.2, max: 3, step: 0.05, decimals: 2, suffix: "ед.", icon: "circle" })}
+          ${rangeRow("graphics.jumpRings.opacity", "Прозрачность", { min: 0, max: 100, step: 1, suffix: "%", icon: "eye" })}
+          ${rangeRow("graphics.jumpRings.duration", "Длительность", { min: 0.1, max: 3, step: 0.1, decimals: 1, suffix: "с", icon: "timer" })}
+        `)}
+        <div class="action-row">
+          <button class="btn primary grow" type="button" data-action="open-effect-preview">${icon("monitor-play", 13)}Передать область предпросмотра</button>
+          <button class="btn" type="button" data-action="reset-graphics">${icon("rotate-ccw", 13)}Сбросить</button>
+        </div>
+        ${dataNote("Справа зарезервирована большая область под изображение персонажа или эффектов. Без переданной текстуры показывается заглушка.")}`;
+    }
+
+    function renderSound() {
+      return `
+        ${sectionHead("volume-2", "Звук", "Громкость меню и демонстрационных эффектов", "демо")}
+        ${group("Основные настройки", `
+          ${toggleRow("sound.muted", "Отключить звук", "volume-x")}
+          ${rangeRow("sound.master", "Общая громкость", { min: 0, max: 100, step: 1, suffix: "%", icon: "volume-2" })}
+          ${rangeRow("sound.ui", "Громкость интерфейса", { min: 0, max: 100, step: 1, suffix: "%", icon: "mouse-pointer" })}
+          ${rangeRow("sound.effects", "Громкость эффектов", { min: 0, max: 100, step: 1, suffix: "%", icon: "audio-lines" })}
+        `, { note: "только визуал" })}
+        ${group("Устройство вывода", `
+          ${selectRow("sound.device", "Аудиоустройство", ["Системное устройство", "Устройство по умолчанию", "Без вывода"], "headphones")}
+        `)}
+        <div class="action-row">
+          <button class="btn primary grow" type="button" data-action="sound-check">${icon("play", 13)}Проверить звук</button>
+          <button class="btn" type="button" data-action="reset-sound">${icon("rotate-ccw", 13)}Сбросить</button>
+        </div>
+        ${dataNote("Уровни звука хранятся только в демонстрационном состоянии. Связь с аудиосистемой клиента будет добавлена позже.")}`;
+    }
+
+    function renderControls() {
+      const keyValue = state.controls.menuKey || "Right Shift";
+      return `
+        ${sectionHead("sliders-horizontal", "Управление", "Клавиши открытия меню и работа курсора", "демо")}
+        ${group("Клавиши", `
+          <div class="setting-row">
+            <span class="row-icon">${icon("command", 12)}</span>
+            <span class="row-label">Открытие меню<span class="row-note">по умолчанию</span></span>
+            <span class="row-control">
+              <button class="btn tiny primary" type="button" data-action="rebind-key">${icon(ui.capturedKey ? "radio" : "keyboard", 12)}<span class="keycap" style="min-width:auto;height:16px">${ui.capturedKey ? "Нажмите клавишу…" : esc(keyValue)}</span></button>
+            </span>
+          </div>
+          ${toggleRow("controls.moduleHotkeys", "Горячие клавиши модулей", "keyboard", "", { small: true })}
+        `)}
+        ${group("Курсор и прокрутка", `
+          ${toggleRow("controls.cursor", "Показывать курсор при открытом меню", "mouse-pointer-2")}
+          ${toggleRow("controls.scroll", "Прокрутка содержимого колесом", "mouse")}
+          ${staticRow("Закрытие меню", keyValue, "log-out")}
+        `)}
+        ${group("Назначение по умолчанию", `
+          ${staticRow("Открыть / закрыть меню", "Right Shift", "keyboard")}
+          ${staticRow("Фокус на содержимом", "Автоматически", "focus")}
+          ${staticRow("Захват игровой мыши", "Не подключён", "unplug")}
+        `)}
+        <div class="action-row">
+          <button class="btn primary grow" type="button" data-action="reset-controls">${icon("rotate-ccw", 13)}Вернуть по умолчанию</button>
+        </div>
+        ${dataNote("Клавиша Right Shift показана как назначение по умолчанию. Подключение клавиш и игровой мыши выполнит другой разработчик.")}`;
+    }
+
+    function renderOther() {
+      return `
+        ${sectionHead("ellipsis", "Прочее", "Информация о клиенте и сброс настроек", "1.1.5")}
+        ${group("Сведения", `
+          ${staticRow("Название клиента", "GAYClient", "badge-info")}
+          ${staticRow("Версия", "1.1.5", "tag")}
+          ${staticRow("Платформа", "Minecraft Bedrock / Windows", "monitor")}
+          ${staticRow("Состояние", "Демонстрационный интерфейс", "activity")}
+          ${staticRow("Подключение", "Нет данных", "unplug")}
+        `)}
+        ${group("Сброс", `
+          <p class="mod-detail-desc">Сброс вернёт демонстрационные значения HUD, оформления, эффектов и звука. Профили останутся без изменений.</p>
+          <div class="action-row" style="padding: 0 10px 8px;">
+            <button class="btn danger grow" type="button" data-action="reset-all">${icon("rotate-ccw", 13)}Сбросить все настройки</button>
+          </div>
+        `)}
+        ${dataNote("Игровые модули, хуки и рендер намеренно не подключены. Эта часть отвечает только за визуальный интерфейс и демонстрационное состояние.")}`;
+    }
+
+    function renderContent() {
+      if (state.activeTab === "mods") return renderMods();
+      if (state.activeTab === "profiles") return renderProfiles();
+      if (state.activeTab === "stats") return renderStats();
+      return renderSettingsContent();
+    }
+  </script>
+
+  <script>
+    "use strict";
+
+    /* ───────────────────────────────────────────────────────────────────────
+       МОДЫ
+    ─────────────────────────────────────────────────────────────────────── */
+
+    function renderModuleField(field) {
+      if (field.type === "range") return rangeRow(field.path, field.label, field);
+      if (field.type === "select") return selectRow(field.path, field.label, field.options, "layout-grid");
+      if (field.type === "color") return colorRow(field.path, field.label);
+      if (field.type === "toggle") return toggleRow(field.path, field.label, "toggle-left", "", { small: true });
+      return "";
+    }
+
+    function renderMods() {
+      const categories = ["all", "HUD", "Графика"];
+      const selected = DEFAULT_MODULES.find((module) => module.id === state.selectedMod) || DEFAULT_MODULES[0];
+      const activeSelected = Boolean(getPath(state, selected.enabledPath));
+      const enabledCount = countEnabledModules();
+      return `
+        ${sectionHead("box", "Моды", "Демонстрационный список модулей клиента", `${enabledCount} вкл.`)}
+        <div class="mod-toolbar">
+          <label class="search-wrap" style="display:block;flex:1;">
+            <span class="search-icon">${icon("search", 13)}</span>
+            <input class="text-input" id="modSearch" type="search" autocomplete="off" value="${esc(state.modsQuery)}"
+              placeholder="Поиск по названиям модулей…" aria-label="Поиск модуля" data-search="mods">
+          </label>
+        </div>
+        <div class="category-chips" role="group" aria-label="Категории модулей">
+          ${categories.map((category) => `
+            <button class="chip-btn ${state.modsCategory === category ? "is-active" : ""}" type="button"
+              data-action="mod-category" data-category="${category}">
+              ${category === "all" ? "Все" : category}
+            </button>`).join("")}
+        </div>
+        <div class="mod-list" id="modList" aria-label="Список модулей">
+          ${DEFAULT_MODULES.map((module) => {
+            const on = Boolean(getPath(state, module.enabledPath));
+            return `
+              <div class="mod-card ${selected.id === module.id ? "is-selected" : ""}" data-mod-card
+                data-name="${esc(module.name.toLowerCase())}" data-category="${esc(module.category)}"
+                data-action="select-mod" data-mod="${module.id}" role="button" tabindex="0" aria-label="${esc(module.name)}">
+                <span class="mod-icon">${icon(module.icon, 13)}</span>
+                <span class="mod-copy">
+                  <span class="mod-name">${esc(module.name)}</span>
+                  <span class="mod-desc">${esc(module.desc)}</span>
+                </span>
+                <span class="mod-tag">${esc(module.category)}</span>
+                ${switchMarkup(module.enabledPath, on, true)}
+              </div>`;
+          }).join("")}
+          <div class="no-results" id="modNoResults" ${state.modsQuery ? "" : "hidden"}>По этому запросу модули не найдены.</div>
+        </div>
+        ${group("Настройки модуля", `
+          <div class="mod-detail-head">
+            <span class="mod-icon" style="width:32px;height:32px;flex-basis:32px;">${icon(selected.icon, 15)}</span>
+            <div style="flex:1;min-width:0;">
+              <div class="mod-name">${esc(selected.name)}</div>
+              <div class="mod-desc">${esc(selected.desc)}</div>
+            </div>
+            ${switchMarkup(selected.enabledPath, activeSelected, true)}
+          </div>
+          <div class="mod-detail-desc">Параметры относятся к демонстрационному состоянию. Значения не передаются в игру.</div>
+          ${selected.fields && selected.fields.length ? selected.fields.map(renderModuleField).join("") : `<div class="no-results">У модуля пока нет визуальных параметров.</div>`}
+          <div class="module-details-footer">
+            <span>${esc(selected.category)} · идентификатор: ${esc(selected.id)}</span>
+            <span data-module-state>${activeSelected ? "включён (демо)" : "выключен (демо)"}</span>
+          </div>
+        `, { note: "визуал" })}
+        ${dataNote("Фактические данные FPS, CPS, координат и системные показатели должен передавать существующий клиент. Список модулей демонстрационный.")}`;
+    }
+
+    /* ───────────────────────────────────────────────────────────────────────
+       ПРОФИЛИ
+    ─────────────────────────────────────────────────────────────────────── */
+
+    function renderProfiles() {
+      const selected = state.profiles.find((profile) => profile.id === state.selectedProfile) || state.profiles[0];
+      const active = state.profiles.find((profile) => profile.active) || state.profiles[0];
+      return `
+        ${sectionHead("user-round", "Профили", "Наборы настроек интерфейса", "демо")}
+        ${group("Список профилей", `
+          <div class="profile-list">
+            ${state.profiles.map((profile) => `
+              <div class="profile-card ${profile.id === selected?.id ? "is-selected" : ""} ${profile.id === selected?.id ? "is-active" : ""}"
+                data-action="profile-select" data-profile="${esc(profile.id)}" role="button" tabindex="0" aria-label="Выбрать профиль ${esc(profile.name)}">
+                <span class="profile-avatar">${icon(profile.active ? "user-round-check" : "user-round", 14)}</span>
+                <span class="profile-info">
+                  <span class="profile-name">${esc(profile.name)}</span>
+                  <span class="profile-meta">${profile.active ? "Активный профиль" : "Неактивен"} · демо</span>
+                </span>
+                ${profile.active ? `<span class="profile-active-tag">активен</span>` : ""}
+              </div>`).join("")}
+          </div>
+          <div class="action-row" style="padding:8px 3px 3px;">
+            <button class="btn primary grow" type="button" data-action="profile-create">${icon("plus", 12)}Создать профиль</button>
+          </div>
+        `, { note: `в списке: ${state.profiles.length}` })}
+        ${group("Выбранный профиль", selected ? `
+          <div class="selected-profile">
+            <span class="profile-avatar">${icon("user-round", 17)}</span>
+            <div class="profile-info">
+              <div class="profile-name">${esc(selected.name)}</div>
+              <div class="profile-meta">${esc(selected.note || "Демонстрационный профиль")}</div>
+            </div>
+            ${selected.active ? `<span class="profile-active-tag">активен</span>` : `<span class="pill demo">не активен</span>`}
+          </div>
+          <div class="profile-actions">
+            <div class="action-row">
+              <button class="btn primary grow" type="button" data-action="profile-save">${icon("save", 12)}Сохранить настройки</button>
+              ${selected.active ? `<span class="pill green" style="align-self:center;">${icon("check", 9)}текущий</span>` : `<button class="btn grow" type="button" data-action="profile-activate">${icon("check", 12)}Сделать активным</button>`}
+            </div>
+            <div class="action-row">
+              <button class="btn grow" type="button" data-action="profile-rename">${icon("pencil", 12)}Переименовать</button>
+              <button class="btn danger grow" type="button" data-action="profile-delete">${icon("trash-2", 12)}Удалить</button>
+            </div>
+          </div>
+        ` : `<div class="no-results">Выберите профиль из списка.</div>`, { note: "действия демо" })}
+        ${dataNote("Профили не сохраняются между запусками. Здесь реализована только визуальная часть создания, выбора, переименования и удаления.")}`;
+    }
+
+    /* ───────────────────────────────────────────────────────────────────────
+       СТАТИСТИКА
+    ─────────────────────────────────────────────────────────────────────── */
+
+    function statCard(iconName, label, value, foot, options = {}) {
+      return `
+        <div class="stat-card ${options.wide ? "wide" : ""}">
+          <div class="stat-head"><span class="stat-icon">${icon(iconName, 12)}</span><span>${esc(label)}</span></div>
+          <div class="stat-value ${options.dim === false ? "" : "dim"}">${esc(value)}</div>
+          <div class="stat-foot">${esc(foot)}</div>
+        </div>`;
+    }
+
+    function renderStats() {
+      const enabled = countEnabledModules();
+      return `
+        ${sectionHead("bar-chart-3", "Статистика", "Показатели, ожидающие подключения клиента", "нет данных")}
+        <div class="stat-banner">${icon("triangle-alert", 12)}<span>Клиент не подключён. Реальные игровые значения отсутствуют и не подменяются демонстрационными.</span></div>
+        <div class="stats-grid" style="margin-top:8px;">
+          ${statCard("activity", "FPS", "Нет данных", "Источник: клиент игры")}
+          ${statCard("mouse-pointer-click", "CPS", "Нет данных", "Источник: клиент игры")}
+          ${statCard("layers", "Модулей включено", `${enabled}`, "По текущим демонстрационным переключателям", { dim: false })}
+          ${statCard("wifi", "Пинг", "Нет данных", "Если показатель доступен")}
+          ${statCard("cpu", "Загрузка CPU", "Нет данных", "Системные показатели клиента")}
+          ${statCard("memory-stick", "Использование RAM", "Нет данных", "Системные показатели клиента")}
+          ${statCard("scan", "Разрешение", "Нет данных", "Передаётся игровым окном")}
+          ${statCard("clock-3", "Время в игре", "Нет данных", "Не передано клиентом")}
+        </div>
+        ${group("Динамика показателей", `
+          <div class="empty-chart"></div>
+          <div class="module-details-footer" style="padding-left:0;padding-right:0;">
+            <span>График без данных</span><span>подключение позже</span>
+          </div>
+        `, { note: "ожидание" })}
+        ${group("Источники", `
+          ${staticRow("Игровые показатели", "Клиент Minecraft", "gamepad-2")}
+          ${staticRow("Системные показатели", "Не переданы", "unplug")}
+          ${staticRow("Состояние подключения", "Не подключено", "wifi-off")}
+        `)}
+        <div class="action-row">
+          <button class="btn primary grow" type="button" data-action="stats-refresh">${icon("refresh-cw", 13)}Запросить данные</button>
+        </div>`;
+    }
+  </script>
+
+  <script>
+    "use strict";
+
+    /* ───────────────────────────────────────────────────────────────────────
+       ДЕЙСТВИЯ И СВЯЗЫВАНИЕ
+    ─────────────────────────────────────────────────────────────────────── */
+
+    function refreshPreviewOnly() {
+      const host = $("#previewPanel");
+      if (!host) return;
+      host.innerHTML = renderPreview();
+      sanitizeTextNodes(host);
+      refreshIcons();
+    }
+
+    function syncCounts() {
+      const count = countEnabledModules();
+      $$("[data-enabled-count]").forEach((node) => { node.textContent = String(count); });
+      $$("[data-side-modules]").forEach((node) => { node.textContent = `${count} / ${DEFAULT_MODULES.length}`; });
+      const meter = $("#sidebar .fill-meter");
+      if (meter) {
+        const filled = Math.max(3, Math.round((count / DEFAULT_MODULES.length) * 14));
+        $$("i", meter).forEach((segment, index) => segment.classList.toggle("on", index < filled));
+      }
+      if (state.activeTab === "mods") {
+        const badge = $("#contentColumn .section-badge");
+        if (badge) badge.textContent = `${count} вкл.`;
+      }
+    }
+
+    function syncModuleStateLabel() {
+      const module = DEFAULT_MODULES.find((item) => item.id === state.selectedMod);
+      const node = $("[data-module-state]");
+      if (!module || !node) return;
+      node.textContent = getPath(state, module.enabledPath) ? "включён (демо)" : "выключен (демо)";
+    }
+
+    function handleToggle(path) {
+      const next = !Boolean(getPath(state, path));
+      setPath(state, path, next);
+      $$("[data-toggle]").forEach((button) => {
+        if (button.dataset.toggle !== path) return;
+        button.classList.toggle("is-on", next);
+        button.setAttribute("aria-checked", String(next));
+      });
+      if (path.startsWith("interface.")) applyThemeVars();
+      syncCounts();
+      syncModuleStateLabel();
+      refreshPreviewOnly();
+    }
+
+    function handleRange(input) {
+      const path = input.dataset.range;
+      if (!path) return;
+      const min = Number(input.dataset.min);
+      const max = Number(input.dataset.max);
+      const decimals = Number(input.dataset.decimals ?? 0);
+      const suffix = input.dataset.suffix || "";
+      const value = clamp(Number(input.value), min, max);
+      setPath(state, path, value);
+      input.value = String(value);
+      input.style.setProperty("--p", `${rangePercent(value, min, max)}%`);
+      $$("[data-value-for]").forEach((node) => {
+        if (node.dataset.valueFor === path) node.textContent = `${formatNumber(value, decimals)}${suffix}`;
+      });
+      if (path === "interface.brightness") applyThemeVars();
+    }
+
+    function syncThemeCards() {
+      $$(".theme-card").forEach((card) => {
+        const active = card.dataset.theme === state.interface.theme;
+        card.classList.toggle("is-active", active);
+        card.setAttribute("aria-pressed", String(active));
+      });
+    }
+
+    function handleColor(input) {
+      const path = input.dataset.color;
+      if (!path) return;
+      const value = input.value.toLowerCase();
+      setPath(state, path, value);
+      $$("[data-color-label]").forEach((label) => {
+        if (label.dataset.colorLabel === path) label.textContent = value;
+      });
+      $$("[data-color]").forEach((other) => {
+        if (other !== input && other.dataset.color === path) other.value = value;
+      });
+      if (path === "interface.accent") {
+        const matched = THEMES.find((theme) => theme.accent.toLowerCase() === value);
+        if (matched) state.interface.theme = matched.name;
+        syncThemeCards();
+        applyThemeVars();
+        refreshPreviewOnly();
+      }
+      if (path === "interface.textColor" || path === "interface.bgColor") applyThemeVars();
+      if (path.startsWith("hud.")) refreshPreviewOnly();
+    }
+
+    function handleSelect(select) {
+      const path = select.dataset.select;
+      if (!path) return;
+      setPath(state, path, select.value);
+      if (path === "hud.position") {
+        $$(".position-tile").forEach((tile) => {
+          tile.classList.toggle("is-active", tile.dataset.position === select.value);
+        });
+      }
+      if (path.startsWith("hud.") || path.startsWith("graphics.")) refreshPreviewOnly();
+      if (path === "sound.device") toast(`Демонстрационное устройство: ${select.value}`, "headphones");
+    }
+
+    function filterModsInPlace() {
+      const query = String(state.modsQuery || "").trim().toLowerCase();
+      let visible = 0;
+      $$("[data-mod-card]").forEach((card) => {
+        const name = (card.dataset.name || "").toLowerCase();
+        const category = card.dataset.category || "";
+        const matchesQuery = !query || name.includes(query);
+        const matchesCategory = state.modsCategory === "all" || category === state.modsCategory;
+        const show = matchesQuery && matchesCategory;
+        card.hidden = !show;
+        if (show) visible += 1;
+      });
+      const empty = $("#modNoResults");
+      if (empty) {
+        empty.hidden = visible > 0;
+        empty.textContent = query
+          ? "По этому запросу модули не найдены."
+          : "В этой категории пока нет модулей.";
+      }
+    }
+
+    function rerender(preserveScroll = false) {
+      const content = $("#contentColumn");
+      const scroll = content ? content.scrollTop : 0;
+      render();
+      const freshContent = $("#contentColumn");
+      if (freshContent) freshContent.scrollTop = preserveScroll ? scroll : 0;
+      if (state.activeTab === "mods") filterModsInPlace();
+    }
+
+    /* ───────────────────────────────────────────────────────────────────────
+       ДИАЛОГИ
+    ─────────────────────────────────────────────────────────────────────── */
+
+    function closeDialog() {
+      const layer = $("#modalLayer");
+      if (!layer) return;
+      layer.classList.remove("is-open");
+      layer.setAttribute("aria-hidden", "true");
+      $("#dialogBox").innerHTML = "";
+    }
+
+    function openDialog(options = {}) {
+      const layer = $("#modalLayer");
+      const box = $("#dialogBox");
+      if (!layer || !box) return;
+      const hasInput = Object.prototype.hasOwnProperty.call(options, "input");
+      box.innerHTML = `
+        <div class="dialog-head">
+          <span class="dialog-icon">${icon(options.icon || "info", 15)}</span>
+          <div class="dialog-title" id="dialogTitle">${esc(options.title || "GAYClient")}</div>
+          <button class="dialog-close" type="button" data-dialog-close aria-label="Закрыть диалог">${icon("x", 13)}</button>
+        </div>
+        <p class="dialog-desc">${esc(options.desc || "")}</p>
+        ${hasInput ? `<input class="text-input dialog-input" id="dialogInput" type="text" maxlength="42"
+          autocomplete="off" value="${esc(options.input || "")}" placeholder="${esc(options.placeholder || "Введите значение")}"
+          aria-label="${esc(options.inputLabel || "Значение")}">` : ""}
+        <div class="dialog-error" id="dialogError" aria-live="polite"></div>
+        <div class="dialog-actions">
+          <button class="btn ghost" type="button" data-dialog-close>${options.cancelLabel || "Отмена"}</button>
+          <button class="btn ${options.danger ? "danger" : "primary"}" type="button" data-dialog-confirm>
+            ${esc(options.confirmLabel || "Понятно")}
+          </button>
+        </div>`;
+      layer.classList.add("is-open");
+      layer.setAttribute("aria-hidden", "false");
+      sanitizeTextNodes(box);
+      refreshIcons();
+      const input = $("#dialogInput");
+      const error = $("#dialogError");
+      const submit = () => {
+        const value = hasInput ? String(input?.value || "").trim() : "";
+        if (hasInput) {
+          if (!value) {
+            if (error) error.textContent = "Введите значение.";
+            input?.focus();
+            return;
+          }
+          if (typeof options.validate === "function") {
+            const message = options.validate(value);
+            if (message) {
+              if (error) error.textContent = message;
+              input?.focus();
+              return;
+            }
+          }
+        }
+        const callback = options.onConfirm;
+        closeDialog();
+        if (typeof callback === "function") callback(value);
+      };
+      box.querySelector("[data-dialog-confirm]")?.addEventListener("click", submit);
+      box.querySelectorAll("[data-dialog-close]").forEach((button) => button.addEventListener("click", closeDialog));
+      if (input) {
+        input.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            submit();
+          }
+        });
+        window.setTimeout(() => {
+          input.focus();
+          input.select();
+        }, 40);
+      } else {
+        window.setTimeout(() => box.querySelector("[data-dialog-confirm]")?.focus(), 40);
+      }
+      layer.onclick = (event) => {
+        if (event.target === layer) closeDialog();
+      };
+    }
+
+    function openInfoDialog(title, desc, iconName = "info") {
+      openDialog({ title, desc, icon: iconName, confirmLabel: "Понятно" });
+    }
+
+    function resetPart(part, message) {
+      const fresh = makeDefaultState();
+      if (part === "all") {
+        const keep = {
+          activeTab: state.activeTab,
+          activeSection: state.activeSection,
+          profiles: state.profiles,
+          selectedProfile: state.selectedProfile
+        };
+        Object.assign(state, fresh, keep);
+      } else {
+        state[part] = fresh[part];
+      }
+      rerender(false);
+      toast(message, "rotate-ccw");
+    }
+
+    function openPreviewImageDialog() {
+      openDialog({
+        title: "Передать область предпросмотра",
+        desc: "Визуальная часть принимает изображение извне. Укажите адрес картинки или data URL — это демонстрация будущего подключения, а не игровая модель.",
+        icon: "image",
+        input: state.previewImage || "",
+        placeholder: "https://… или data:image/…",
+        inputLabel: "Адрес изображения",
+        confirmLabel: "Применить",
+        validate: (value) => {
+          if (value && !/^(https?:\/\/|data:image\/)/i.test(value)) return "Укажите URL изображения или data:image URL.";
+          return "";
+        },
+        onConfirm: (value) => {
+          state.previewImage = value;
+          rerender(false);
+          toast(value ? "Изображение области предпросмотра обновлено (демо)." : "Изображение предпросмотра очищено.", "image");
+        }
+      });
+    }
+
+    /* ───────────────────────────────────────────────────────────────────────
+       ОБРАБОТКА ДЕЙСТВИЙ
+    ─────────────────────────────────────────────────────────────────────── */
+
+    document.addEventListener("click", (event) => {
+      const switchNode = event.target.closest("[data-toggle]");
+      if (switchNode) {
+        event.preventDefault();
+        handleToggle(switchNode.dataset.toggle);
+        return;
+      }
+
+      const positionNode = event.target.closest("[data-position]");
+      if (positionNode) {
+        state.hud.position = positionNode.dataset.position;
+        $$(".position-tile").forEach((tile) => tile.classList.toggle("is-active", tile.dataset.position === state.hud.position));
+        const select = $('[data-select="hud.position"]');
+        if (select) select.value = state.hud.position;
+        refreshPreviewOnly();
+        return;
+      }
+
+      const actionNode = event.target.closest("[data-action]");
+      if (!actionNode) return;
+      const action = actionNode.dataset.action;
+
+      switch (action) {
+        case "tab": {
+          state.activeTab = actionNode.dataset.tab;
+          rerender(false);
+          break;
+        }
+        case "section": {
+          state.activeTab = "settings";
+          state.activeSection = actionNode.dataset.section || "main";
+          rerender(false);
+          break;
+        }
+        case "theme": {
+          state.interface.theme = actionNode.dataset.theme;
+          state.interface.accent = actionNode.dataset.accent || "#38ff7d";
+          rerender(false);
+          toast(`Тема оформления: ${state.interface.theme}`, "palette");
+          break;
+        }
+        case "toggle-effect-group": {
+          const key = actionNode.dataset.key;
+          state.openEffects[key] = !state.openEffects[key];
+          const card = actionNode.closest(".effect-card");
+          card?.classList.toggle("is-open", Boolean(state.openEffects[key]));
+          actionNode.setAttribute("aria-expanded", String(Boolean(state.openEffects[key])));
+          break;
+        }
+        case "select-mod": {
+          state.selectedMod = actionNode.dataset.mod;
+          rerender(true);
+          break;
+        }
+        case "mod-category": {
+          state.modsCategory = actionNode.dataset.category || "all";
+          rerender(true);
+          break;
+        }
+        case "open-hud-editor": {
+          openInfoDialog(
+            "Редактор HUD",
+            "Визуальная кнопка готова для подключения. В существующем клиенте здесь откроется редактор расположения элементов HUD. Сейчас доступен демонстрационный макет справа.",
+            "panels-top-left"
+          );
+          break;
+        }
+        case "reset-hud": resetPart("hud", "Настройки HUD сброшены (демо)."); break;
+        case "reset-interface": resetPart("interface", "Оформление сброшено (демо)."); break;
+        case "reset-graphics": resetPart("graphics", "Настройки эффектов сброшены (демо)."); break;
+        case "reset-sound": resetPart("sound", "Настройки звука сброшены (демо)."); break;
+        case "reset-controls": resetPart("controls", "Управление возвращено к демонстрационным значениям."); break;
+        case "reset-all": {
+          openDialog({
+            title: "Сбросить все настройки?",
+            desc: "Будут сброшены HUD, оформление, эффекты, звук и управление. Демонстрационные профили останутся.",
+            icon: "rotate-ccw",
+            confirmLabel: "Сбросить",
+            danger: true,
+            onConfirm: () => resetPart("all", "Все демонстрационные настройки сброшены.")
+          });
+          break;
+        }
+        case "expand-preview": {
+          openInfoDialog(
+            "Предпросмотр",
+            "Развёрнутый предпросмотр будет доступен после подключения к клиенту. Сейчас область уже принимает внешнее изображение и сохраняет единую компоновку окна.",
+            "maximize-2"
+          );
+          break;
+        }
+        case "open-effect-preview": openPreviewImageDialog(); break;
+        case "sound-check": {
+          toast("Проверка звука станет доступна после подключения аудиосистемы клиента.", "headphones");
+          break;
+        }
+        case "stats-refresh": {
+          toast("Данные не получены: клиент не подключён к игре.", "wifi-off");
+          break;
+        }
+        case "rebind-key": {
+          ui.capturedKey = true;
+          rerender(true);
+          toast("Нажмите новую клавишу. Esc — отмена.", "keyboard");
+          break;
+        }
+        case "window-minimize": {
+          toast("Свёртывание окна будет подключено в существующем клиенте.", "minus");
+          break;
+        }
+        case "window-maximize": {
+          toast("Размер окна определяется клиентом. Демонстрация сохраняет компактную компоновку.", "maximize");
+          break;
+        }
+        case "window-close": {
+          toast("Закрытие меню будет обрабатываться клиентом. Демонстрация остаётся открытой.", "info");
+          break;
+        }
+        case "profile-select": {
+          state.selectedProfile = actionNode.dataset.profile;
+          rerender(true);
+          break;
+        }
+        case "profile-create": {
+          openDialog({
+            title: "Новый профиль",
+            desc: "Создание визуального профиля. Файлы и игровые данные не сохраняются.",
+            icon: "folder-plus",
+            input: "",
+            placeholder: "Например, PvP — зелёный",
+            inputLabel: "Название профиля",
+            confirmLabel: "Создать",
+            validate: (value) => state.profiles.some((profile) => profile.name.toLowerCase() === value.toLowerCase()) ? "Профиль с таким названием уже существует." : "",
+            onConfirm: (value) => {
+              const id = `profile-${Date.now()}`;
+              state.profiles.push({ id, name: value, note: "Новый демонстрационный профиль", active: false });
+              state.selectedProfile = id;
+              rerender(false);
+              toast(`Профиль «${value}» создан (демо).`, "folder-plus");
+            }
+          });
+          break;
+        }
+        case "profile-save": {
+          const profile = state.profiles.find((item) => item.id === state.selectedProfile);
+          if (!profile) break;
+          profile.note = "Демонстрационное сохранение · подключение позже";
+          rerender(true);
+          toast(`Настройки профиля «${profile.name}» отмечены как сохранённые (демо).`, "save");
+          break;
+        }
+        case "profile-rename": {
+          const profile = state.profiles.find((item) => item.id === state.selectedProfile);
+          if (!profile) break;
+          openDialog({
+            title: "Переименовать профиль",
+            desc: "Новое имя появится только в демонстрационном списке.",
+            icon: "pencil",
+            input: profile.name,
+            inputLabel: "Название профиля",
+            confirmLabel: "Сохранить",
+            validate: (value) => state.profiles.some((item) => item.id !== profile.id && item.name.toLowerCase() === value.toLowerCase()) ? "Это имя уже занято." : "",
+            onConfirm: (value) => {
+              profile.name = value;
+              rerender(true);
+              toast("Профиль переименован (демо).", "pencil");
+            }
+          });
+          break;
+        }
+        case "profile-delete": {
+          const profile = state.profiles.find((item) => item.id === state.selectedProfile);
+          if (!profile) break;
+          if (state.profiles.length <= 1) {
+            toast("Нельзя удалить единственный профиль.", "triangle-alert");
+            break;
+          }
+          openDialog({
+            title: "Удалить профиль?",
+            desc: `Профиль «${profile.name}» будет удалён из демонстрационного списка. Это действие не затрагивает файлы на диске.`,
+            icon: "trash-2",
+            confirmLabel: "Удалить",
+            danger: true,
+            onConfirm: () => {
+              state.profiles = state.profiles.filter((item) => item.id !== profile.id);
+              state.selectedProfile = state.profiles[0]?.id || "";
+              if (!state.profiles.some((item) => item.active)) state.profiles[0].active = true;
+              rerender(false);
+              toast("Профиль удалён (демо).", "trash-2");
+            }
+          });
+          break;
+        }
+        case "profile-activate": {
+          const profile = state.profiles.find((item) => item.id === state.selectedProfile);
+          if (!profile) break;
+          state.profiles.forEach((item) => { item.active = item.id === profile.id; });
+          rerender(true);
+          toast(`Активный профиль: ${profile.name} (демо).`, "user-round-check");
+          break;
+        }
+        default:
+          break;
+      }
+    });
+
+    document.addEventListener("input", (event) => {
+      const input = event.target;
+      if (input.matches("[data-range]")) {
+        handleRange(input);
+        return;
+      }
+      if (input.matches("[data-color]")) {
+        handleColor(input);
+        return;
+      }
+      if (input.matches('[data-search="mods"]')) {
+        state.modsQuery = input.value;
+        filterModsInPlace();
+      }
+    });
+
+    document.addEventListener("change", (event) => {
+      if (event.target.matches("[data-select]")) handleSelect(event.target);
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (ui.capturedKey) {
+        event.preventDefault();
+        if (event.key === "Escape") {
+          ui.capturedKey = false;
+          rerender(true);
+          toast("Изменение клавиши отменено.", "x");
+          return;
+        }
+        let name = event.key;
+        if (event.code === "ShiftRight") name = "Right Shift";
+        else if (event.code === "ShiftLeft") name = "Left Shift";
+        else if (event.code === "ControlRight") name = "Right Ctrl";
+        else if (event.code === "ControlLeft") name = "Left Ctrl";
+        else if (/^Key[A-Z]$/.test(event.code)) name = event.code.slice(3);
+        else if (/^Digit[0-9]$/.test(event.code)) name = event.code.slice(5);
+        else if (/^F([1-9]|1[0-2])$/.test(event.code)) name = event.code;
+        else if (name.length === 1) name = name.toUpperCase();
+        state.controls.menuKey = name;
+        ui.capturedKey = false;
+        rerender(true);
+        toast(`Назначена демонстрационная клавиша: ${name}. Подключение — позже.`, "keyboard");
+        return;
+      }
+      if (event.key === "Escape" && $("#modalLayer")?.classList.contains("is-open")) {
+        closeDialog();
+        return;
+      }
+      if ((event.key === "Enter" || event.key === " ") && event.target.matches('[role="button"][data-action]')) {
+        event.preventDefault();
+        event.target.click();
+      }
+    });
+
+    /* ───────────────────────────────────────────────────────────────────────
+       ПУБЛИЧНЫЙ ИНТЕРФЕЙС ДЛЯ БУДУЩЕГО ПОДКЛЮЧЕНИЯ
+       Здесь заканчивается визуальный слой. Клиент может передавать данные
+       через эти функции и читать локальное состояние через getState().
+    ─────────────────────────────────────────────────────────────────────── */
+
+    window.GAYClientUI = {
+      version: "1.1.5-visual-demo",
+      getState: () => clone(state),
+      setActiveTab(tab) {
+        if (TABS.some((item) => item.id === tab)) {
+          state.activeTab = tab;
+          rerender(false);
+        }
+      },
+      setActiveSection(section) {
+        if (SECTIONS.some((item) => item.id === section)) {
+          state.activeTab = "settings";
+          state.activeSection = section;
+          rerender(false);
+        }
+      },
+      setValue(path, value) {
+        setPath(state, path, value);
+        rerender(true);
+      },
+      setPreviewImage(url) {
+        state.previewImage = url || "";
+        rerender(false);
+      },
+      clearPreviewImage() {
+        state.previewImage = "";
+        rerender(false);
+      }
+    };
+
+    /* Первичная отрисовка. Отдельный контекст и второй экран не создаются. */
+    rerender(false);
+    sanitizeTextNodes();
+    window.setTimeout(() => {
+      sanitizeTextNodes();
+      refreshIcons();
+    }, 90);
+  </script>
+
+  <style>
+    /* Дополнительные состояния визуального слоя */
+    .preview-image {
+      position: absolute;
+      z-index: 1;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      opacity: .88;
+      filter: saturate(.92) contrast(1.02);
+    }
+    .preview-stage:has(.preview-image)::after {
+      background: linear-gradient(180deg, rgba(0,0,0,.30), transparent 26%, transparent 70%, rgba(0,0,0,.44));
+    }
+    .preview-stage:has(.preview-image) .stage-catbg { opacity: .04; }
+    .position-tile > span {
+      font-family: var(--mono);
+      font-size: 6.8px;
+      font-weight: 600;
+      letter-spacing: -.03em;
+      line-height: 1;
+    }
+    .switch { flex-shrink: 0; }
+    .mod-card .switch { position: relative; z-index: 2; }
+    .profile-card.is-selected { outline: 1px solid rgba(var(--accent-rgb), .10); outline-offset: -1px; }
+    .keycap { vertical-align: middle; }
+    .btn .keycap { border-color: rgba(var(--accent-rgb), .28); }
+    .no-results[hidden], [hidden] { display: none !important; }
+    .modal-layer { color: var(--text); }
+    .dialog .btn { min-width: 78px; }
+    .dialog-desc { overflow-wrap: anywhere; }
+    .search-wrap input[type="search"]::-webkit-search-cancel-button {
+      appearance: none;
+      -webkit-appearance: none;
+    }
+    .top-tab { overflow: hidden; }
+    .top-tab .tab-label { overflow: hidden; text-overflow: ellipsis; }
+    .effect-card .group-header { border-bottom: 0; }
+    .effect-card.is-open .group-header { border-bottom: 1px solid rgba(84,255,143,.08); }
+    .effect-name > div { min-width: 0; }
+    .effect-name .mod-desc { max-width: 210px; }
+    .mod-detail-head .mod-desc { max-width: 220px; }
+    .profile-card[role="button"]:focus-visible,
+    .mod-card[role="button"]:focus-visible {
+      outline: 2px solid rgba(var(--accent-rgb), .65);
+      outline-offset: -2px;
+    }
+    .motion-off *, .motion-off *::before, .motion-off *::after {
+      animation-duration: .001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .001ms !important;
+      scroll-behavior: auto !important;
+    }
+    .quiet-glow .switch.is-on,
+    .quiet-glow .preview-stage,
+    .quiet-glow .preview-expand,
+    .quiet-glow .brand-card,
+    .quiet-glow .preview-head-icon {
+      box-shadow: none !important;
+    }
+    .quiet-glow .preview-stage { border-color: rgba(var(--accent-rgb), .33); }
+    .quiet-glow .top-tab.is-active::after,
+    .quiet-glow .group-mark { box-shadow: none; }
+
+    @keyframes shellIn {
+      from { opacity: 0; transform: translateY(7px) scale(.995); }
+      to { opacity: 1; transform: none; }
+    }
+    .menu-shell { animation: shellIn .35s cubic-bezier(.2,.8,.2,1) both; }
+    .brand-card { cursor: pointer; }
+    .cat-eye { transform-box: fill-box; transform-origin: center; }
+    @keyframes catBlink {
+      0%, 91%, 100% { transform: scaleY(1); }
+      94% { transform: scaleY(.12); }
+    }
+    .cat-eye { animation: catBlink 7.5s ease-in-out infinite; }
+    /* Выбранный пользователем фон слегка влияет на глубину оболочки. */
+    .menu-shell {
+      background:
+        radial-gradient(ellipse 36% 40% at 0% 12%, rgba(var(--accent-rgb), .065), transparent 72%),
+        linear-gradient(142deg, color-mix(in srgb, var(--ui-bg, #041009) 82%, #0d3a1e) 0%, var(--ui-bg, #041009) 55%, color-mix(in srgb, var(--ui-bg, #041009) 76%, #000) 100%);
+    }
+    .module-details-footer { flex-wrap: wrap; gap: 3px; }
+
+    /* Навигация - внутренняя секция единого окна */
+    .side-nav {
+      padding: 4px;
+      border: 1px solid rgba(88, 255, 146, .12);
+      border-radius: 13px;
+      background: linear-gradient(160deg, rgba(7, 24, 14, .48), rgba(2, 10, 6, .34));
+      box-shadow: inset 0 1px rgba(201, 255, 219, .025);
+    }
+    .side-nav { flex: 0 0 auto; overflow: hidden; }
+    .nav-btn { flex: 0 0 37px; height: 37px; }
+    .nav-btn.is-active::before { left: -5px; }
+    .side-nav .nav-btn { gap: 9px; }
+    .side-nav .nav-icon { width: 27px; height: 26px; flex-basis: 27px; }
+    .side-nav .nav-label { font-size: 12.5px; }
+    .nav-caption { margin: 9px 0 6px; padding: 0 7px; }
+    .side-nav::after { display: none; }
+
+    /* Декоративные рамки и орнамент окна */
+    .shell-corner {
+      position: absolute;
+      z-index: 8;
+      width: 25px;
+      height: 25px;
+      border: 1px solid rgba(var(--accent-rgb), .75);
+      pointer-events: none;
+      filter: drop-shadow(0 0 5px rgba(var(--accent-rgb), .55));
+    }
+    .sc-tl { left: -1px; top: 7px; border-right: 0; border-bottom: 0; border-radius: 8px 0 0 0; }
+    .sc-tr { right: -1px; top: 7px; border-left: 0; border-bottom: 0; border-radius: 0 8px 0 0; }
+    .sc-bl { left: -1px; bottom: 7px; border-right: 0; border-top: 0; border-radius: 0 0 0 8px; }
+    .sc-br { right: -1px; bottom: 7px; border-left: 0; border-top: 0; border-radius: 0 0 8px 0; }
+    .shell-ornament {
+      position: absolute;
+      z-index: 7;
+      left: 50%;
+      width: 108px;
+      height: 3px;
+      transform: translateX(-50%);
+      pointer-events: none;
+      background:
+        linear-gradient(90deg, transparent, rgba(var(--accent-rgb), .40)) left/40px 1px no-repeat,
+        linear-gradient(270deg, transparent, rgba(var(--accent-rgb), .40)) right/40px 1px no-repeat,
+        radial-gradient(circle, var(--accent) 0 1.5px, transparent 2px) center/8px 8px no-repeat;
+      opacity: .75;
+    }
+    .so-top { top: -1px; }
+    .so-bottom { bottom: -1px; }
+
+    /* Декор карточек и кнопок */
+    .settings-group { transition: border-color .18s ease, box-shadow .18s ease; }
+    .settings-group:hover {
+      border-color: rgba(var(--accent-rgb), .24);
+      box-shadow: inset 0 1px rgba(198, 255, 218, .04), 0 0 18px rgba(var(--accent-rgb), .035);
+    }
+    .group-header { position: relative; }
+    .group-header::after {
+      content: "";
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      width: 14px;
+      height: 4px;
+      transform: translateY(-50%);
+      background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb), .22));
+      pointer-events: none;
+    }
+    .brand-card::before {
+      content: "";
+      position: absolute;
+      left: 13px;
+      right: 13px;
+      top: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb), .65), transparent);
+      pointer-events: none;
+    }
+    .btn::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background: linear-gradient(115deg, transparent 28%, rgba(221, 255, 232, .09) 50%, transparent 72%);
+      opacity: 0;
+      transition: opacity .2s ease;
+      pointer-events: none;
+    }
+    .btn:hover::after { opacity: 1; }
+    .preview-stage .preview-mode { letter-spacing: .12em; }
+    .content-column {
+      background-image:
+        radial-gradient(circle at 12px 12px, rgba(var(--accent-rgb), .05) 1px, transparent 1.4px),
+        linear-gradient(180deg, rgba(7, 24, 14, .62), rgba(3, 12, 7, .52));
+      background-size: 24px 24px, auto;
+      background-position: 0 0, 0 0;
+    }
+    .stage-halo {
+      position: absolute;
+      z-index: 0;
+      left: 50%;
+      top: 48%;
+      width: 62%;
+      height: 56%;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(var(--accent-rgb), .10), transparent 67%);
+      filter: blur(24px);
+      pointer-events: none;
+    }
+    .stage-corners { position: absolute; inset: 13px; bottom: 36px; z-index: 3; pointer-events: none; }
+    .stage-ruler {
+      position: absolute;
+      z-index: 3;
+      left: 18px;
+      bottom: 35px;
+      display: flex;
+      align-items: flex-end;
+      gap: 6px;
+      pointer-events: none;
+      opacity: .55;
+    }
+    .stage-ruler i { display: block; width: 1px; height: 5px; background: rgba(var(--accent-rgb), .28); }
+    .stage-ruler i.major { height: 9px; background: rgba(var(--accent-rgb), .55); }
+    .stage-meta {
+      position: absolute;
+      left: 0; right: 0; bottom: 0;
+      z-index: 6;
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      min-height: 25px;
+      padding: 0 13px;
+      border-top: 1px solid rgba(var(--accent-rgb), .14);
+      background: linear-gradient(0deg, rgba(1, 7, 3, .94), rgba(2, 12, 6, .62));
+      color: #54705d;
+      font-family: var(--mono);
+      font-size: 6.8px;
+      letter-spacing: .02em;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    .stage-meta span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .stage-meta b { color: #8fac97; font-weight: 500; }
+    .stage-meta-right { margin-left: auto; color: rgba(var(--accent-rgb), .45) !important; }
+    .stage-corners i { position: absolute; width: 17px; height: 17px; border-color: rgba(var(--accent-rgb), .42); border-style: solid; border-width: 0; }
+    .stage-corners i:nth-child(1) { left: 0; top: 0; border-left-width: 1px; border-top-width: 1px; }
+    .stage-corners i:nth-child(2) { right: 0; top: 0; border-right-width: 1px; border-top-width: 1px; }
+    .stage-corners i:nth-child(3) { left: 0; bottom: 0; border-left-width: 1px; border-bottom-width: 1px; }
+    .stage-corners i:nth-child(4) { right: 0; bottom: 0; border-right-width: 1px; border-bottom-width: 1px; }
+    @media (max-width: 900px) {
+      .nav-btn { height: 38px; flex-basis: 38px; }
+      .nav-caption { margin: 6px 0 4px; }
+    }
+    @media (max-width: 620px) {
+      .nav-btn { height: 34px; flex-basis: 34px; }
+      .shell-corner { width: 17px; height: 17px; }
+      .shell-ornament { width: 70px; }
+      .top-mark { display: none; }
+    }
+    .preview-stage .empty-preview, .preview-stage .hud-sample, .preview-stage .graphics-status, .preview-stage .sound-preview { z-index: 4; }
+    .nav-btn.is-active .nav-label { text-shadow: 0 0 12px rgba(var(--accent-rgb), .25); }
+    .sidebar::before {
+      content: "";
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      top: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb), .35), transparent);
+      pointer-events: none;
+    }
+    .shell-footer .sep { width: 1px; height: 9px; background: rgba(var(--accent-rgb), .20); display: inline-block; flex: 0 0 1px; }
+
+    /* Читаемость в типичном игровом окне */
+    .nav-btn { font-size: 13.5px; }
+    .top-tab { font-size: 13px; }
+    .section-title { font-size: 20px; }
+    .section-subtitle { font-size: 11px; }
+    .group-title { font-size: 13px; }
+    .setting-row { min-height: 41px; }
+    .row-label { font-size: 12.5px; }
+    .btn { font-size: 11px; }
+    .select-shell select { font-size: 11px; }
+    .range-val { font-size: 10px; }
+    .preview-title { font-size: 17px; }
+    .preview-subtitle { font-size: 9px; }
+    .tip-title { font-size: 11.5px; }
+    .tip-text { font-size: 9.2px; }
+    .mod-name { font-size: 11px; }
+    .mod-desc { font-size: 8.4px; }
+    .profile-name { font-size: 11px; }
+    .hero-desc { font-size: 11.2px; }
+    .hero-title { font-size: 27px; }
+    .theme-name { font-size: 8px; }
+    .stat-value { font-size: 17px; }
+    .stat-value.dim { font-size: 11px; }
+    .data-note { font-size: 9px; }
+    @media (max-width: 620px) {
+      .effect-name .mod-desc { max-width: 155px; }
+      .range-wrap { width: 112px; }
+      .preview-image { opacity: .82; }
+      .top-tabs { overflow-x: auto; scrollbar-width: none; }
+      .top-tabs::-webkit-scrollbar { display: none; }
+      .standard { display: initial; }
+    }
+    @media (max-height: 680px) {
+      .brand-cat { height: 130px; }
+      .brand-zone { flex-basis: 148px; }
+      .nav-btn { height: 34px; flex-basis: 34px; }
+    }
+    @media (max-width: 1110px) {
+      .row-label { font-size: 11px; }
+      .group-title { font-size: 12.5px; }
+      .section-title { font-size: 18px; }
+      .btn { font-size: 10px; }
+      .preview-title { font-size: 15px; }
+      .mod-name { font-size: 10.5px; }
+    }
+    @media (max-width: 900px) {
+      .row-label { font-size: 11.5px; }
+      .section-title { font-size: 19px; }
+      .hero-title { font-size: 24px; }
+      .theme-name { font-size: 7.5px; }
+      .nav-btn { height: 37px; flex-basis: 37px; }
+      .nav-btn.is-active::before { left: -4px; }
+      .top-eyebrow { letter-spacing: .1em; }
+    }
+    @media (max-width: 620px) {
+      .row-label { font-size: 10.5px; }
+      .group-title { font-size: 12px; }
+      .section-title { font-size: 17px; }
+      .mod-name { font-size: 10px; }
+      .preview-title { font-size: 15px; }
+      .data-note { font-size: 8.5px; }
+    }
+  </style>
+  <style>
+    /* Маскот удалён по требованию: ни в шапке, ни в предпросмотре, ни в подсказке. */
+    .brand-cat, .stage-catbg, .tip-cat { display: none !important; }
+    .brand-zone { flex: 0 0 auto; height: auto; margin: 2px 0 12px; }
+    .brand-card { position: relative; left: auto; right: auto; bottom: auto; margin-top: 0; display: block; width: 100%; }
+    .preview-tip { padding-right: 11px; }
+    @media (max-height: 800px) and (min-width: 901px) {
+      .nav-btn { height: 35px; flex-basis: 35px; }
+      .nav-caption { margin: 6px 0 4px; }
+      .brand-zone { margin-bottom: 8px; }
+      .sidebar-status { padding: 8px 10px; }
+      .sidebar-status .status-meta { font-size: 9px; }
+      .sidebar-mini-version { display: none; }
+      .sidebar-fill { min-height: 0; flex: 1 1 auto; margin-top: 8px; padding: 8px 10px; }
+      .fill-chart, .fill-pixels { display: none; }
+      .fill-links { flex-direction: row; flex-wrap: wrap; margin-top: 4px; }
+      .fill-link { flex: 1 1 auto; height: 24px; padding: 0 6px; font-size: 8.5px; gap: 4px; }
+      .fill-divider { margin: 6px 0; }
+    }
+    @media (max-height: 660px) and (min-width: 901px) { .sidebar-fill { display: none; } }
+    @media (max-width: 900px) { .sidebar-fill { display: none; } }
+  </style>
+</body>
+</html>
