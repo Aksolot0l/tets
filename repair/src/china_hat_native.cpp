@@ -6,13 +6,13 @@
 #include "china_hat_native.h"
 #include "china_hat_validation.h"
 #include "china_hat_lines.h"
+#include "china_hat_hash.h"
 #include <bcrypt.h>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <cmath>
 #include <algorithm>
-#include <vector>
 
 namespace {
 using PlayerRender = std::intptr_t (*)(void*,void*,void*,void*,float);
@@ -62,23 +62,30 @@ bool writable(std::uintptr_t p, std::size_t n) {
  std::uintptr_t end=reinterpret_cast<std::uintptr_t>(m.BaseAddress)+m.RegionSize;
  return p<=end && n<=end-p;
 }
-bool hashFile(const BYTE* bytes,std::size_t size,std::uint8_t result[32]) {
- BCRYPT_ALG_HANDLE alg=nullptr; BCRYPT_HASH_HANDLE hash=nullptr;
- DWORD objectSize=0, resultSize=0, got=0; bool ok=false;
- if (BCryptOpenAlgorithmProvider(&alg,BCRYPT_SHA256_ALGORITHM,nullptr,0)<0) return false;
- if (BCryptGetProperty(alg,BCRYPT_OBJECT_LENGTH,reinterpret_cast<PUCHAR>(&objectSize),sizeof(objectSize),&got,0)>=0 && objectSize>0 && objectSize<65536 &&
-     BCryptGetProperty(alg,BCRYPT_HASH_LENGTH,reinterpret_cast<PUCHAR>(&resultSize),sizeof(resultSize),&got,0)>=0 && resultSize==32) {
-  std::vector<std::uint8_t> object(objectSize);
-  if (BCryptCreateHash(alg,&hash,object.data(),objectSize,nullptr,0,0)>=0) {
-   ok=true;
-   for (std::size_t pos=0;pos<size && ok;) {
-    ULONG chunk=static_cast<ULONG>(std::min<std::size_t>(size-pos,1024*1024));
-    ok=BCryptHashData(hash,const_cast<PUCHAR>(bytes+pos),chunk,0)>=0; pos+=chunk;
-   }
-   if (ok) ok=BCryptFinishHash(hash,result,32,0)>=0;
-  }
+struct BCryptApi {
+ using Algorithm=BCRYPT_ALG_HANDLE;
+ using Hash=BCRYPT_HASH_HANDLE;
+ bool openAlgorithm(Algorithm& out) { return BCryptOpenAlgorithmProvider(&out,BCRYPT_SHA256_ALGORITHM,nullptr,0)>=0; }
+ bool property(Algorithm h,LPCWSTR name,std::uint32_t& value) {
+  DWORD got=0, data=0;
+  bool ok=BCryptGetProperty(h,name,reinterpret_cast<PUCHAR>(&data),sizeof(data),&got,0)>=0 && got==sizeof(data);
+  value=data; return ok;
  }
- if (hash) BCryptDestroyHash(hash); BCryptCloseAlgorithmProvider(alg,0); return ok;
+ bool objectLength(Algorithm h,std::uint32_t& n) { return property(h,BCRYPT_OBJECT_LENGTH,n); }
+ bool hashLength(Algorithm h,std::uint32_t& n) { return property(h,BCRYPT_HASH_LENGTH,n); }
+ bool createHash(Algorithm a,Hash& h,std::uint8_t* object,std::uint32_t n) {
+  return BCryptCreateHash(a,&h,object,n,nullptr,0,0)>=0;
+ }
+ bool hashData(Hash h,const std::uint8_t* bytes,std::uint32_t n) {
+  return BCryptHashData(h,const_cast<PUCHAR>(bytes),n,0)>=0;
+ }
+ bool finishHash(Hash h,std::uint8_t* result,std::uint32_t n) { return BCryptFinishHash(h,result,n,0)>=0; }
+ void destroyHash(Hash h) { BCryptDestroyHash(h); }
+ void closeAlgorithm(Algorithm a) { BCryptCloseAlgorithmProvider(a,0); }
+};
+bool hashFile(const BYTE* bytes,std::size_t size,std::uint8_t result[32]) {
+ BCryptApi api;
+ return hashHatExecutable(api,bytes,size,result);
 }
 // Reads a specific executable RVA only if it is wholly file-backed and in an
 // executable PE section. This also verifies candidate screen/end entry points,
