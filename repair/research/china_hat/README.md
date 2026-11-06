@@ -109,3 +109,17 @@ argument as a float so the observer cannot clobber it; this still needs testing
 in the game. The follow-up offline diagnostic collects only fixed executable
 code windows around those callees and the matrix stack, with exact build hash
 checking. It does not capture dynamic memory or guarantee a viable render path.
+
+The second exact-build code diagnostic shows that `0x580ee0` can resolve/cache
+an object (including calls into the texture-related group), not a proven plain
+model accessor. The routine at `0x5695d0` mutates several renderer-associated
+objects, invokes virtual methods, passes a computed position to `0x579ee0`, and
+clears or resets fields afterwards. Consequently, re-invoking the original
+player renderer is not a read-only operation and cannot safely be assumed to be
+reentrant. The matrix stack function at `0x730000` creates a new stack entry,
+but these snippets do not establish projection/view matrix semantics or how to
+restore all game-owned state. A further bounded offline diagnostic examines the
+shared draw callee, matrix operations, rotation helper and tessellator code.
+An independently positioned, front-facing rendering of the actual game model
+remains unimplemented; do not treat any of these pointers or offsets as a safe
+API or perform extra renderer calls based on the disassembly alone.

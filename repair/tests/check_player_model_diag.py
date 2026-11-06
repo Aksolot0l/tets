@@ -23,3 +23,13 @@ assert re.findall(r"Name = '([^']+)'; Rva = (0x[0-9a-f]+); Length = (0x[0-9a-f]+
 assert '($_.Flags -band 0x20000000)' in script2 and '$matches.Count -ne 1' in script2
 assert "'PLAYER_MODEL_DIAG_2.txt'" in script2
 print('Follow-up diagnostic: static checks OK; PowerShell/Windows execution still required')
+
+script3=(Path(__file__).resolve().parents[1]/'DIAG_PLAYER_MODEL_CODE_3.ps1').read_text()
+assert '2883b72a3579d95bfec73330c5e06f2463253b7ca530dd59f50885a71a724732' in script3
+assert script3.index('if ($hash -ne $expected)') < script3.index('$report = New-Object')
+assert '[IO.File]::ReadAllBytes($game.Path)' in script3 and 'ReadProcessMemory' not in script3 and 'OpenProcess' not in script3
+assert 'Invoke-WebRequest' not in script3 and 'Invoke-RestMethod' not in script3
+assert re.findall(r"Name = '([^']+)'; Rva = (0x[0-9a-f]+); Length = (0x[0-9a-f]+)",script3)==[('shared-actor-draw','0x579000','0x8000'),('matrix-operations','0x15d000','0x5000'),('rotation-helper','0x17e000','0x4000'),('tessellator','0x5d0000','0x2000')]
+assert '($_.Flags -band 0x20000000)' in script3 and '$matches.Count -ne 1' in script3
+assert "'PLAYER_MODEL_DIAG_3.txt'" in script3
+print('Third diagnostic: static checks OK; PowerShell/Windows execution still required')
