@@ -44,6 +44,9 @@ int main() {
  using namespace visual_gpu_depth;
  Context ctx; int calls=0; inVisualDraw=false; playerObserver.store(&observePlayer);
  draw(&ctx,[&]{++calls;}); assert(calls==1 && ctx.sets==0 && observed==0);
+ katanaObserve=&ctx; katanaDraws=0; draw(&ctx,[&]{++calls;}); assert(calls==2 && katanaDraws==1);
+ katanaObserve=nullptr; katanaSuppress=&ctx; draw(&ctx,[&]{++calls;}); assert(calls==2 && katanaDraws==1);
+ Context otherContext; draw(&otherContext,[&]{++calls;}); assert(calls==3); katanaSuppress=nullptr; calls=1;
  inPlayerCapture=true; draw(&ctx,[&]{++calls;}); assert(calls==2 && ctx.sets==0 && observed==1);
  // World is drawn first; only allowed draw types are replayed and state is
  // restored even if a simulated replay throws.

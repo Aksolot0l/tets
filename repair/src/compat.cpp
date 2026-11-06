@@ -573,6 +573,12 @@ static void drawVisualPanel() {
             sectionTitle("JUMP RINGS");
             bool jump=JumpEnabled(); if (guiCheckbox("Jump rings (test)",&jump)) SetJumpEnabled(jump);
             if (canVisualPreview() && guiButton("Settings##open_jump",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Jump;
+            sectionTitle("KATANA");
+            bool katana=KatanaEnabled(); if (guiCheckbox("Diamond sword: katana (test)",&katana)) SetKatanaEnabled(katana);
+            if (KatanaEnabled()) {
+                int ks=KatanaStatus();
+                realText(ks==1?"Katana: GPU draw submitted":ks==2?"Katana: draw unavailable, original kept":"Katana: waiting for held diamond sword",nullptr);
+            } else if (KatanaStatus()==3) realText("Katana: unsupported or hooks unavailable",nullptr);
             sectionTitle("3D ACCESSORY");
             bool accessory=AccessoryEnabled(); if (guiCheckbox("3D crown (test)",&accessory)) SetAccessoryEnabled(accessory);
             if (canVisualPreview() && guiButton("Settings##open_accessory",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Accessory;

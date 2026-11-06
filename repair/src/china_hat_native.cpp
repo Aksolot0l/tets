@@ -10,6 +10,9 @@
 #include "visual_trail.h"
 #include "visual_jump.h"
 #include "visual_accessory.h"
+#include "katana_asset.h"
+#include "katana_geometry.h"
+#include "diamond_sword_candidate.h"
 #include "china_hat_player.h"
 #include "visual_hooks.h"
 #include "visual_color.h"
@@ -48,6 +51,15 @@ std::atomic<bool> available{false}, enabled{false};
 // Modules remain off until the user explicitly enables them. Defaults configure
 // the requested filled/rainbow appearance, with a wireframe fallback in Visuals.
 std::atomic<bool> accessoryEnabled{false};
+// Experimental, first-person only, disabled on every startup.
+std::atomic<bool> katanaEnabled{false};
+std::atomic<int> katanaStatus{0};
+std::atomic<ULONGLONG> lastKatanaSubmit{0};
+std::atomic<int> katanaHookState{0};
+using HeldRender=std::uintptr_t (*)(void*,void*,void*,std::uintptr_t,float,std::uint8_t,std::uint8_t);
+using HeldDraw=std::uintptr_t (*)(void*,void*,std::uint8_t);
+HeldRender originalHeldRender=nullptr; HeldDraw originalHeldDraw=nullptr;
+thread_local bool katanaScope=false;
 std::atomic<int> accessoryStatus{0};
 std::atomic<ULONGLONG> lastAccessorySubmit{0};
 std::atomic<bool> jumpEnabled{false}, jumpRainbow{false};
@@ -522,6 +534,81 @@ void renderAccessory(const PlayerFrame& player) {
  std::memcpy(reinterpret_cast<void*>(color),saved,sizeof(saved)); *reinterpret_cast<std::uint8_t*>(flag)=oldFlag;
  lastAccessorySubmit.store(now,std::memory_order_relaxed); accessoryStatus.store(1,std::memory_order_relaxed);
 }
+
+// Return addresses, ABI and material are inferred from this exact executable,
+// not a stable game API. Hooks only alter the one observed local first-person
+// sword call. Any mismatch or unavailable graphics state calls the original.
+bool katanaCodeMatches() {
+ struct Sig { std::uintptr_t rva; std::uint8_t bytes[16]; };
+ constexpr Sig sigs[]={
+  {0x59f300,{0x48,0x8b,0xc4,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57,0x48,0x8d}},
+  {0x59f200,{0x48,0x83,0xec,0x38,0x80,0xba,0xe8,0,0,0,0,0x4c,0x8b,0xd2,0x74,0x2f}},
+  {0x5a1d28,{0xe8,0xd3,0xd5,0xff,0xff,0xe9,0x65,0x04,0,0,0x45,0x38,0xbe,0x54,0x12,0}},
+  {0x59fd19,{0xe8,0xe2,0xf4,0xff,0xff,0x90,0x48,0x85,0xff,0x74,0x09,0xc6,0x47,0x18,0x01,0x48}}
+ };
+ for(const auto& sig:sigs) { std::uint8_t bytes[16]{}; if(!read(base+sig.rva,bytes,sizeof(bytes)) || std::memcmp(bytes,sig.bytes,sizeof(bytes))) return false; }
+ return true;
+}
+const katana_mesh::View& katanaMesh() {
+ static const auto mesh=[] { katana_mesh::View m; m.load(katana_asset::data,sizeof(katana_asset::data)); return m; }();
+ return mesh;
+}
+bool submitKatana(ID3D11DeviceContext* ctx) {
+ const auto& mesh=katanaMesh();
+ auto pose=katana_geometry::katanaLocalPose();
+ if (!ctx || !mesh.vertices() || visual_gpu_depth::inVisualDraw || visual_gpu_depth::katanaObserve ||
+     visual_gpu_depth::katanaSuppress || !tessIdle(base+tessRva) ||
+     !katana_geometry::triangles(mesh,pose,true,[](katana_geometry::ColoredVertex){})) return false;
+ float saved[4]{}; std::uint8_t oldFlag=0;
+ const auto color=base+shaderColorRva, flag=base+shaderFlagRva;
+ if (!read(color,saved,sizeof(saved)) || !fetch(flag,oldFlag) || !writable(color,sizeof(saved)) || !writable(flag,1)) return false;
+ const float white[4]={1,1,1,1}; std::memcpy(reinterpret_cast<void*>(color),white,sizeof(white)); *reinterpret_cast<std::uint8_t*>(flag)=1;
+ auto* t=reinterpret_cast<void*>(base+tessRva);
+ tessBegin(t,2,static_cast<int>(mesh.indices()*2));
+ auto channel=[](float x) { return static_cast<std::uint8_t>(std::clamp(x,0.f,1.f)*255.f+.5f); };
+ katana_geometry::triangles(mesh,pose,true,[&](const katana_geometry::ColoredVertex& v) {
+  tessColor(t,channel(v.rgba[0]),channel(v.rgba[1]),channel(v.rgba[2]),channel(v.rgba[3]));
+  tessVertex(t,v.position.x,v.position.y,v.position.z);
+ });
+ visual_gpu_depth::katanaDraws=0; visual_gpu_depth::katanaObserve=ctx;
+ tessDraw(t,reinterpret_cast<void*>(base+contextRva),0);
+ visual_gpu_depth::katanaObserve=nullptr;
+ const bool submitted=visual_gpu_depth::katanaDraws>0;
+ alignas(16) std::uint8_t scratch[0x200]{}; tessEnd(t,scratch,0,0);
+ std::memcpy(reinterpret_cast<void*>(color),saved,sizeof(saved)); *reinterpret_cast<std::uint8_t*>(flag)=oldFlag;
+ return submitted;
+}
+std::uintptr_t heldDrawHook(void* renderer,void* context,std::uint8_t mode) {
+ auto returnAddress=reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));
+ if (!katanaScope || returnAddress!=base+0x59fd1e || !katanaEnabled.load(std::memory_order_acquire))
+  return originalHeldDraw(renderer,context,mode);
+ auto* ctx=sameThreadContext();
+ if (!ctx || !visual_gpu_depth::matches(ctx)) { if(ctx)ctx->Release(); katanaStatus.store(2,std::memory_order_relaxed); return originalHeldDraw(renderer,context,mode); }
+ const bool submitted=submitKatana(ctx);
+ if (!submitted || !katanaEnabled.load(std::memory_order_acquire)) {
+  ctx->Release(); katanaStatus.store(2,std::memory_order_relaxed); return originalHeldDraw(renderer,context,mode);
+ }
+ // Let the original method run for its setup and cleanup, suppressing only its
+ // GPU submissions for this item on this thread/context. A GPU submission is
+ // not proof of visible pixels, so this remains an opt-in experiment.
+ visual_gpu_depth::katanaSuppress=ctx;
+ const auto result=originalHeldDraw(renderer,context,mode);
+ visual_gpu_depth::katanaSuppress=nullptr;
+ ctx->Release(); lastKatanaSubmit.store(GetTickCount64(),std::memory_order_relaxed); katanaStatus.store(1,std::memory_order_relaxed);
+ return result;
+}
+std::uintptr_t heldRenderHook(void* self,void* actor,void* stack,std::uintptr_t a4,float a5,std::uint8_t a6,std::uint8_t a7) {
+ const auto returnAddress=reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));
+ std::uintptr_t local=0;
+ auto memory=[](std::uintptr_t address,void* out,std::size_t n) { return read(address,out,n); };
+ const bool eligible=!katanaScope && katanaEnabled.load(std::memory_order_acquire) && returnAddress==base+0x5a1d2d &&
+   localPlayer(local) && local==reinterpret_cast<std::uintptr_t>(actor) &&
+   diamond_sword_candidate::matches(base,reinterpret_cast<std::uintptr_t>(stack),memory);
+ if (!eligible) return originalHeldRender(self,actor,stack,a4,a5,a6,a7);
+ struct Scope { Scope(){katanaScope=true;} ~Scope(){katanaScope=false;} } scope;
+ return originalHeldRender(self,actor,stack,a4,a5,a6,a7);
+}
+
 void renderTrail(const PlayerFrame& player) {
  unsigned gen=trailGeneration.load(std::memory_order_acquire);
  if (gen!=seenTrailGeneration) { trail.clear(); seenTrailGeneration=gen; }
@@ -745,6 +832,30 @@ bool enableVisual() {
  }
 }
 }
+bool KatanaEnabled() { return katanaEnabled.load(std::memory_order_acquire); }
+int KatanaStatus() {
+ const int status=katanaStatus.load(std::memory_order_relaxed);
+ const auto now=GetTickCount64(), then=lastKatanaSubmit.load(std::memory_order_relaxed);
+ return status==1 && (!then || now<then || now-then>1000) ? 0 : status;
+}
+void SetKatanaEnabled(bool value) {
+ if (!value) { katanaEnabled.store(false,std::memory_order_release); katanaStatus.store(0,std::memory_order_relaxed); return; }
+ katanaStatus.store(0,std::memory_order_relaxed);
+ if (!enableVisual() || !gpuHooksReady.load(std::memory_order_acquire)) { katanaStatus.store(3,std::memory_order_relaxed); return; }
+ int state=katanaHookState.load(std::memory_order_acquire);
+ if (state==0 && katanaHookState.compare_exchange_strong(state,1,std::memory_order_acq_rel)) {
+  bool ok=validateGame() && katanaCodeMatches() && katanaMesh().vertices()==4572 && katanaMesh().indices()==7866;
+  if(ok) {
+   visual_hooks::Hook hooks[]={{reinterpret_cast<void*>(base+0x59f300),reinterpret_cast<void*>(&heldRenderHook),reinterpret_cast<void**>(&originalHeldRender)},
+                               {reinterpret_cast<void*>(base+0x59f200),reinterpret_cast<void*>(&heldDrawHook),reinterpret_cast<void**>(&originalHeldDraw)}};
+   ok=visual_hooks::install(hooks,2,createHook,enableHook,disableHook,removeHook);
+  }
+  katanaHookState.store(ok?2:3,std::memory_order_release); state=ok?2:3;
+ }
+ if(state!=2) { katanaStatus.store(3,std::memory_order_relaxed); return; }
+ katanaEnabled.store(true,std::memory_order_release);
+}
+
 void SetPlayerSkinPreviewActive(bool value) {
  if (!value) { visual_player_skin::setRequested(false); return; }
  if (visual_player_skin::isRequested()) return;

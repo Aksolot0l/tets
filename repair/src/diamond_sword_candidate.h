@@ -2,9 +2,9 @@
 #include <cstdint>
 #include <limits>
 
-// Research-only identity candidate for the user's 1.1.5 executable. Not a
-// hook, not a memory reader, not enabled in the DLL. The caller supplies a
-// checked read function and must independently validate EXE identity/context.
+// Candidate identity check for the user's exact 1.1.5 executable. The caller
+// supplies a checked read function and must validate EXE identity/context.
+// The opt-in renderer is experimental and runtime identity is unverified.
 namespace diamond_sword_candidate {
 constexpr std::uintptr_t itemTableRva=0x190afa0;
 constexpr std::int16_t legacyId=276;

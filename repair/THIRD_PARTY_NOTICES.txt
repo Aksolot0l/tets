@@ -516,3 +516,12 @@ INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
 DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
+
+Cyberpunk katana model
+----------------------
+"Cyberpunk katana" by dentrapank, https://sketchfab.com/3d-models/c7149629b9424f7baee0918751bcdf30
+Licensed under Creative Commons Attribution 4.0 International:
+https://creativecommons.org/licenses/by/4.0/
+The embedded version was converted to simplified static geometry with base
+colors; the original GLB is provided in repair/assets/models/ and further
+conversion details are in repair/assets/models/README.md.

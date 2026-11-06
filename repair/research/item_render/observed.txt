@@ -70,3 +70,14 @@ A mock-tested, unused candidate check in src/diamond_sword_candidate.h requires
 a stack's active byte, candidate item pointer, 276 field and matching registry
 slot simultaneously. 1.1.0.1 documentation is not runtime proof for this exact
 1.1.5 build, nor does the check establish which player or render pass is active.
+
+Subsequent opt-in experiment: the built DLL now tries the one direct
+0x5a1d28 -> 0x59f300 -> 0x59fd19 -> 0x59f200 first-person chain. It uses
+candidate identity, same local player, expected return addresses, validated
+EXE/prologues, idle tessellator and same GPU context. After a custom GPU draw
+is observed it runs the original CPU method while suppressing that method's
+GPU draws, and falls back to the original if preparation fails. This is NOT a
+proof of visibility, ABI, safe render state, shader/material or hand placement;
+Windows game testing remains mandatory. The alternative branch and third person
+are unimplemented. Switch is off by default and this note supersedes earlier
+historical statements that these components are not connected to the DLL.

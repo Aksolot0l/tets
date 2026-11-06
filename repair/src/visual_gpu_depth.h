@@ -28,6 +28,11 @@ inline std::atomic<unsigned> submitted{0}, rejected{0};
 inline void* installedTargets[7]{};
 inline constexpr std::size_t drawSlots[]={12,13,20,21,38,39,40};
 inline thread_local bool inVisualDraw=false;
+// An opt-in first-person sword experiment can observe its own submission and
+// suppress only the subsequent original item's GPU draws on the same context.
+inline thread_local ID3D11DeviceContext* katanaObserve=nullptr;
+inline thread_local ID3D11DeviceContext* katanaSuppress=nullptr;
+inline thread_local unsigned katanaDraws=0;
 // Optional read-only observer scoped to the local-player renderer.
 using PlayerObserver=void (*)(ID3D11DeviceContext*);
 inline std::atomic<PlayerObserver> playerObserver{nullptr};
@@ -96,6 +101,8 @@ struct Guard {
 };
 template<class Call> void draw(ID3D11DeviceContext* ctx,Call call,bool replayable=false) {
  if (!inVisualDraw) {
+  if (ctx && ctx==katanaSuppress) return;
+  if (ctx && ctx==katanaObserve) ++katanaDraws;
   if (inPlayerCapture) { auto observer=playerObserver.load(std::memory_order_acquire); if (observer) observer(ctx); }
   call(); // The normal world draw is always submitted exactly once first.
   if (inPlayerCapture && replayable) {

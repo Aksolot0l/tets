@@ -37,9 +37,10 @@
     {
       "source": "repair/GAYClientInternal.dll",
       "destination": "GAYClientInternal.dll",
-      "size": 434688,
-      "sha256": "f07e264ccc06cb9f99207b379a508a3120b5e51cb4c09bffece29920ac82f134",
+      "size": 587776,
+      "sha256": "b1053d8c273971365932f7c18e51fdfcbb8f713929f44b43061be92813597cde",
       "previousSha256": [
+        "f07e264ccc06cb9f99207b379a508a3120b5e51cb4c09bffece29920ac82f134",
         "32aee8bee8945616a95855756e36337c41f69160c0d9c947d26f13f20539a8dd",
         "7ef07fb836ac9593d56c6d0eecb32badf558e36436ba56710e3e46175dfae29b",
         "ba939b876c3e4feaf9cb7639853c482a6ab9653b7735bfddbd9ea1da4541c96a",
@@ -99,9 +100,11 @@
     {
       "source": "repair/THIRD_PARTY_NOTICES.txt",
       "destination": "THIRD_PARTY_NOTICES.txt",
-      "size": 26034,
-      "sha256": "8223c363f04c68360b61893dbf6f1aa0ae14edbd5fc33555e19bfc6af1e02a20",
-      "previousSha256": []
+      "size": 26495,
+      "sha256": "6b3a4303fd20af13defed108a38a266a43ccacd4ecfa3849a5f3747dc2f89064",
+      "previousSha256": [
+        "8223c363f04c68360b61893dbf6f1aa0ae14edbd5fc33555e19bfc6af1e02a20"
+      ]
     }
   ]
 }

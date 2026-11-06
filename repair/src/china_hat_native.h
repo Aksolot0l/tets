@@ -38,6 +38,10 @@ bool TrailFillEnabled();
 void SetTrailFillEnabled(bool enabled);
 bool VisualTintEnabled();
 void SetVisualTintEnabled(bool enabled);
+// First-person model replacement experiment. Off by default; runtime unverified.
+bool KatanaEnabled();
+void SetKatanaEnabled(bool enabled);
+int KatanaStatus();
 // Separate built-in, opt-in test accessory, not an external model loader.
 bool AccessoryEnabled();
 void SetAccessoryEnabled(bool enabled);
