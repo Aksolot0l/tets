@@ -26,6 +26,14 @@ assert 'LoadCyrillicFont(io, 17.0f)' in m
 assert 'ImGui_ImplDX11_Init(device, context)' in m
 assert 'g_context = nullptr' in m and 'g_initFailed = true' in m
 assert 'ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData())' in m
+# The backend's NewFrame hook must run before ImGui::NewFrame: it creates the
+# shaders, states and font texture, and RenderDrawData maps them without null
+# checks (a missing call crashed the game at startup).
+assert m.index('ImGui_ImplDX11_NewFrame();') < m.index('ImGui::NewFrame();')
+# Draw only once the backend really owns its device objects, and replace the
+# legacy interface only after the first successful frame.
+assert 'ImGui::GetIO().Fonts->TexID != 0' in m
+assert 'bool ReplacesLegacyMenu() { return g_renderOk.load' in m
 
 # The legacy client's ImGui context is never touched: the embed only uses its
 # own context and its own compiled backend.

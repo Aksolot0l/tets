@@ -46,6 +46,9 @@ MenuActions g_actions;
 ImGuiContext* g_context = nullptr;
 bool g_backendReady = false;
 bool g_initFailed = false;
+// Set once the backend has actually built its device objects (font texture
+// uploaded); only then does the embed replace the legacy interface.
+std::atomic<bool> g_renderOk{false};
 
 std::atomic<bool> g_gameMenuOpen{false};
 std::atomic<bool> g_hiddenByClose{false};
@@ -401,7 +404,7 @@ void SetGameMenuOpen(bool open) {
     g_gameMenuOpen.store(open, std::memory_order_relaxed);
 }
 
-bool ReplacesLegacyMenu() { return g_backendReady; }
+bool ReplacesLegacyMenu() { return g_renderOk.load(std::memory_order_relaxed); }
 bool ConsumeHudEditorRequest() { return g_hudEditorRequest.exchange(false, std::memory_order_relaxed); }
 
 void RenderOverlay(ID3D11Device* device, ID3D11DeviceContext* context,
@@ -427,6 +430,10 @@ void RenderOverlay(ID3D11Device* device, ID3D11DeviceContext* context,
     }
     ImGui::SetCurrentContext(g_context);
     feedInput(width, height);
+    // The DX11 backend creates its shaders, states and font texture from its
+    // own NewFrame hook; skipping it left every backend object null and the
+    // first RenderDrawData dereferenced a null constant buffer (startup crash).
+    ImGui_ImplDX11_NewFrame();
     ImGui::NewFrame();
     const bool open = g_gameMenuOpen.load(std::memory_order_relaxed) &&
                       !g_hiddenByClose.load(std::memory_order_relaxed);
@@ -437,7 +444,14 @@ void RenderOverlay(ID3D11Device* device, ID3D11DeviceContext* context,
         drawTestToolsWindow();
     }
     ImGui::Render();
-    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    // RenderDrawData maps backend buffers unconditionally: only draw once the
+    // backend actually owns its device objects (atlas texture uploaded). If
+    // shader compilation ever fails the overlay stays hidden, keeps retrying
+    // each frame and the legacy interface remains in charge.
+    if (ImGui::GetIO().Fonts->TexID != 0) {
+        g_renderOk.store(true, std::memory_order_relaxed);
+        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    }
 }
 
 } // namespace menu_embed
