@@ -5,6 +5,17 @@
 #include <limits>
 
 struct Position115 { float x, y, z; };
+struct BlockPosition115 { int x, y, z; };
+
+// The reader validates ranges and finiteness before this is called. Block
+// coordinates floor toward negative infinity, not toward zero. The one-block
+// vertical correction is a display calibration based on player feedback; it
+// does not change the raw values used for the independent Y consistency test.
+inline BlockPosition115 displayPosition115(const Position115& position) {
+    return {static_cast<int>(std::floor(position.x)),
+            static_cast<int>(std::floor(position.y)) - 1,
+            static_cast<int>(std::floor(position.z))};
+}
 
 // Experimental, read-only 1.1.5 paths. A separate height path is required
 // for either candidate. No failed read may replace out or reuse old values.

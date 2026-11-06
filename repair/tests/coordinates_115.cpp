@@ -20,6 +20,13 @@ struct Memory {
     }
 };
 int main() {
+    // Positive and negative block boundaries must floor, not truncate or round.
+    auto blocks = displayPosition115(Position115{12.99f, 65.99f, -0.01f});
+    assert(blocks.x == 12 && blocks.y == 64 && blocks.z == -1);
+    blocks = displayPosition115(Position115{-12.0f, -2.01f, -12.99f});
+    assert(blocks.x == -12 && blocks.y == -4 && blocks.z == -13);
+    blocks = displayPosition115(Position115{30000000.0f, 0.0f, -30000000.0f});
+    assert(blocks.x == 30000000 && blocks.y == -1 && blocks.z == -30000000);
     constexpr std::uint64_t base = 0x140000000ULL, start = 0x300000, first = 0x301000;
     constexpr std::uint64_t aRoot = 0x200000;
     Position115 expected{-123.25f, 64.0f, 101.5f}, unchanged{1,2,3};
