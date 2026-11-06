@@ -17,21 +17,25 @@ public:
  void update(std::uintptr_t actor,china_hat::Point p,std::uint64_t now,std::uint64_t ttl) {
   if (!actor || !std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) { clear(); return; }
   if (actor_!=actor || (seen_ && (now<last_ || now-last_>500))) {
-   clear(); actor_=actor; prev_=p; anchor_=p; stableSince_=last_=now; seen_=true; return;
+   clear(); actor_=actor; prev_=anchor_=p; peak_=p.y; last_=now; seen_=true; return;
   }
   float dx=p.x-prev_.x, dy=p.y-prev_.y, dz=p.z-prev_.z;
-  if (dx*dx+dy*dy+dz*dz>16.f) { clear(); actor_=actor; prev_=anchor_=p; stableSince_=last_=now; seen_=true; return; }
+  if (dx*dx+dy*dy+dz*dz>16.f) { clear(); actor_=actor; prev_=anchor_=p; peak_=p.y; last_=now; seen_=true; return; }
   expire(now,ttl);
-  // Arm only after roughly level movement. Detect cumulative upward movement,
-  // because interpolation can make the per-frame delta arbitrarily small.
-  if (std::fabs(p.y-anchor_.y)<.025f) {
-   if (!armed_ && now-stableSince_>=100) armed_=true;
-   if (armed_) { anchor_.x=p.x; anchor_.z=p.z; }
-  } else if (armed_ && p.y-anchor_.y>.08f) {
+  // Start armed immediately; a 100ms stable-Y requirement misses held-space
+  // auto-jumps and moving players. Accumulate ascent from the latest valley
+  // and rearm after descent, with hysteresis against tiny interpolation jitter.
+  if (ascending_) {
+   peak_=std::max(peak_,p.y);
+   if (peak_-p.y>.08f) { ascending_=false; anchor_=p; }
+  } else if (p.y-anchor_.y>.08f) {
    if (count_==capacity) { for (std::size_t i=1;i<count_;++i) rings_[i-1]=rings_[i]; --count_; }
-   rings_[count_++]={anchor_,now}; armed_=false; anchor_=p; stableSince_=now;
-  } else if (!armed_ || p.y<anchor_.y-.025f) {
-   armed_=false; anchor_=p; stableSince_=now;
+   rings_[count_++]={anchor_,now}; ascending_=true; peak_=p.y;
+  } else if (p.y<=anchor_.y) {
+   anchor_=p;
+  } else if (p.y-anchor_.y<.015f) {
+   // Follow level horizontal movement without lifting the ring off the floor.
+   anchor_.x=p.x; anchor_.z=p.z;
   }
   prev_=p; last_=now;
  }
@@ -43,8 +47,8 @@ public:
  const Ring& operator[](std::size_t i) const { return rings_[i]; }
 private:
  std::array<Ring,capacity> rings_{}; std::size_t count_=0; std::uintptr_t actor_=0;
- china_hat::Point prev_{},anchor_{}; std::uint64_t stableSince_=0,last_=0;
- bool seen_=false,armed_=false;
+ china_hat::Point prev_{},anchor_{}; std::uint64_t last_=0;
+ float peak_=0; bool seen_=false,ascending_=false;
 };
 inline float progress(std::uint64_t now,std::uint64_t start,std::uint64_t ttl) {
  if (!ttl || now<start) return 1.f;
