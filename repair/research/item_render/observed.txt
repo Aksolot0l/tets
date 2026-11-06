@@ -162,3 +162,15 @@ not what exact combination would render the GLB correctly. In light of the
 confirmed invisible first-person result, the production toggle now refuses to
 start this unverified replacement before installing its hooks; its UI reports
 that it is paused. This is a safety guard, not a solution or Windows validation.
+
+User confirms that both first-person hand and sword return after the option is
+turned off. Further offline disassembly identifies the exact 0x59f200 branch
+selection recorded by cached_material.h and exercised for every combination in
+katana_cached_material_research.cpp. For third person, 0x56cbc3 calls the key
+helper 0x5a23f0 with the local stack copy in r8, and cached item draw is called
+at 0x56cd89. That suggests a possible identity scope but does not establish its
+runtime ABI or handle nesting. The candidate approach would need to preserve
+native resource/texture bindings and mesh lifetime, determine matching vertex
+attributes and transforms, identify only the local player's diamond sword in
+both paths, and restore the original on failure. No such complete renderer has
+been verified or enabled. This offline plan is not hooked into the application.
