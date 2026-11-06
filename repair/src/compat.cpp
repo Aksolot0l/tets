@@ -152,7 +152,7 @@ static PopTextWrapFn guiPopTextWrap = nullptr;
 static std::atomic<bool> hudThemeReady{false};
 static thread_local bool insideLegacyHud = false;
 static thread_local float legacyOpacity = 1.f;
-enum class VisualEditor { None, Hat, Trail, Jump, Options };
+enum class VisualEditor { None, Hat, Trail, Jump, Accessory, Options };
 static std::atomic<VisualEditor> visualEditor{VisualEditor::None};
 static std::atomic<bool> hudHooksReady{false}, notificationHookReady{false};
 static bool hudEditorOpen = false, moduleHudEnabled = false;
@@ -388,6 +388,20 @@ static void drawJumpSettings() {
         realText("Movement estimate; not a ground flag.",nullptr);
     }
 }
+static void drawAccessorySettings() {
+    bool enabled=AccessoryEnabled();
+    if (guiCheckbox("3D crown (test)",&enabled)) SetAccessoryEnabled(enabled);
+    visualColor("Crown color",VisualParam::AccessoryRed,VisualParam::AccessoryGreen,VisualParam::AccessoryBlue);
+    visualSlider("Crown scale",VisualParam::AccessoryScale,"%.2f");
+    visualSlider("Crown height offset",VisualParam::AccessoryOffset,"%.2f");
+    visualSlider("Crown opacity",VisualParam::AccessoryOpacity,"%.2f");
+    realText("Built-in test mesh; no model import yet.",nullptr);
+    realText("Use F5 for third person.",nullptr);
+    if (AccessoryEnabled()) {
+        const int status=AccessoryStatus();
+        realText(status==1 ? "Crown: submitted" : status==2 ? "Crown: renderer not ready" : "Crown: waiting for player",nullptr);
+    }
+}
 static const char* depthCompareLabel(int value) {
     switch (value) { case 1:return "never"; case 2:return "less"; case 3:return "equal";
     case 4:return "less equal"; case 5:return "greater"; case 6:return "not equal";
@@ -559,10 +573,13 @@ static void drawVisualPanel() {
             sectionTitle("JUMP RINGS");
             bool jump=JumpEnabled(); if (guiCheckbox("Jump rings (test)",&jump)) SetJumpEnabled(jump);
             if (canVisualPreview() && guiButton("Settings##open_jump",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Jump;
+            sectionTitle("3D ACCESSORY");
+            bool accessory=AccessoryEnabled(); if (guiCheckbox("3D crown (test)",&accessory)) SetAccessoryEnabled(accessory);
+            if (canVisualPreview() && guiButton("Settings##open_accessory",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Accessory;
             if (canVisualPreview() && guiButton("Options",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Options;
             if (!canVisualPreview()) {
                 realText("Preview unavailable; inline settings:",nullptr);
-                drawHatSettings(); drawTrailSettings(); drawJumpSettings(); drawVisualOptions();
+                drawHatSettings(); drawTrailSettings(); drawJumpSettings(); drawAccessorySettings(); drawVisualOptions();
             }
             visualHint("Прозрачность и depth-test не изменяются этим оформлением.");
         }
@@ -738,16 +755,17 @@ static void drawVisualEditor() {
     guiSetNextPos(ImVec2(350.f,90.f),ImGuiCond_Always,ImVec2(0,0));
     if (guiSetNextSize) guiSetNextSize(ImVec2(310.f,430.f),ImGuiCond_FirstUseEver);
     VisualStyleScope style;
-    const char* title=current==VisualEditor::Hat?"China Hat settings":current==VisualEditor::Trail?"Trail settings":current==VisualEditor::Jump?"Jump ring settings":"Visual options";
+    const char* title=current==VisualEditor::Hat?"China Hat settings":current==VisualEditor::Trail?"Trail settings":current==VisualEditor::Jump?"Jump ring settings":current==VisualEditor::Accessory?"3D crown settings":"Visual options";
     if (guiBegin(title,nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
         if (guiButton && guiButton("Back to menu",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::None;
         if (current==VisualEditor::Hat) drawHatSettings();
         else if (current==VisualEditor::Trail) drawTrailSettings();
         else if (current==VisualEditor::Jump) drawJumpSettings();
+        else if (current==VisualEditor::Accessory) drawAccessorySettings();
         else drawVisualOptions();
     }
     guiEnd();
-    if (visualEditor==current && current!=VisualEditor::Options && current!=VisualEditor::Jump) drawEffectPreview(current);
+    if (visualEditor==current && current!=VisualEditor::Options && current!=VisualEditor::Jump && current!=VisualEditor::Accessory) drawEffectPreview(current);
 }
 
 // Restyle only actual legacy HUD/notification windows, preserving their real
@@ -791,7 +809,7 @@ static void drawModuleHud(void* runtime, bool preview) {
                 guiSameLine(0.f,6.f);
             }
             realText(label,nullptr);
-        },JumpEnabled());
+        },JumpEnabled(),AccessoryEnabled());
     }
     guiEnd(); if (vars) guiPopVar(2); guiPopColor(3);
 }
@@ -1002,6 +1020,7 @@ static void patchedDrawGui(void* runtime) {
         SetChinaHatEnabled(false);
         SetTrailEnabled(false);
         SetJumpEnabled(false);
+        SetAccessoryEnabled(false);
         SetPlayerSkinPreviewActive(false);
         SetPlayerModelPreviewActive(false);
         SetPlayerPreviewHatActive(false);
@@ -1014,8 +1033,8 @@ static void patchedDrawGui(void* runtime) {
     SetMenuMouseOpen(menuOpen);
     if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }
     const bool editingVisual=menuOpen && visualEditor!=VisualEditor::None && canVisualPreview();
-    SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump);
-    SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && previewGameModelTest);
+    SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory);
+    SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory && previewGameModelTest);
     SetPlayerPreviewHatActive(editingVisual && visualEditor==VisualEditor::Hat && previewGameModelTest);
     if (!menuOpen || (!hudEditorOpen && !editingVisual)) {
         if (menuOpen) { VisualStyleScope style; realDrawGui(runtime); }

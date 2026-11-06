@@ -9,6 +9,7 @@
 #include "china_hat_hash.h"
 #include "visual_trail.h"
 #include "visual_jump.h"
+#include "visual_accessory.h"
 #include "china_hat_player.h"
 #include "visual_hooks.h"
 #include "visual_color.h"
@@ -46,6 +47,9 @@ constexpr std::uint32_t originRva=0x19436e8, tessRva=0x1925550, contextRva=0x191
 std::atomic<bool> available{false}, enabled{false};
 // Modules remain off until the user explicitly enables them. Defaults configure
 // the requested filled/rainbow appearance, with a wireframe fallback in Visuals.
+std::atomic<bool> accessoryEnabled{false};
+std::atomic<int> accessoryStatus{0};
+std::atomic<ULONGLONG> lastAccessorySubmit{0};
 std::atomic<bool> jumpEnabled{false}, jumpRainbow{false};
 std::atomic<bool> trailEnabled{false}, materialTint{true}, hatFill{true}, trailFill{true};
 std::atomic<bool> hatRainbow{true}, trailRainbow{true}, vertexGradient{false};
@@ -102,7 +106,7 @@ thread_local unsigned seenTrailGeneration=0;
 // 0 waiting for a player, 1 submitted to GPU, 2 game renderer busy/unavailable.
 std::atomic<int> hatStatus{0}, trailStatus{0}, hatFillStatus{0}, trailFillStatus{0};
 std::atomic<ULONGLONG> lastHatSubmit{0}, lastTrailSubmit{0};
-bool anyVisual() { return enabled.load(std::memory_order_acquire) || trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire); }
+bool anyVisual() { return enabled.load(std::memory_order_acquire) || trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire) || accessoryEnabled.load(std::memory_order_acquire); }
 // 0 = not attempted, 1 = installing, 2 = installed, 3 = failed.
 std::atomic<int> hookState{0};
 HatCreateHook createHook=nullptr; HatToggleHook enableHook=nullptr, disableHook=nullptr, removeHook=nullptr;
@@ -319,6 +323,7 @@ std::intptr_t playerHook(void* self,void* entity,void* pos,float renderValue,flo
 void renderHat(const PlayerFrame& player);
 void renderTrail(const PlayerFrame& player);
 void renderJump(const PlayerFrame& player);
+void renderAccessory(const PlayerFrame& player);
 ID3D11DeviceContext* sameThreadContext() {
  ID3D11DeviceContext* ctx=nullptr;
  AcquireSRWLockShared(&contextLock);
@@ -361,7 +366,7 @@ std::intptr_t entitiesDiagnosticHook(void* self,float partial) {
   occlusionStatus.store(!worldReady || !gpuReady ? 3 : 2,std::memory_order_relaxed);
  } else {
   PlayerFrame visible=frame; frame.valid=false; PlayerFrame local=visible;
-  if ((trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire)) && !local.valid) {
+  if ((trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire) || accessoryEnabled.load(std::memory_order_acquire)) && !local.valid) {
    std::uintptr_t actor=0;
    if (localPlayer(actor)) { rememberPlayer(reinterpret_cast<void*>(actor),partial); local=frame; frame.valid=false; }
   }
@@ -376,6 +381,7 @@ std::intptr_t entitiesDiagnosticHook(void* self,float partial) {
   }
   renderTrail(local);
   renderJump(local);
+  renderAccessory(local);
   visual_gpu_depth::expectedContext=nullptr; visual_gpu_depth::expectedDepth=nullptr;
   const bool blocked=visual_gpu_depth::rejected.load(std::memory_order_relaxed)!=rejected;
   const bool drew=visual_gpu_depth::submitted.load(std::memory_order_relaxed)!=submitted;
@@ -491,6 +497,31 @@ void renderHat(const PlayerFrame& player) {
  std::memcpy(reinterpret_cast<void*>(color),saved,sizeof(saved)); *reinterpret_cast<std::uint8_t*>(flag)=oldFlag;
 }
 
+void renderAccessory(const PlayerFrame& player) {
+ if (!accessoryEnabled.load(std::memory_order_acquire)) return;
+ const ULONGLONG now=GetTickCount64(); std::uintptr_t actor=0;
+ if (!player.valid || now<player.at || now-player.at>250 || !localPlayer(actor) || actor!=player.entity) {
+  accessoryStatus.store(0,std::memory_order_relaxed); return;
+ }
+ accessoryStatus.store(2,std::memory_order_relaxed);
+ float origin[3]{},saved[4]{}; std::uint8_t oldFlag=0;
+ auto tess=base+tessRva,color=base+shaderColorRva,flag=base+shaderFlagRva;
+ if (!read(base+originRva,origin,sizeof(origin)) || !read(color,saved,sizeof(saved)) || !fetch(flag,oldFlag) ||
+     !writable(color,sizeof(saved)) || !writable(flag,1) || !tessIdle(tess)) return;
+ for(float v:origin) if(!std::isfinite(v)) return;
+ const china_hat::Point anchor{player.world.x-origin[0],player.world.y-origin[1]-1.62f+player.height+.03f+param(VisualParam::AccessoryOffset),player.world.z-origin[2]};
+ const float scale=param(VisualParam::AccessoryScale), opacity=param(VisualParam::AccessoryOpacity);
+ // Validate the entire geometry before touching the game's tessellator.
+ if (!visual_accessory::crown(anchor,scale,[](china_hat::Point){})) return;
+ float tint[4]{param(VisualParam::AccessoryRed),param(VisualParam::AccessoryGreen),param(VisualParam::AccessoryBlue),opacity};
+ std::memcpy(reinterpret_cast<void*>(color),tint,sizeof(tint)); *reinterpret_cast<std::uint8_t*>(flag)=1;
+ auto* t=reinterpret_cast<void*>(tess); tessBegin(t,2,visual_accessory::vertexCount);
+ visual_accessory::crown(anchor,scale,[&](china_hat::Point p) { tessColor(t,255,255,255,255); tessVertex(t,p.x,p.y,p.z); });
+ submitVisual(t,opacity);
+ alignas(16) std::uint8_t scratch[0x200]{}; tessEnd(t,scratch,0,0);
+ std::memcpy(reinterpret_cast<void*>(color),saved,sizeof(saved)); *reinterpret_cast<std::uint8_t*>(flag)=oldFlag;
+ lastAccessorySubmit.store(now,std::memory_order_relaxed); accessoryStatus.store(1,std::memory_order_relaxed);
+}
 void renderTrail(const PlayerFrame& player) {
  unsigned gen=trailGeneration.load(std::memory_order_acquire);
  if (gen!=seenTrailGeneration) { trail.clear(); seenTrailGeneration=gen; }
@@ -613,12 +644,13 @@ void screenHook(void* self,void* ctx) {
  // Submit the verified hat before collecting/drawing the experimental trail.
  renderHat(visible);
  PlayerFrame local=visible;
- if ((trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire)) && !local.valid) {
+ if ((trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire) || accessoryEnabled.load(std::memory_order_acquire)) && !local.valid) {
   std::uintptr_t actor=0;
   if (localPlayer(actor)) { rememberPlayer(reinterpret_cast<void*>(actor),1.0f); local=frame; frame.valid=false; }
  }
  renderTrail(local);
  renderJump(local);
+ renderAccessory(local);
  inScreen=false;
 }
 }
@@ -707,7 +739,7 @@ bool enableVisual() {
  if (!ChinaHatAvailable()) return false;
  try { return installHooks(); }
  catch (...) {
-  enabled.store(false,std::memory_order_release); trailEnabled.store(false,std::memory_order_release); jumpEnabled.store(false,std::memory_order_release);
+  enabled.store(false,std::memory_order_release); trailEnabled.store(false,std::memory_order_release); jumpEnabled.store(false,std::memory_order_release); accessoryEnabled.store(false,std::memory_order_release);
   available.store(false,std::memory_order_release); hookState.store(3,std::memory_order_release);
   log("failed to enable; overlay remains available"); return false;
  }
@@ -735,6 +767,16 @@ bool TrailFillEnabled() { return trailFill.load(std::memory_order_acquire); }
 void SetTrailFillEnabled(bool value) { trailFill.store(value,std::memory_order_release); trailFillStatus.store(0,std::memory_order_relaxed); }
 bool VisualTintEnabled() { return materialTint.load(std::memory_order_acquire); }
 void SetVisualTintEnabled(bool value) { materialTint.store(value,std::memory_order_release); }
+bool AccessoryEnabled() { return accessoryEnabled.load(std::memory_order_acquire); }
+void SetAccessoryEnabled(bool value) {
+ if (!value) { accessoryEnabled.store(false,std::memory_order_release); accessoryStatus.store(0,std::memory_order_relaxed); return; }
+ accessoryStatus.store(0,std::memory_order_relaxed);
+ if (enableVisual()) accessoryEnabled.store(true,std::memory_order_release);
+}
+int AccessoryStatus() {
+ int status=accessoryStatus.load(std::memory_order_relaxed); auto then=lastAccessorySubmit.load(std::memory_order_relaxed),now=GetTickCount64();
+ return status==1 && (!then || now<then || now-then>1000) ? 0 : status;
+}
 bool JumpEnabled() { return jumpEnabled.load(std::memory_order_acquire); }
 void SetJumpEnabled(bool value) {
  if (!value) { jumpEnabled.store(false,std::memory_order_release); jumpGeneration.fetch_add(1,std::memory_order_acq_rel); jumpStatus.store(0,std::memory_order_relaxed); return; }

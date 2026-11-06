@@ -38,6 +38,10 @@ bool TrailFillEnabled();
 void SetTrailFillEnabled(bool enabled);
 bool VisualTintEnabled();
 void SetVisualTintEnabled(bool enabled);
+// Separate built-in, opt-in test accessory, not an external model loader.
+bool AccessoryEnabled();
+void SetAccessoryEnabled(bool enabled);
+int AccessoryStatus();
 bool JumpEnabled();
 void SetJumpEnabled(bool enabled);
 bool JumpRainbowEnabled();

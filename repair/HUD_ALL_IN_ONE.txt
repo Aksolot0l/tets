@@ -41,6 +41,9 @@ SDK и Dear ImGui сюда не включены. Исходников закр�
    - repair/src/visual_ribbon.h
    - repair/src/visual_trail.h
    - repair/src/visual_jump.h
+   - repair/src/visual_accessory.h
+   - repair/tests/visual_accessory.cpp
+   - repair/tests/check_visual_accessory.py
    - repair/tests/visual_jump.cpp
    - repair/tests/check_visual_jump.py
    - repair/src/hat_animation.h
@@ -394,7 +397,7 @@ static PopTextWrapFn guiPopTextWrap = nullptr;
 static std::atomic<bool> hudThemeReady{false};
 static thread_local bool insideLegacyHud = false;
 static thread_local float legacyOpacity = 1.f;
-enum class VisualEditor { None, Hat, Trail, Jump, Options };
+enum class VisualEditor { None, Hat, Trail, Jump, Accessory, Options };
 static std::atomic<VisualEditor> visualEditor{VisualEditor::None};
 static std::atomic<bool> hudHooksReady{false}, notificationHookReady{false};
 static bool hudEditorOpen = false, moduleHudEnabled = false;
@@ -630,6 +633,20 @@ static void drawJumpSettings() {
         realText("Movement estimate; not a ground flag.",nullptr);
     }
 }
+static void drawAccessorySettings() {
+    bool enabled=AccessoryEnabled();
+    if (guiCheckbox("3D crown (test)",&enabled)) SetAccessoryEnabled(enabled);
+    visualColor("Crown color",VisualParam::AccessoryRed,VisualParam::AccessoryGreen,VisualParam::AccessoryBlue);
+    visualSlider("Crown scale",VisualParam::AccessoryScale,"%.2f");
+    visualSlider("Crown height offset",VisualParam::AccessoryOffset,"%.2f");
+    visualSlider("Crown opacity",VisualParam::AccessoryOpacity,"%.2f");
+    realText("Built-in test mesh; no model import yet.",nullptr);
+    realText("Use F5 for third person.",nullptr);
+    if (AccessoryEnabled()) {
+        const int status=AccessoryStatus();
+        realText(status==1 ? "Crown: submitted" : status==2 ? "Crown: renderer not ready" : "Crown: waiting for player",nullptr);
+    }
+}
 static const char* depthCompareLabel(int value) {
     switch (value) { case 1:return "never"; case 2:return "less"; case 3:return "equal";
     case 4:return "less equal"; case 5:return "greater"; case 6:return "not equal";
@@ -801,10 +818,13 @@ static void drawVisualPanel() {
             sectionTitle("JUMP RINGS");
             bool jump=JumpEnabled(); if (guiCheckbox("Jump rings (test)",&jump)) SetJumpEnabled(jump);
             if (canVisualPreview() && guiButton("Settings##open_jump",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Jump;
+            sectionTitle("3D ACCESSORY");
+            bool accessory=AccessoryEnabled(); if (guiCheckbox("3D crown (test)",&accessory)) SetAccessoryEnabled(accessory);
+            if (canVisualPreview() && guiButton("Settings##open_accessory",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Accessory;
             if (canVisualPreview() && guiButton("Options",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Options;
             if (!canVisualPreview()) {
                 realText("Preview unavailable; inline settings:",nullptr);
-                drawHatSettings(); drawTrailSettings(); drawJumpSettings(); drawVisualOptions();
+                drawHatSettings(); drawTrailSettings(); drawJumpSettings(); drawAccessorySettings(); drawVisualOptions();
             }
             visualHint("Прозрачность и depth-test не изменяются этим оформлением.");
         }
@@ -980,16 +1000,17 @@ static void drawVisualEditor() {
     guiSetNextPos(ImVec2(350.f,90.f),ImGuiCond_Always,ImVec2(0,0));
     if (guiSetNextSize) guiSetNextSize(ImVec2(310.f,430.f),ImGuiCond_FirstUseEver);
     VisualStyleScope style;
-    const char* title=current==VisualEditor::Hat?"China Hat settings":current==VisualEditor::Trail?"Trail settings":current==VisualEditor::Jump?"Jump ring settings":"Visual options";
+    const char* title=current==VisualEditor::Hat?"China Hat settings":current==VisualEditor::Trail?"Trail settings":current==VisualEditor::Jump?"Jump ring settings":current==VisualEditor::Accessory?"3D crown settings":"Visual options";
     if (guiBegin(title,nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
         if (guiButton && guiButton("Back to menu",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::None;
         if (current==VisualEditor::Hat) drawHatSettings();
         else if (current==VisualEditor::Trail) drawTrailSettings();
         else if (current==VisualEditor::Jump) drawJumpSettings();
+        else if (current==VisualEditor::Accessory) drawAccessorySettings();
         else drawVisualOptions();
     }
     guiEnd();
-    if (visualEditor==current && current!=VisualEditor::Options && current!=VisualEditor::Jump) drawEffectPreview(current);
+    if (visualEditor==current && current!=VisualEditor::Options && current!=VisualEditor::Jump && current!=VisualEditor::Accessory) drawEffectPreview(current);
 }
 
 // Restyle only actual legacy HUD/notification windows, preserving their real
@@ -1033,7 +1054,7 @@ static void drawModuleHud(void* runtime, bool preview) {
                 guiSameLine(0.f,6.f);
             }
             realText(label,nullptr);
-        },JumpEnabled());
+        },JumpEnabled(),AccessoryEnabled());
     }
     guiEnd(); if (vars) guiPopVar(2); guiPopColor(3);
 }
@@ -1244,6 +1265,7 @@ static void patchedDrawGui(void* runtime) {
         SetChinaHatEnabled(false);
         SetTrailEnabled(false);
         SetJumpEnabled(false);
+        SetAccessoryEnabled(false);
         SetPlayerSkinPreviewActive(false);
         SetPlayerModelPreviewActive(false);
         SetPlayerPreviewHatActive(false);
@@ -1256,8 +1278,8 @@ static void patchedDrawGui(void* runtime) {
     SetMenuMouseOpen(menuOpen);
     if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }
     const bool editingVisual=menuOpen && visualEditor!=VisualEditor::None && canVisualPreview();
-    SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump);
-    SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && previewGameModelTest);
+    SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory);
+    SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory && previewGameModelTest);
     SetPlayerPreviewHatActive(editingVisual && visualEditor==VisualEditor::Hat && previewGameModelTest);
     if (!menuOpen || (!hudEditorOpen && !editingVisual)) {
         if (menuOpen) { VisualStyleScope style; realDrawGui(runtime); }
@@ -1611,12 +1633,13 @@ inline constexpr Entry entries[] = {{ag::ModuleId::Fps,"FPS"},{ag::ModuleId::Cps
  {ag::ModuleId::Notifications,"Notifications"},{ag::ModuleId::ActiveModules,"Active Modules"},
  {ag::ModuleId::Hotkeys,"Hotkeys"},{ag::ModuleId::Coordinates,"Coordinates"}};
 inline bool editing(bool menuOpen,bool editorOpen) { return menuOpen && editorOpen; }
-template<class Emit> void labels(const std::array<bool,ag::kModuleCount>& enabled, bool hat, bool trail, Emit emit, bool jump=false) {
+template<class Emit> void labels(const std::array<bool,ag::kModuleCount>& enabled, bool hat, bool trail, Emit emit, bool jump=false, bool accessory=false) {
  bool any=false;
  for (const auto& e:entries) if (ag::ModuleAvailable(e.id) && enabled[static_cast<std::size_t>(e.id)]) { emit(e.name); any=true; }
  if (hat) { emit("China Hat"); any=true; }
  if (trail) { emit("Trail"); any=true; }
  if (jump) { emit("Jump Rings"); any=true; }
+ if (accessory) { emit("3D Crown"); any=true; }
  if (!any) emit("No active modules");
 }
 }
@@ -2305,6 +2328,7 @@ struct Settings {
 #include "china_hat_hash.h"
 #include "visual_trail.h"
 #include "visual_jump.h"
+#include "visual_accessory.h"
 #include "china_hat_player.h"
 #include "visual_hooks.h"
 #include "visual_color.h"
@@ -2342,6 +2366,9 @@ constexpr std::uint32_t originRva=0x19436e8, tessRva=0x1925550, contextRva=0x191
 std::atomic<bool> available{false}, enabled{false};
 // Modules remain off until the user explicitly enables them. Defaults configure
 // the requested filled/rainbow appearance, with a wireframe fallback in Visuals.
+std::atomic<bool> accessoryEnabled{false};
+std::atomic<int> accessoryStatus{0};
+std::atomic<ULONGLONG> lastAccessorySubmit{0};
 std::atomic<bool> jumpEnabled{false}, jumpRainbow{false};
 std::atomic<bool> trailEnabled{false}, materialTint{true}, hatFill{true}, trailFill{true};
 std::atomic<bool> hatRainbow{true}, trailRainbow{true}, vertexGradient{false};
@@ -2398,7 +2425,7 @@ thread_local unsigned seenTrailGeneration=0;
 // 0 waiting for a player, 1 submitted to GPU, 2 game renderer busy/unavailable.
 std::atomic<int> hatStatus{0}, trailStatus{0}, hatFillStatus{0}, trailFillStatus{0};
 std::atomic<ULONGLONG> lastHatSubmit{0}, lastTrailSubmit{0};
-bool anyVisual() { return enabled.load(std::memory_order_acquire) || trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire); }
+bool anyVisual() { return enabled.load(std::memory_order_acquire) || trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire) || accessoryEnabled.load(std::memory_order_acquire); }
 // 0 = not attempted, 1 = installing, 2 = installed, 3 = failed.
 std::atomic<int> hookState{0};
 HatCreateHook createHook=nullptr; HatToggleHook enableHook=nullptr, disableHook=nullptr, removeHook=nullptr;
@@ -2615,6 +2642,7 @@ std::intptr_t playerHook(void* self,void* entity,void* pos,float renderValue,flo
 void renderHat(const PlayerFrame& player);
 void renderTrail(const PlayerFrame& player);
 void renderJump(const PlayerFrame& player);
+void renderAccessory(const PlayerFrame& player);
 ID3D11DeviceContext* sameThreadContext() {
  ID3D11DeviceContext* ctx=nullptr;
  AcquireSRWLockShared(&contextLock);
@@ -2657,7 +2685,7 @@ std::intptr_t entitiesDiagnosticHook(void* self,float partial) {
   occlusionStatus.store(!worldReady || !gpuReady ? 3 : 2,std::memory_order_relaxed);
  } else {
   PlayerFrame visible=frame; frame.valid=false; PlayerFrame local=visible;
-  if ((trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire)) && !local.valid) {
+  if ((trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire) || accessoryEnabled.load(std::memory_order_acquire)) && !local.valid) {
    std::uintptr_t actor=0;
    if (localPlayer(actor)) { rememberPlayer(reinterpret_cast<void*>(actor),partial); local=frame; frame.valid=false; }
   }
@@ -2672,6 +2700,7 @@ std::intptr_t entitiesDiagnosticHook(void* self,float partial) {
   }
   renderTrail(local);
   renderJump(local);
+  renderAccessory(local);
   visual_gpu_depth::expectedContext=nullptr; visual_gpu_depth::expectedDepth=nullptr;
   const bool blocked=visual_gpu_depth::rejected.load(std::memory_order_relaxed)!=rejected;
   const bool drew=visual_gpu_depth::submitted.load(std::memory_order_relaxed)!=submitted;
@@ -2787,6 +2816,31 @@ void renderHat(const PlayerFrame& player) {
  std::memcpy(reinterpret_cast<void*>(color),saved,sizeof(saved)); *reinterpret_cast<std::uint8_t*>(flag)=oldFlag;
 }
 
+void renderAccessory(const PlayerFrame& player) {
+ if (!accessoryEnabled.load(std::memory_order_acquire)) return;
+ const ULONGLONG now=GetTickCount64(); std::uintptr_t actor=0;
+ if (!player.valid || now<player.at || now-player.at>250 || !localPlayer(actor) || actor!=player.entity) {
+  accessoryStatus.store(0,std::memory_order_relaxed); return;
+ }
+ accessoryStatus.store(2,std::memory_order_relaxed);
+ float origin[3]{},saved[4]{}; std::uint8_t oldFlag=0;
+ auto tess=base+tessRva,color=base+shaderColorRva,flag=base+shaderFlagRva;
+ if (!read(base+originRva,origin,sizeof(origin)) || !read(color,saved,sizeof(saved)) || !fetch(flag,oldFlag) ||
+     !writable(color,sizeof(saved)) || !writable(flag,1) || !tessIdle(tess)) return;
+ for(float v:origin) if(!std::isfinite(v)) return;
+ const china_hat::Point anchor{player.world.x-origin[0],player.world.y-origin[1]-1.62f+player.height+.03f+param(VisualParam::AccessoryOffset),player.world.z-origin[2]};
+ const float scale=param(VisualParam::AccessoryScale), opacity=param(VisualParam::AccessoryOpacity);
+ // Validate the entire geometry before touching the game's tessellator.
+ if (!visual_accessory::crown(anchor,scale,[](china_hat::Point){})) return;
+ float tint[4]{param(VisualParam::AccessoryRed),param(VisualParam::AccessoryGreen),param(VisualParam::AccessoryBlue),opacity};
+ std::memcpy(reinterpret_cast<void*>(color),tint,sizeof(tint)); *reinterpret_cast<std::uint8_t*>(flag)=1;
+ auto* t=reinterpret_cast<void*>(tess); tessBegin(t,2,visual_accessory::vertexCount);
+ visual_accessory::crown(anchor,scale,[&](china_hat::Point p) { tessColor(t,255,255,255,255); tessVertex(t,p.x,p.y,p.z); });
+ submitVisual(t,opacity);
+ alignas(16) std::uint8_t scratch[0x200]{}; tessEnd(t,scratch,0,0);
+ std::memcpy(reinterpret_cast<void*>(color),saved,sizeof(saved)); *reinterpret_cast<std::uint8_t*>(flag)=oldFlag;
+ lastAccessorySubmit.store(now,std::memory_order_relaxed); accessoryStatus.store(1,std::memory_order_relaxed);
+}
 void renderTrail(const PlayerFrame& player) {
  unsigned gen=trailGeneration.load(std::memory_order_acquire);
  if (gen!=seenTrailGeneration) { trail.clear(); seenTrailGeneration=gen; }
@@ -2909,12 +2963,13 @@ void screenHook(void* self,void* ctx) {
  // Submit the verified hat before collecting/drawing the experimental trail.
  renderHat(visible);
  PlayerFrame local=visible;
- if ((trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire)) && !local.valid) {
+ if ((trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire) || accessoryEnabled.load(std::memory_order_acquire)) && !local.valid) {
   std::uintptr_t actor=0;
   if (localPlayer(actor)) { rememberPlayer(reinterpret_cast<void*>(actor),1.0f); local=frame; frame.valid=false; }
  }
  renderTrail(local);
  renderJump(local);
+ renderAccessory(local);
  inScreen=false;
 }
 }
@@ -3003,7 +3058,7 @@ bool enableVisual() {
  if (!ChinaHatAvailable()) return false;
  try { return installHooks(); }
  catch (...) {
-  enabled.store(false,std::memory_order_release); trailEnabled.store(false,std::memory_order_release); jumpEnabled.store(false,std::memory_order_release);
+  enabled.store(false,std::memory_order_release); trailEnabled.store(false,std::memory_order_release); jumpEnabled.store(false,std::memory_order_release); accessoryEnabled.store(false,std::memory_order_release);
   available.store(false,std::memory_order_release); hookState.store(3,std::memory_order_release);
   log("failed to enable; overlay remains available"); return false;
  }
@@ -3031,6 +3086,16 @@ bool TrailFillEnabled() { return trailFill.load(std::memory_order_acquire); }
 void SetTrailFillEnabled(bool value) { trailFill.store(value,std::memory_order_release); trailFillStatus.store(0,std::memory_order_relaxed); }
 bool VisualTintEnabled() { return materialTint.load(std::memory_order_acquire); }
 void SetVisualTintEnabled(bool value) { materialTint.store(value,std::memory_order_release); }
+bool AccessoryEnabled() { return accessoryEnabled.load(std::memory_order_acquire); }
+void SetAccessoryEnabled(bool value) {
+ if (!value) { accessoryEnabled.store(false,std::memory_order_release); accessoryStatus.store(0,std::memory_order_relaxed); return; }
+ accessoryStatus.store(0,std::memory_order_relaxed);
+ if (enableVisual()) accessoryEnabled.store(true,std::memory_order_release);
+}
+int AccessoryStatus() {
+ int status=accessoryStatus.load(std::memory_order_relaxed); auto then=lastAccessorySubmit.load(std::memory_order_relaxed),now=GetTickCount64();
+ return status==1 && (!then || now<then || now-then>1000) ? 0 : status;
+}
 bool JumpEnabled() { return jumpEnabled.load(std::memory_order_acquire); }
 void SetJumpEnabled(bool value) {
  if (!value) { jumpEnabled.store(false,std::memory_order_release); jumpGeneration.fetch_add(1,std::memory_order_acq_rel); jumpStatus.store(0,std::memory_order_relaxed); return; }
@@ -3130,6 +3195,10 @@ bool TrailFillEnabled();
 void SetTrailFillEnabled(bool enabled);
 bool VisualTintEnabled();
 void SetVisualTintEnabled(bool enabled);
+// Separate built-in, opt-in test accessory, not an external model loader.
+bool AccessoryEnabled();
+void SetAccessoryEnabled(bool enabled);
+int AccessoryStatus();
 bool JumpEnabled();
 void SetJumpEnabled(bool enabled);
 bool JumpRainbowEnabled();
@@ -3170,7 +3239,8 @@ enum class VisualParam : std::size_t {
  HatRadius, HatConeHeight, HatOffset, HatBobAmplitude, HatBobSpeed, HatRainbowSpeed,
  HatRed, HatGreen, HatBlue, TrailHeight, TrailSeconds, TrailRainbowSpeed,
  TrailRed, TrailGreen, TrailBlue, HatOpacity, TrailOpacity,
- JumpRadius, JumpSeconds, JumpOpacity, JumpRed, JumpGreen, JumpBlue, JumpRainbowSpeed, Count
+ JumpRadius, JumpSeconds, JumpOpacity, JumpRed, JumpGreen, JumpBlue, JumpRainbowSpeed,
+ AccessoryScale, AccessoryOffset, AccessoryOpacity, AccessoryRed, AccessoryGreen, AccessoryBlue, Count
 };
 struct VisualParamSpec { float value, low, high; };
 constexpr VisualParamSpec visualParamSpecs[] = {
@@ -3181,7 +3251,9 @@ constexpr VisualParamSpec visualParamSpecs[] = {
  {.08f,0.f,1.f},{.86f,0.f,1.f},{1.f,0.f,1.f},
  {1.f,0.f,1.f},{1.f,0.f,1.f},
  {1.4f,.4f,3.f},{1.f,.3f,3.f},{.85f,0.f,1.f},
- {.20f,0.f,1.f},{1.f,0.f,1.f},{.42f,0.f,1.f},{.15f,.03f,.8f}
+ {.20f,0.f,1.f},{1.f,0.f,1.f},{.42f,0.f,1.f},{.15f,.03f,.8f},
+ {1.f,.5f,2.f},{0.f,-.20f,.50f},{1.f,0.f,1.f},
+ {1.f,0.f,1.f},{.76f,0.f,1.f},{.14f,0.f,1.f}
 };
 static_assert(sizeof(visualParamSpecs)/sizeof(visualParamSpecs[0])==static_cast<std::size_t>(VisualParam::Count),"visual parameters mismatch");
 inline float sanitizeVisualParam(VisualParam param,float value) {
@@ -4929,7 +5001,7 @@ int main() {
  labels(enabled,false,false,add); assert(out.size()==1 && out[0]=="No active modules"); out.clear();
  enabled[static_cast<std::size_t>(ag::ModuleId::Fps)]=true;
  enabled[static_cast<std::size_t>(ag::ModuleId::Session)]=true; // unsupported is not shown
- labels(enabled,true,true,add,true); assert((out==std::vector<std::string>{"FPS","China Hat","Trail","Jump Rings"}));
+ labels(enabled,true,true,add,true,true); assert((out==std::vector<std::string>{"FPS","China Hat","Trail","Jump Rings","3D Crown"}));
 }
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/hud_module_list.cpp
@@ -5652,7 +5724,7 @@ for symbol in ('_ZN10ImDrawList8AddImageEyRK6ImVec2S2_S2_S2_j','_ZN10ImDrawList1
     assert symbol in u and symbol.encode() in exports
 assert 'visual_player_skin::acquire(frameDevice)' in u and 'previewFrameView=skin.view' in u
 assert u.index('release(previewFrameView);',u.index('legacyPresent(chain'))>u.index('legacyPresent(chain')
-assert 'SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump)' in u
+assert 'SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory)' in u
 assert 'visual_player_skin::begin(local,captureContext)' in n and 'visual_gpu_depth::inPlayerCapture=capture' in n
 assert n.index('visual_player_skin::begin(local,captureContext)')<n.index('originalPlayer(self,entity,pos,renderValue,partial)')
 assert 'scopeGeneration==generation' in skin and 'ctx!=scopeContext' in skin
@@ -5663,7 +5735,7 @@ print('Read-only skin candidate preview: static OK; Windows test required')
 replay=(r/'src/visual_player_replay.h').read_text()
 assert 'static bool previewGameModelTest=false' in u
 assert 'Game model replay (test)' in u and 'Trail preview not available yet.' in u
-assert 'SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && previewGameModelTest)' in u
+assert 'SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory && previewGameModelTest)' in u
 assert 'visual_player_replay::acquire(frameDevice)' in u and 'previewFrameView=model' in u
 assert 'scope.draws>=128' in replay and 'srvBound(ctx,scope.srv)' in replay and 'outputBound(ctx,scope.rtv,scope.dsv)' in replay
 for guard in ('SOGetTargets','GetPredication','OMGetRenderTargetsAndUnorderedAccessViews','d.StencilEnable','RSGetViewports'):
@@ -6030,4 +6102,98 @@ assert 'Jump rings (test)' in u and 'drawJumpSettings()' in u and 'SetJumpEnable
 print('Jump ring wiring OK; requires Windows/Minecraft verification')
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_visual_jump.py
+================================================================================
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/visual_accessory.h
+================================================================================
+#pragma once
+#include "../research/china_hat/hat_mesh.h"
+#include <cmath>
+
+// Embedded, untextured test mesh. No file access, game hooks, or player writes.
+// Four double-sided walls plus three double-sided triangular points per side.
+namespace visual_accessory {
+constexpr int vertexCount=4*(12+3*6);
+template<class Emit> bool crown(china_hat::Point anchor,float scale,Emit emit) {
+ if (!std::isfinite(anchor.x) || !std::isfinite(anchor.y) || !std::isfinite(anchor.z) ||
+     std::fabs(anchor.x)>32768.f || std::fabs(anchor.y)>32768.f || std::fabs(anchor.z)>32768.f ||
+     !std::isfinite(scale) || scale<.5f || scale>2.f) return false;
+ auto triangle=[&](china_hat::Point a,china_hat::Point b,china_hat::Point c) {
+  emit(a); emit(b); emit(c); emit(c); emit(b); emit(a);
+ };
+ // Local X/Z coordinates form an actual 3D square ring, not a screen sprite.
+ constexpr float half=.36f, band=.14f, top=.33f;
+ for(int side=0;side<4;++side) {
+  auto point=[&](float x,float y) {
+   float u=x, v=half;
+   if(side==1) { u=half; v=-x; }
+   else if(side==2) { u=-x; v=-half; }
+   else if(side==3) { u=-half; v=x; }
+   return china_hat::Point{anchor.x+u*scale,anchor.y+y*scale,anchor.z+v*scale};
+  };
+  const auto a=point(-half,0),b=point(half,0),c=point(half,band),d=point(-half,band);
+  triangle(a,b,c); triangle(a,c,d);
+  for(int i=0;i<3;++i) {
+   float left=-half+(2.f*half*i/3.f),right=-half+(2.f*half*(i+1)/3.f);
+   triangle(point(left,band),point(right,band),point((left+right)*.5f,top));
+  }
+ }
+ return true;
+}
+}
+================================================================================
+КОНЕЦ ФАЙЛА: repair/src/visual_accessory.h
+================================================================================
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/visual_accessory.cpp
+================================================================================
+#include "../src/visual_accessory.h"
+#include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <limits>
+#include <vector>
+int main() {
+ using namespace visual_accessory;
+ using china_hat::Point;
+ std::vector<Point> v;
+ auto collect=[&](Point p) { v.push_back(p); };
+ assert(crown({2,64,3},1.f,collect));
+ assert(v.size()==static_cast<std::size_t>(vertexCount));
+ float minX=3,maxX=1,minZ=4,maxZ=2,minY=65,maxY=63;
+ for(const auto& p:v) {
+  assert(std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z));
+  minX=std::min(minX,p.x);maxX=std::max(maxX,p.x);minY=std::min(minY,p.y);maxY=std::max(maxY,p.y);minZ=std::min(minZ,p.z);maxZ=std::max(maxZ,p.z);
+ }
+ assert(std::fabs(minX-1.64f)<.001f && std::fabs(maxX-2.36f)<.001f);
+ assert(std::fabs(minZ-2.64f)<.001f && std::fabs(maxZ-3.36f)<.001f);
+ assert(std::fabs(minY-64.f)<.001f && std::fabs(maxY-64.33f)<.001f);
+ v.clear(); assert(!crown({0,0,0},.49f,collect)); assert(v.empty());
+ assert(!crown({0,0,0},2.01f,collect)); assert(v.empty());
+ assert(!crown({0,std::numeric_limits<float>::quiet_NaN(),0},1.f,collect)); assert(v.empty());
+ assert(!crown({0,0,40000},1.f,collect)); assert(v.empty());
+ assert(crown({0,0,0},.5f,collect)); assert(v.size()==static_cast<std::size_t>(vertexCount));
+}
+================================================================================
+КОНЕЦ ФАЙЛА: repair/tests/visual_accessory.cpp
+================================================================================
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/check_visual_accessory.py
+================================================================================
+from pathlib import Path
+r=Path(__file__).resolve().parents[1]
+n=(r/'src/china_hat_native.cpp').read_text(); u=(r/'src/compat.cpp').read_text(); mesh=(r/'src/visual_accessory.h').read_text()
+assert 'accessoryEnabled{false}' in n and '|| accessoryEnabled.load(std::memory_order_acquire)' in n
+assert n.count('renderAccessory(local);')==2
+assert 'actor!=player.entity' in n[n.index('void renderAccessory(const PlayerFrame& player) {'):]
+assert 'tessIdle(tess)' in n and 'visual_accessory::vertexCount' in n
+assert 'submitVisual(t,opacity)' in n and 'SetAccessoryEnabled(false)' in u
+assert '3D crown (test)' in u and 'drawAccessorySettings()' in u
+assert 'CreateFile' not in mesh and 'ReadProcessMemory' not in mesh
+print('3D crown wiring OK; Windows/Minecraft test required')
+================================================================================
+КОНЕЦ ФАЙЛА: repair/tests/check_visual_accessory.py
 ================================================================================
