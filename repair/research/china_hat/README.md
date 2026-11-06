@@ -191,3 +191,12 @@ or called. Releasing a cursor without preventing clicks/movement reaching the
 game would not meet the user's requirement. The second offline diagnostic
 `DIAG_MOUSE_CODE_2.ps1` collects bounded x64 executable-code windows around
 that candidate and a speculative factory area for continued analysis.
+
+The follow-up report identifies an apparent mouse-event factory at `0x7d6370`
+(tag byte `+0x8` = 0, vtable `0x1738e28`) and callers forwarding the resulting
+unique pointer to the queue method `0x6f0f30`. A handler tick `0x7d37f0` reads
+command `+0x74`, tests relative state `+0x72`, and schedules calls at
+`0x7d4590`/`0x7d4850`; their asynchronous callbacks update the state. A new
+exact-build-gated experimental adapter uses these observed paths. It has only
+portable/static and cross-compilation tests so far, not a Windows game test.
+No conclusion about the hat depth follows from this input diagnostic.

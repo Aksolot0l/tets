@@ -21,6 +21,7 @@
 #include "mouse_diagnostic_patch.h"
 #include "disable_hotkey.h"
 #include "china_hat_native.h"
+#include "menu_mouse_native.h"
 #include "visual_avatar_preview.h"
 #include "visual_color.h"
 #include "visual_player_skin.h"
@@ -777,6 +778,7 @@ static void patchedDrawGui(void* runtime) {
     bool editing = getIO && getIO().WantTextInput;
     if (disableHotkey.update(down, down && gameIsForeground(), editing)) {
         overlayDisabled.store(true, std::memory_order_release);
+        SetMenuMouseOpen(false);
         SetChinaHatEnabled(false);
         SetTrailEnabled(false);
         SetPlayerSkinPreviewActive(false);
@@ -788,6 +790,7 @@ static void patchedDrawGui(void* runtime) {
         return;
     }
     const bool menuOpen=runtime && *(reinterpret_cast<unsigned char*>(runtime)+0x551);
+    SetMenuMouseOpen(menuOpen);
     if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }
     const bool editingVisual=menuOpen && visualEditor!=VisualEditor::None && canVisualPreview();
     SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options);
@@ -805,6 +808,7 @@ static void patchedDrawGui(void* runtime) {
                       ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse;
     if (guiBegin("##coordinate_switch_115", nullptr, flags)) {
         if (guiCheckbox("Coordinates (test)", &enabled)) setModule(runtime, ag::ModuleId::Coordinates, enabled);
+        realText(MenuMouseStatus() ? "Menu mouse: test enabled" : "Menu mouse: unavailable", nullptr);
     }
     guiEnd();
     drawVisualPanel();
@@ -1101,8 +1105,13 @@ static DWORD WINAPI bootstrap(void*) {
     }
     // Hat is optional and must never block the already working overlay.
     // Private game-render hooks are deferred until the user checks the box.
-    try { InitializeChinaHat(mhCreate,mhEnable,mhDisable,mhRemove); }
-    catch (...) { log("China Hat initialization failed; overlay remains available"); }
+    try {
+        const bool verified = InitializeChinaHat(mhCreate,mhEnable,mhDisable,mhRemove);
+        if (verified && coordHooks && mhEnable && mhRemove) {
+            log(InitializeMenuMouse(mhCreate,mhEnable,mhDisable,mhRemove)
+                ? "experimental menu mouse hooks enabled" : "menu mouse hooks unavailable; legacy input retained");
+        }
+    } catch (...) { log("game adapter initialization failed; overlay remains available"); }
     return 0;
 }
 
