@@ -10,6 +10,7 @@
 #include <cstdarg>
 #include <atomic>
 #include "wheel_bridge.h"
+#include "game_lifecycle.h"
 #include "launcher_ui.h"
 
 static HINSTANCE loaderModule = nullptr;
@@ -42,6 +43,13 @@ static void logLine(const char* format, ...) {
 }
 static void showError(const wchar_t* text) {
     MessageBoxW(nullptr, text, L"GAYClient", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+}
+// Error dialogs must not block the game-monitoring thread. The caller passes
+// static string literals that stay valid until this process exits.
+static DWORD WINAPI showErrorThread(void* text) { showError(static_cast<const wchar_t*>(text)); return 0; }
+static void showErrorAsync(const wchar_t* text) {
+    HANDLE thread=CreateThread(nullptr,0,showErrorThread,const_cast<wchar_t*>(text),0,nullptr);
+    if (thread) CloseHandle(thread); else logLine("Could not show launcher error dialog (%lu).",GetLastError());
 }
 
 struct WindowSearch { DWORD pid; bool found; };
@@ -107,19 +115,35 @@ static bool isFile(const wchar_t* name) {
     DWORD attributes = GetFileAttributesW(name);
     return attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
 }
-static DWORD uniqueGamePid(bool& multiple) {
-    multiple = false; DWORD found = 0;
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) return 0;
-    PROCESSENTRY32W entry{}; entry.dwSize = sizeof(entry);
-    if (Process32FirstW(snapshot, &entry)) do {
-        if (_wcsicmp(entry.szExeFile, L"Minecraft.Windows.exe") == 0) {
-            if (found && found != entry.th32ProcessID) { multiple = true; break; }
-            found = entry.th32ProcessID;
+// Distinguish an empty successful snapshot from an enumeration failure.
+static DWORD uniqueGamePid(bool& multiple, bool& snapshotOk) {
+    multiple=false; snapshotOk=false; DWORD found=0;
+    HANDLE snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);
+    if (snapshot==INVALID_HANDLE_VALUE) return 0;
+    PROCESSENTRY32W entry{}; entry.dwSize=sizeof(entry);
+    if (!Process32FirstW(snapshot,&entry)) {
+        snapshotOk=GetLastError()==ERROR_NO_MORE_FILES;
+        CloseHandle(snapshot); return 0;
+    }
+    do {
+        if (_wcsicmp(entry.szExeFile,L"Minecraft.Windows.exe")==0) {
+            if (found && found!=entry.th32ProcessID) { multiple=true; break; }
+            found=entry.th32ProcessID;
         }
-    } while (Process32NextW(snapshot, &entry));
-    CloseHandle(snapshot);
-    return found;
+    } while (Process32NextW(snapshot,&entry));
+    snapshotOk=multiple || GetLastError()==ERROR_NO_MORE_FILES;
+    CloseHandle(snapshot); return found;
+}
+// Keep an actual process handle, not just a PID, so PID reuse cannot be
+// mistaken for the death of the Minecraft process we observed.
+static HANDLE openGameLifetime(DWORD pid) {
+    HANDLE process=OpenProcess(SYNCHRONIZE|PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);
+    if (!process) return nullptr;
+    wchar_t path[32768]{}; DWORD length=32768;
+    if (!QueryFullProcessImageNameW(process,0,path,&length)) { CloseHandle(process); return nullptr; }
+    const wchar_t* name=wcsrchr(path,L'\\'); name=name?name+1:path;
+    if (_wcsicmp(name,L"Minecraft.Windows.exe")!=0) { CloseHandle(process); return nullptr; }
+    return process;
 }
 static uintptr_t remoteModule(DWORD pid, const wchar_t* moduleName, const wchar_t* expectedPath = nullptr) {
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
@@ -227,7 +251,10 @@ static DWORD WINAPI loaderThread(void*) {
     HANDLE guard = CreateMutexW(nullptr, FALSE, L"Local\\GAYClientAutoLaunch.v1");
     if (!guard) { showError(L"Не удалось запустить автозагрузку."); return 1; }
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        CloseHandle(guard); showError(L"Автозагрузка уже запущена в другом окне клиента."); return 1;
+        CloseHandle(guard);
+        showError(L"Клиент уже запущен. Если вы только что закрыли игру, подождите несколько секунд и попробуйте снова.");
+        launcherRequestShutdown(); // Do not leave a second, unmonitored client process behind.
+        return 1;
     }
     wchar_t classicFlag[32768]{};
     if (ownPath(classicFlag, 32768, L"launcher-classic.flag") && isFile(classicFlag))
@@ -242,14 +269,61 @@ static DWORD WINAPI loaderThread(void*) {
     }
     logLine("Client started. Waiting for Minecraft.");
     if (!startWheelBridge()) logLine("Wheel input bridge unavailable; retaining UWP input.");
-    bool done = false; DWORD previousPid = 0; unsigned attempts = 0;
-    ULONGLONG firstSeen = 0, nextAttempt = 0;
+    bool done=false, multipleWarned=false, watchFailureLogged=false, shuttingDown=false;
+    DWORD previousPid=0, watchedPid=0; unsigned attempts=0;
+    HANDLE watchedGame=nullptr;
+    UnwatchedGameExit fallback;
+    ULONGLONG firstSeen=0, nextAttempt=0;
     while (true) {
         Sleep(1000);
-        bool multiple = false; DWORD pid = uniqueGamePid(multiple);
-        foregroundGamePid.store(multiple ? 0 : pid, std::memory_order_relaxed);
-        if (multiple) { launcherSetStatus(LauncherStatus::MultipleGames); logLine("Multiple Minecraft processes found; close extras and restart the client."); showError(L"Найдено несколько процессов Minecraft. Закройте лишние и перезапустите клиент."); break; }
-        if (!pid) { launcherSetStatus(LauncherStatus::Waiting); previousPid = 0; done = false; attempts = 0; continue; }
+        bool multiple=false, snapshotOk=false;
+        DWORD pid=uniqueGamePid(multiple,snapshotOk);
+        DWORD wait=watchedGame?WaitForSingleObject(watchedGame,0):WAIT_TIMEOUT;
+        if (wait==WAIT_FAILED) {
+            logLine("Could not wait for Minecraft process (%lu); retrying monitoring.",GetLastError());
+            CloseHandle(watchedGame); watchedGame=nullptr; watchedPid=0; fallback.markObserved();
+        }
+        auto exitAction=gameExitAction(snapshotOk,multiple,pid,watchedPid,wait==WAIT_OBJECT_0);
+        if (exitAction==GameExitAction::CloseLauncher) {
+            logLine("Minecraft exited; closing the launcher process.");
+            foregroundGamePid.store(0,std::memory_order_relaxed);
+            CloseHandle(watchedGame); watchedGame=nullptr;
+            shuttingDown=true; launcherRequestShutdown();
+            break;
+        }
+        if (exitAction==GameExitAction::WatchReplacement) {
+            logLine("The observed Minecraft process exited; another remains, monitoring it instead.");
+            CloseHandle(watchedGame); watchedGame=nullptr; watchedPid=0; previousPid=0; done=false; attempts=0;
+        }
+        if (!watchedGame && fallback.update(snapshotOk,multiple,pid)) {
+            logLine("Minecraft absent from three consecutive complete snapshots; closing the launcher.");
+            foregroundGamePid.store(0,std::memory_order_relaxed);
+            shuttingDown=true; launcherRequestShutdown();
+            break;
+        }
+        if (!snapshotOk) continue; // Never treat an enumeration error as a closed game.
+        foregroundGamePid.store(multiple ? 0 : pid,std::memory_order_relaxed);
+        if (multiple) {
+            launcherSetStatus(LauncherStatus::MultipleGames);
+            if (!multipleWarned) {
+                multipleWarned=true;
+                logLine("Multiple Minecraft processes found; close extras before connecting.");
+                showErrorAsync(L"Найдено несколько процессов Minecraft. Закройте лишние окна игры.");
+            }
+            continue;
+        }
+        if (multipleWarned) { multipleWarned=false; previousPid=0; done=false; attempts=0; }
+        if (watchedGame && wait==WAIT_OBJECT_0) continue; // Wait until the snapshot stops showing that PID.
+        if (watchedGame && pid!=watchedPid) continue; // Inconsistent snapshot; do not infer an exit.
+        if (!pid) { launcherSetStatus(LauncherStatus::Waiting); previousPid=0; done=false; attempts=0; continue; }
+        if (!watchedGame) {
+            watchedGame=openGameLifetime(pid);
+            if (watchedGame) { watchedPid=pid; fallback.reset(); watchFailureLogged=false; logLine("Monitoring Minecraft PID %lu until it exits.",pid); }
+            else {
+                fallback.markObserved();
+                if (!watchFailureLogged) { watchFailureLogged=true; logLine("Cannot monitor Minecraft lifetime yet (%lu); retrying.",GetLastError()); }
+            }
+        }
         ULONGLONG now = GetTickCount64();
         if (pid != previousPid) {
             previousPid = pid; done = false; attempts = 0; firstSeen = now; nextAttempt = now + 10000;
@@ -264,21 +338,24 @@ static DWORD WINAPI loaderThread(void*) {
             if (result == InjectResult::Success || result == InjectResult::Stop) {
                 done = true;
                 if (result == InjectResult::Success) { connectWheelBridge(pid, dll); launcherSetStatus(LauncherStatus::Loaded); }
-                if (result == InjectResult::Stop) { launcherSetStatus(LauncherStatus::Failed); showError(L"Не удалось автоматически загрузить DLL. Перезапустите Minecraft и клиент. Подробности в client-autoload.log."); }
+                if (result == InjectResult::Stop) { launcherSetStatus(LauncherStatus::Failed); showErrorAsync(L"Не удалось автоматически загрузить DLL. Перезапустите Minecraft и клиент. Подробности в client-autoload.log."); }
             }
             else if (attempts >= 3) {
                 done = true;
                 launcherSetStatus(LauncherStatus::Failed);
                 logLine("Automatic loading failed. Close this client and retry, or load manually.");
-                showError(L"Не удалось автоматически загрузить DLL. Проверьте доступ к файлам и повторите запуск. Подробности в client-autoload.log.");
+                showErrorAsync(L"Не удалось автоматически загрузить DLL. Проверьте доступ к файлам и повторите запуск. Подробности в client-autoload.log.");
             } else {
                 logLine("Game may still be starting; retrying in five seconds.");
                 nextAttempt = GetTickCount64() + 5000;
             }
         }
     }
+    if (watchedGame) CloseHandle(watchedGame);
     logLine("Automatic loader stopped.");
-    CloseHandle(guard);
+    // Hold the single-instance guard until this process actually exits; closing
+    // it here would allow another launcher while the old UI is still closing.
+    if (!shuttingDown) CloseHandle(guard);
     return 0;
 }
 

@@ -18,6 +18,27 @@
 
 namespace {
 std::atomic<LauncherStatus> state{LauncherStatus::Waiting};
+std::atomic<HWND> shutdownWindow{nullptr};
+std::atomic<bool> shutdownScheduled{false};
+DWORD WINAPI shutdownWatchdog(void*) {
+    // Give the UI and the original launcher a chance to exit normally first.
+    Sleep(3000);
+    TerminateProcess(GetCurrentProcess(), 0);
+    return 0;
+}
+void scheduleShutdownWatchdog() {
+    if (shutdownScheduled.exchange(true, std::memory_order_acq_rel)) return;
+    HANDLE worker=CreateThread(nullptr,0,shutdownWatchdog,nullptr,0,nullptr);
+    if (worker) CloseHandle(worker);
+    else TerminateProcess(GetCurrentProcess(),0);
+}
+BOOL CALLBACK closeOriginalWindow(HWND window, LPARAM) {
+    DWORD pid=0; GetWindowThreadProcessId(window,&pid);
+    if (pid!=GetCurrentProcessId() || GetWindow(window,GW_OWNER)) return TRUE;
+    wchar_t title[128]{}; GetWindowTextW(window,title,128);
+    if (wcscmp(title,L"Aogiri Green Launcher")==0) PostMessageW(window,WM_CLOSE,0,0);
+    return TRUE;
+}
 HWND mainWindow = nullptr, classicWindow = nullptr, playButton = nullptr, logButton = nullptr;
 HWND homeNav=nullptr, profileNav=nullptr, profileList=nullptr, labelEdit=nullptr, nickEdit=nullptr, appEdit=nullptr;
 HWND saveButton=nullptr, newButton=nullptr, deleteButton=nullptr, detectButton=nullptr;
@@ -443,7 +464,7 @@ void webFailure() { webActive=false; if (mainWindow && IsWindow(mainWindow)) swi
 LRESULT CALLBACK windowProc(HWND window,UINT msg,WPARAM w,LPARAM l) {
     switch(msg) {
     case WM_CREATE:
-        mainWindow=window; makeFonts(); inputBrush=CreateSolidBrush(rgb(29,48,40)); listBrush=CreateSolidBrush(rgb(23,40,32));
+        mainWindow=window; shutdownWindow.store(window,std::memory_order_release); makeFonts(); inputBrush=CreateSolidBrush(rgb(29,48,40)); listBrush=CreateSolidBrush(rgb(23,40,32));
         homeNav=CreateWindowExW(0,L"BUTTON",L"Главная",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(HOME),nullptr,nullptr);
         profileNav=CreateWindowExW(0,L"BUTTON",L"Профили",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(PROFILES),nullptr,nullptr);
         playButton=CreateWindowExW(0,L"BUTTON",L"▶   Начать игру",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(PLAY),nullptr,nullptr);
@@ -529,6 +550,7 @@ LRESULT CALLBACK windowProc(HWND window,UINT msg,WPARAM w,LPARAM l) {
         SetWindowPos(window,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER|SWP_NOACTIVATE); InvalidateRect(window,nullptr,TRUE); return 0;
     }
     case WM_CLOSE:
+        scheduleShutdownWatchdog();
         KillTimer(window,1);
         // Closing the classic window lets the original application exit cleanly,
         // taking the autoload and wheel threads with it.
@@ -537,6 +559,7 @@ LRESULT CALLBACK windowProc(HWND window,UINT msg,WPARAM w,LPARAM l) {
         else ExitProcess(0);
         DestroyWindow(window); return 0;
     case WM_DESTROY:
+        shutdownWindow.store(nullptr,std::memory_order_release);
         closeLauncherWebView();
         disposeFonts();
         if(inputBrush) { DeleteObject(inputBrush); inputBrush=nullptr; }
@@ -580,6 +603,15 @@ DWORD WINAPI uiThread(void*) {
 }
 }
 void launcherSetStatus(LauncherStatus value) { state.store(value,std::memory_order_release); }
+void launcherRequestShutdown() {
+    scheduleShutdownWatchdog();
+    HWND window=shutdownWindow.load(std::memory_order_acquire);
+    DWORD owner=0; if (window) GetWindowThreadProcessId(window,&owner);
+    if (window && owner==GetCurrentProcessId() && IsWindow(window) && PostMessageW(window,WM_CLOSE,0,0)) return;
+    // If the modern window could not be created, try closing the original too.
+    // The watchdog only affects this launcher process, never Minecraft.
+    EnumWindows(closeOriginalWindow,0);
+}
 bool launcherStartUi() {
     HANDLE thread=CreateThread(nullptr,0,uiThread,nullptr,0,nullptr);
     if (!thread) return false;
