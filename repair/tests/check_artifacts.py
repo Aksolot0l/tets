@@ -11,6 +11,8 @@ assert manifest['schema'] == 1
 expected = {
     'repair/client.exe': 'client.exe',
     'repair/GAYClientLauncher.dll': 'GAYClientLauncher.dll',
+    'repair/WebView2Loader.dll': 'WebView2Loader.dll',
+    'repair/THIRD_PARTY_NOTICES.txt': 'THIRD_PARTY_NOTICES.txt',
     'GAYClientInternal.dll': 'GAYClientCore.dll',
     'repair/GAYClientInternal.dll': 'GAYClientInternal.dll',
     'repair/ENABLE_ACCESS.cmd': 'ENABLE_ACCESS.cmd',

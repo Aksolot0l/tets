@@ -1,0 +1,2 @@
+# Keep the Microsoft-generated SDK header byte-for-byte as distributed.
+repair/vendor/webview2/WebView2.h -text -diff

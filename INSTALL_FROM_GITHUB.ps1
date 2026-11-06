@@ -8,6 +8,8 @@ $archiveUrl = 'https://codeload.github.com/Aksolot0l/tets/zip/refs/heads/arena/5
 $expectedFiles = @{
     'repair/client.exe' = 'client.exe'
     'repair/GAYClientLauncher.dll' = 'GAYClientLauncher.dll'
+    'repair/WebView2Loader.dll' = 'WebView2Loader.dll'
+    'repair/THIRD_PARTY_NOTICES.txt' = 'THIRD_PARTY_NOTICES.txt'
     'GAYClientInternal.dll' = 'GAYClientCore.dll'
     'repair/GAYClientInternal.dll' = 'GAYClientInternal.dll'
     'repair/ENABLE_ACCESS.cmd' = 'ENABLE_ACCESS.cmd'
@@ -123,6 +125,14 @@ try {
         if ((Get-FileHash -LiteralPath $outPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $file.sha256) { throw "SHA-256 mismatch: $src" }
     }
     $zip.Dispose(); $zip = $null
+    # The loader was obtained from a mirrored WebView2 SDK package. Require a
+    # valid Windows Authenticode signature by Microsoft, in addition to the
+    # manifest hash, before any existing installation is changed.
+    $webSignature = Get-AuthenticodeSignature -LiteralPath (Join-Path $stage 'WebView2Loader.dll')
+    if ($webSignature.Status -ne 'Valid' -or $null -eq $webSignature.SignerCertificate -or
+        $webSignature.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+        throw 'WebView2Loader.dll does not have a valid Microsoft signature; no files were changed.'
+    }
     if ($existing) {
         # Validate the whole existing installation before touching any file.
         foreach ($file in $files) {

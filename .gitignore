@@ -6,3 +6,10 @@ repair/*.acl.local.txt
 repair/*.pdb
 repair/*.lib
 repair/*.res
+
+# React launcher build dependencies and generated single-file bundle
+repair/launcher-web/node_modules/
+repair/launcher-web/dist/
+
+# Python test and utility caches
+__pycache__/

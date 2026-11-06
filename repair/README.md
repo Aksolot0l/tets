@@ -8,8 +8,7 @@
 Win32-вызовы разрешены), добавлен встроенный шрифт с кириллицей, размер шрифта
 увеличен до 16 px, начальный масштаб интерфейса — 1.20. Сохранённый профиль
 может переопределить масштаб; в таком случае измените Settings → UI Scale.
-На пользовательском скриншоте кириллица и масштаб 1.20 отображаются; корректность
-положения курсора и прокрутки на его компьютере пока не подтверждена.
+На пользовательском скриншоте кириллица и масштаб 1.20 отображаются. Прокрутка колёсиком в игре пользователем подтверждена; положение курсора после исправления в игре остаётся непроверенным.
 
 **Это не проверенная на Windows сборка.** Не подтверждено, что она работает в
 Minecraft, на какой версии игры, с каким рендерером, мышью и масштабированием.
@@ -46,6 +45,35 @@ nlohmann/json 3.11.3, лицензия MIT находится в `vendor/json/LI
 подлинности. При выпуске новой версии добавляйте старый хеш изменённого файла
 в `previousSha256` и обновляйте `size` и `sha256` в `install-manifest.json`.
 Новый установщик не проверен на Windows.
+
+## React-интерфейс в клиенте (эксперимент)
+
+Дизайн из ZIP встроен в `GAYClientLauncher.dll` как локальный HTML и открывается
+в WebView2 внутри того же `client.exe`. Интернет для самого интерфейса не нужен.
+Нужны установленный Microsoft Edge WebView2 Runtime и `WebView2Loader.dll` рядом
+с EXE. Если WebView2 не запустится или процесс интерфейса завершится с ошибкой,
+лаунчер покажет предупреждение и вернётся к предыдущему встроенному окну.
+На реальной Windows/WebView2 этот вариант пока не проверен.
+
+Кнопка запуска вызывает прежнюю нативную активацию выбранного App ID, статусы
+поступают от реального потока автозагрузки. `DLL загружена` означает только
+загрузку библиотеки, не подтверждение работы оверлея. Поиск определяет App ID из
+единственного запущенного `Minecraft.Windows.exe`; профили читаются из прежнего
+нативного хранилища и сохраняются атомарно. Профильный ник - заметка, не аккаунт.
+Параметры оформления хранятся в локальном хранилище WebView2. Фиктивный каталог
+модов и статистика из макета отключены и заменены пояснением, что функций пока нет.
+Независимые окна/ники, автопроверка обновлений и трей не реализованы.
+
+HTML доступен WebView2 только через перехваченный локальный адрес; остальные
+запросы и навигация блокируются, доступ JS к нативным действиям ограничен
+белым списком команд. Это эксперимент и не заменяет проверку безопасности.
+Установщик проверяет подписанный Microsoft `WebView2Loader.dll` через
+`Get-AuthenticodeSignature` до замены файлов. Заголовок и DLL взяты из пакета
+Microsoft.Web.WebView2 1.0.2651.64 (SHA-256 nupkg
+`c7909cdab68a56d1b8eeb1d5b18b0e00122ed812a075a8be785ed48de689eeca`),
+полученного из публичного GitHub-зеркала `winsoft666/QWebView`; проверка
+подписи на целевой Windows обязательна. Лицензии в `THIRD_PARTY_NOTICES.txt`
+и `vendor/webview2`.
 
 ## UWP-ввод и автоматический запуск (эксперимент)
 
@@ -160,7 +188,12 @@ Windows и не гарантирует корректную прокрутку �
 
 ```
 zig c++ -target x86_64-windows-gnu -std=c++17 -shared -O2 -Irepair/vendor/imgui repair/src/compat.cpp repair/src/uwp_extra.cpp -o repair/GAYClientInternal.dll -ld3d11 -ldxgi -luser32 -lole32 -lapi-ms-win-core-winrt-l1-1-0 -lapi-ms-win-core-winrt-string-l1-1-0 -luuid -static
+cd repair/launcher-web
+npm ci --ignore-scripts
+npx tsc --noEmit
+npm run build
+cd ../..
 zig rc /fo repair/launcher_ui.res repair/src/launcher_ui.rc
-zig c++ -target x86_64-windows-gnu -std=c++17 -shared -O2 repair/src/client_autoload.cpp repair/src/launcher_ui.cpp repair/src/launcher_profiles_win.cpp repair/launcher_ui.res -o repair/GAYClientLauncher.dll -luser32 -lgdi32 -lshell32 -lole32 -lgdiplus -static
+zig c++ -target x86_64-windows-gnu -std=c++17 -shared -O2 repair/src/client_autoload.cpp repair/src/launcher_ui.cpp repair/src/launcher_webview.cpp repair/src/launcher_profiles_win.cpp repair/launcher_ui.res -o repair/GAYClientLauncher.dll -luser32 -lgdi32 -lshell32 -lshlwapi -lole32 -lgdiplus -luuid -static
 python3 repair/src/patch_client.py
 ```

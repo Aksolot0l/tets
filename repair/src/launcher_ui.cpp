@@ -3,10 +3,12 @@
 #define UNICODE
 #define _UNICODE
 #include "launcher_ui.h"
+#include "launcher_webview.h"
 #include <shellapi.h>
 #include <objbase.h>
 #include <gdiplus.h>
 #include "launcher_profiles_win.h"
+#include "launcher_web_profiles.h"
 #include "launcher_layout.h"
 #include <atomic>
 #include <cmath>
@@ -19,7 +21,7 @@ std::atomic<LauncherStatus> state{LauncherStatus::Waiting};
 HWND mainWindow = nullptr, classicWindow = nullptr, playButton = nullptr, logButton = nullptr;
 HWND homeNav=nullptr, profileNav=nullptr, profileList=nullptr, labelEdit=nullptr, nickEdit=nullptr, appEdit=nullptr;
 HWND saveButton=nullptr, newButton=nullptr, deleteButton=nullptr, detectButton=nullptr;
-bool hiddenClassicOnce = false, profilesPage = false, newProfile = false, storeWritable = true;
+bool hiddenClassicOnce = false, profilesPage = false, newProfile = false, storeWritable = true, webActive = false;
 LauncherProfiles profiles = defaultLauncherProfiles();
 HBRUSH inputBrush = nullptr, listBrush = nullptr;
 ULONGLONG launchPendingUntil = 0;
@@ -369,6 +371,75 @@ void launchGame(HWND window) {
     if (result<=32) MessageBoxW(window,L"Windows не запустила выбранную игру. Запустите её через меню «Пуск», затем в разделе «Профили» нажмите «Найти игру» и сохраните профиль.",L"Ошибка запуска",MB_OK|MB_ICONERROR);
     else { launchPendingUntil=GetTickCount64()+10000; InvalidateRect(window,nullptr,FALSE); }
 }
+
+// The web interface sends only typed, whitelisted requests. Profiles remain in
+// the same validated, atomic native store used by the existing launcher.
+const char* webStatus() {
+    switch (state.load(std::memory_order_acquire)) {
+    case LauncherStatus::GameDetected: return "detected";
+    case LauncherStatus::Loading: return "loading";
+    case LauncherStatus::Loaded: return "loaded";
+    case LauncherStatus::Failed: case LauncherStatus::MultipleGames: return "error";
+    default: return "idle";
+    }
+}
+nlohmann::json webState() {
+    nlohmann::json result={{"profiles",nlohmann::json::array()},{"selectedId",std::to_string(profiles.selected)},
+                           {"writable",storeWritable},{"status",webStatus()}};
+    for (size_t i=0;i<profiles.entries.size();++i) {
+        const auto& p=profiles.entries[i];
+        result["profiles"].push_back({{"id",std::to_string(i)},{"label",p.label},{"nickname",p.nickname},
+                                       {"version",p.version},{"aumid",p.aumid},{"createdAt",""}});
+    }
+    return result;
+}
+std::string webDispatch(const std::string& message) {
+    using json=nlohmann::json;
+    json response={{"id",0},{"ok",false}};
+    try {
+        auto request=json::parse(message);
+        if (!request.is_object() || !request.contains("id") || !request["id"].is_number_unsigned() ||
+            !request.contains("method") || !request["method"].is_string()) throw std::runtime_error("Некорректный запрос.");
+        response["id"]=request["id"];
+        const std::string method=request["method"].get<std::string>();
+        const auto args=request.value("args",json::object());
+        if (!args.is_object()) throw std::runtime_error("Некорректные параметры.");
+        json result=json::object();
+        if (method=="ready") { result=webState(); response["readyMarker"]=true; }
+        else if (method=="selectProfile" || method=="saveProfile" || method=="deleteProfile") {
+            auto next=planWebProfileChange(profiles,method,args,storeWritable);
+            if (!saveLauncherProfiles(next)) throw std::runtime_error("Не удалось сохранить профили. Существующий файл не изменён.");
+            profiles=std::move(next); result=webState();
+        } else if (method=="detectGame") {
+            const auto id=detectMinecraftAppId();
+            if (id.empty()) throw std::runtime_error("Запустите одно окно Minecraft через меню Пуск и повторите поиск.");
+            result={{"aumid",toUtf8(id)}};
+        } else if (method=="launch") {
+            auto status=state.load(std::memory_order_acquire);
+            if (status==LauncherStatus::GameDetected || status==LauncherStatus::Loading || status==LauncherStatus::Loaded)
+                throw std::runtime_error("Minecraft уже обнаружен. Переключитесь в игру.");
+            if (status==LauncherStatus::MultipleGames) throw std::runtime_error("Найдено несколько игр. Закройте лишние и перезапустите клиент.");
+            if (GetTickCount64()<launchPendingUntil) throw std::runtime_error("Запрос уже отправлен. Ожидаем появления игры.");
+            const auto id=toWide(profiles.entries[profiles.selected].aumid);
+            if (!validAppId(id)) throw std::runtime_error("Выберите игру: запустите Minecraft, в Профилях нажмите Найти игру и Сохранить.");
+            const auto target=std::wstring(L"shell:AppsFolder\\")+id;
+            if (reinterpret_cast<INT_PTR>(ShellExecuteW(mainWindow,L"open",target.c_str(),nullptr,nullptr,SW_SHOWNORMAL))<=32)
+                throw std::runtime_error("Windows не запустила игру. Запустите её через Пуск, найдите App ID и сохраните профиль.");
+            launchPendingUntil=GetTickCount64()+10000;
+        } else if (method=="openLog") openLog(mainWindow);
+        else if (method=="minimize") ShowWindow(mainWindow,SW_MINIMIZE);
+        else if (method=="maximize") ShowWindow(mainWindow,IsZoomed(mainWindow)?SW_RESTORE:SW_MAXIMIZE);
+        else if (method=="close") PostMessageW(mainWindow,WM_CLOSE,0,0);
+        else throw std::runtime_error("Неизвестная команда.");
+        response["ok"]=true; response["result"]=std::move(result);
+    } catch (const std::exception& e) { response["error"]=e.what(); }
+    return response.dump(-1,' ',false,json::error_handler_t::replace);
+}
+void webReady() {
+    webActive=true;
+    for (HWND h : {homeNav,profileNav,profileList,labelEdit,nickEdit,appEdit,saveButton,newButton,deleteButton,detectButton,playButton,logButton}) ShowWindow(h,SW_HIDE);
+}
+void webFailure() { webActive=false; if (mainWindow && IsWindow(mainWindow)) switchPage(false); }
 LRESULT CALLBACK windowProc(HWND window,UINT msg,WPARAM w,LPARAM l) {
     switch(msg) {
     case WM_CREATE:
@@ -387,10 +458,11 @@ LRESULT CALLBACK windowProc(HWND window,UINT msg,WPARAM w,LPARAM l) {
         detectButton=CreateWindowExW(0,L"BUTTON",L"Найти игру",WS_CHILD|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(DETECT),nullptr,nullptr);
         if (!homeNav || !profileNav || !playButton || !logButton || !profileList || !labelEdit || !nickEdit || !appEdit || !saveButton || !newButton || !deleteButton || !detectButton || !inputBrush || !listBrush) return -1;
         SendMessageW(labelEdit,EM_SETLIMITTEXT,128,0); SendMessageW(nickEdit,EM_SETLIMITTEXT,128,0); SendMessageW(appEdit,EM_SETLIMITTEXT,512,0);
-        placeControls(); SetTimer(window,1,125,nullptr); return 0;
+        placeControls(); SetTimer(window,1,125,nullptr); startLauncherWebView(window,webDispatch,webReady,webFailure); return 0;
     case WM_TIMER: {
         static ULONGLONG lastClassic=0; auto now=GetTickCount64();
         if (now-lastClassic>=500) { updateClassic(); lastClassic=now; }
+        tickLauncherWebView(); updateLauncherWebViewStatus(webStatus());
         if (IsIconic(window)) return 0;
         InvalidateRect(window,nullptr,FALSE);
         for (HWND h : {homeNav,profileNav,playButton,logButton,saveButton,newButton,deleteButton,detectButton}) if (IsWindowVisible(h)) InvalidateRect(h,nullptr,FALSE);
@@ -409,7 +481,7 @@ LRESULT CALLBACK windowProc(HWND window,UINT msg,WPARAM w,LPARAM l) {
         return TRUE;
     }
     case WM_SIZE:
-        if (w!=SIZE_MINIMIZED) { placeControls(); InvalidateRect(window,nullptr,TRUE); }
+        if (w!=SIZE_MINIMIZED) { placeControls(); resizeLauncherWebView(); InvalidateRect(window,nullptr,TRUE); }
         return 0;
     case WM_GETMINMAXINFO: {
         RECT r{0,0,S(760),S(480)};
@@ -465,6 +537,7 @@ LRESULT CALLBACK windowProc(HWND window,UINT msg,WPARAM w,LPARAM l) {
         else ExitProcess(0);
         DestroyWindow(window); return 0;
     case WM_DESTROY:
+        closeLauncherWebView();
         disposeFonts();
         if(inputBrush) { DeleteObject(inputBrush); inputBrush=nullptr; }
         if(listBrush) { DeleteObject(listBrush); listBrush=nullptr; }
@@ -499,7 +572,7 @@ DWORD WINAPI uiThread(void*) {
     ShowWindow(window,SW_SHOW); UpdateWindow(window);
     MSG message{};
     while (GetMessageW(&message,nullptr,0,0)>0) {
-        if (!IsDialogMessageW(window,&message)) { TranslateMessage(&message); DispatchMessageW(&message); }
+        if (webActive || !IsDialogMessageW(window,&message)) { TranslateMessage(&message); DispatchMessageW(&message); }
     }
     UnregisterClassW(wc.lpszClassName,instance); cleanupIcons(); unloadHero();
     if (SUCCEEDED(com)) CoUninitialize();
