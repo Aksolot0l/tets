@@ -26,7 +26,9 @@ int dpi = 96;
 HFONT fontSmall = nullptr, fontBody = nullptr, fontBold = nullptr, fontTitle = nullptr, fontBrand = nullptr;
 ULONG_PTR gdiplusToken = 0;
 Gdiplus::Image* heroImage = nullptr;
+Gdiplus::Image* mascotImage = nullptr;
 IStream* heroStream = nullptr;
+IStream* mascotStream = nullptr;
 constexpr int PLAY=101, LOG=103, HOME=104, PROFILES=105, LIST=106, LABEL=107, NICK=108, APPID=109,
               SAVE=110, NEW_PROFILE=111, DELETE_PROFILE=112, DETECT=113;
 int S(int n) { return MulDiv(n, dpi, 96); }
@@ -43,13 +45,15 @@ HFONT font(int size, int weight) {
 }
 void rounded(HDC dc, int x,int y,int w,int h,int r,COLORREF color);
 void makeFonts() { disposeFonts(); fontSmall=font(12,FW_NORMAL); fontBody=font(14,FW_NORMAL); fontBold=font(14,FW_SEMIBOLD); fontTitle=font(27,FW_BOLD); fontBrand=font(17,FW_BOLD); }
-void loadHero() {
-    Gdiplus::GdiplusStartupInput input;
-    if (Gdiplus::GdiplusStartup(&gdiplusToken, &input, nullptr) != Gdiplus::Ok) { gdiplusToken=0; return; }
+HMODULE launcherModule() {
     HMODULE module=nullptr;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                            reinterpret_cast<LPCWSTR>(&launcherStartUi),&module)) return;
-    HRSRC resource=FindResourceW(module,MAKEINTRESOURCEW(101),RT_RCDATA);
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       reinterpret_cast<LPCWSTR>(&launcherStartUi),&module);
+    return module;
+}
+void loadImageResource(int id, Gdiplus::Image*& image, IStream*& stream) {
+    HMODULE module=launcherModule(); if (!module) return;
+    HRSRC resource=FindResourceW(module,MAKEINTRESOURCEW(id),RT_RCDATA);
     if (!resource) return;
     DWORD size=SizeofResource(module,resource); HGLOBAL found=LoadResource(module,resource);
     const void* bytes=found?LockResource(found):nullptr;
@@ -59,14 +63,29 @@ void loadHero() {
     void* target=GlobalLock(memory);
     if (!target) { GlobalFree(memory); return; }
     std::memcpy(target,bytes,size); GlobalUnlock(memory);
-    if (FAILED(CreateStreamOnHGlobal(memory,TRUE,&heroStream))) { GlobalFree(memory); return; }
-    heroImage=Gdiplus::Image::FromStream(heroStream);
-    if (!heroImage || heroImage->GetLastStatus()!=Gdiplus::Ok) { delete heroImage; heroImage=nullptr; heroStream->Release(); heroStream=nullptr; }
+    if (FAILED(CreateStreamOnHGlobal(memory,TRUE,&stream))) { GlobalFree(memory); return; }
+    image=Gdiplus::Image::FromStream(stream);
+    if (!image || image->GetLastStatus()!=Gdiplus::Ok) { delete image; image=nullptr; stream->Release(); stream=nullptr; }
+}
+void loadHero() {
+    Gdiplus::GdiplusStartupInput input;
+    if (Gdiplus::GdiplusStartup(&gdiplusToken, &input, nullptr) != Gdiplus::Ok) { gdiplusToken=0; return; }
+    loadImageResource(101,heroImage,heroStream);
+    loadImageResource(102,mascotImage,mascotStream);
 }
 void unloadHero() {
     delete heroImage; heroImage=nullptr;
+    delete mascotImage; mascotImage=nullptr;
     if (heroStream) { heroStream->Release(); heroStream=nullptr; }
+    if (mascotStream) { mascotStream->Release(); mascotStream=nullptr; }
     if (gdiplusToken) { Gdiplus::GdiplusShutdown(gdiplusToken); gdiplusToken=0; }
+}
+void drawMascot(HDC dc, int x, int y, int size) {
+    if (!mascotImage) return;
+    Gdiplus::Graphics graphics(dc);
+    graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+    graphics.DrawImage(mascotImage,Gdiplus::Rect(S(x),S(y),S(size),S(size)),0,0,
+                       static_cast<int>(mascotImage->GetWidth()),static_cast<int>(mascotImage->GetHeight()),Gdiplus::UnitPixel);
 }
 void drawHero(HDC dc) {
     rounded(dc,226,75,650,252,18,rgb(20,43,33));
@@ -228,14 +247,23 @@ void paint(HWND window) {
     if (!dc || !bitmap) { if(bitmap) DeleteObject(bitmap); if(dc) DeleteDC(dc); EndPaint(window,&ps); return; }
     HGDIOBJ old=SelectObject(dc,bitmap); fill(dc,client,rgb(14,24,21));
     RECT sidebar{0,0,S(190),client.bottom}; fill(dc,sidebar,rgb(9,18,15));
-    rounded(dc,23,28,40,40,11,rgb(52,208,143));
-    text(dc,L"G",23,28,40,40,fontBrand,rgb(8,38,26),DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+    if (mascotImage) drawMascot(dc,20,25,46);
+    else {
+        rounded(dc,23,28,40,40,11,rgb(52,208,143));
+        text(dc,L"G",23,28,40,40,fontBrand,rgb(8,38,26),DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+    }
     text(dc,L"GAYCLIENT",74,28,105,25,fontBrand,rgb(236,247,240));
     text(dc,L"GAME LAUNCHER",75,52,105,17,fontSmall,rgb(111,143,125));
     text(dc,L"НАВИГАЦИЯ",25,99,145,19,fontSmall,rgb(91,123,105));
-    text(dc,L"MINECRAFT",25,430,145,19,fontSmall,rgb(91,123,105));
-    text(dc,L"Windows 10",25,454,145,22,fontBody,rgb(197,218,203));
-    text(dc,L"Версия 1.1.5",25,479,145,18,fontSmall,rgb(111,143,125));
+    rounded(dc,16,262,158,172,16,rgb(16,33,26));
+    text(dc,L"GAYCLIENT  /  МАСКОТ",26,271,138,18,fontSmall,rgb(100,156,119));
+    int mascotFloat=static_cast<int>(2.0*std::sin(static_cast<double>(GetTickCount64()%5000)/800.0));
+    if (mascotImage) drawMascot(dc,44,289+mascotFloat,102);
+    else text(dc,L"G",44,289,102,102,fontTitle,rgb(64,217,151),DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+    text(dc,L"НА СВЯЗИ",25,395,140,20,fontBold,rgb(210,239,216),DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+    text(dc,L"ТВОЙ КЛИЕНТ",25,415,140,16,fontSmall,rgb(111,153,123),DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+    text(dc,L"MINECRAFT  /  WINDOWS 10",25,452,145,19,fontSmall,rgb(91,123,105));
+    text(dc,L"Версия 1.1.5",25,478,145,18,fontSmall,rgb(135,171,145));
     text(dc,L"ВАШ ЛАУНЧЕР",226,28,230,22,fontSmall,rgb(112,158,130));
     auto currentName=toWide(profiles.entries[profiles.selected].label);
     auto currentCaption=std::wstring(L"Профиль: ")+currentName;
@@ -243,6 +271,9 @@ void paint(HWND window) {
 
     if (!profilesPage) {
     drawHero(dc);
+    rounded(dc,743,288,116,26,12,rgb(11,29,20));
+    drawMascot(dc,747,290,22);
+    text(dc,L"GAYCLIENT",772,288,81,26,fontSmall,rgb(171,222,184));
     rounded(dc,252,100,124,24,12,rgb(29,75,52));
     text(dc,L"ВАШ МИР ЖДЁТ",261,100,110,24,fontSmall,rgb(115,232,165));
     text(dc,L"Готов к новым\nприключениям?",252,141,310,74,fontTitle,rgb(245,251,246),DT_LEFT|DT_WORDBREAK);
@@ -384,20 +415,25 @@ DWORD WINAPI uiThread(void*) {
     loadHero();
     storeWritable=loadLauncherProfiles(profiles);
     HINSTANCE instance=GetModuleHandleW(nullptr);
+    HMODULE module=launcherModule();
+    HICON bigIcon=module?static_cast<HICON>(LoadImageW(module,MAKEINTRESOURCEW(103),IMAGE_ICON,S(32),S(32),0)):nullptr;
+    HICON smallIcon=module?static_cast<HICON>(LoadImageW(module,MAKEINTRESOURCEW(103),IMAGE_ICON,S(16),S(16),0)):nullptr;
+    auto cleanupIcons=[&]() { if (bigIcon) DestroyIcon(bigIcon); if (smallIcon) DestroyIcon(smallIcon); };
     WNDCLASSEXW wc{}; wc.cbSize=sizeof(wc); wc.hInstance=instance; wc.lpfnWndProc=windowProc;
-    wc.lpszClassName=L"GAYClientModernLauncherV1"; wc.hCursor=LoadCursorW(nullptr,IDC_ARROW); wc.hIcon=LoadIconW(nullptr,IDI_APPLICATION);
-    if (!RegisterClassExW(&wc)) { unloadHero(); if (SUCCEEDED(com)) CoUninitialize(); return 1; }
+    wc.lpszClassName=L"GAYClientModernLauncherV1"; wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);
+    wc.hIcon=bigIcon?bigIcon:LoadIconW(nullptr,IDI_APPLICATION); wc.hIconSm=smallIcon;
+    if (!RegisterClassExW(&wc)) { cleanupIcons(); unloadHero(); if (SUCCEEDED(com)) CoUninitialize(); return 1; }
     DWORD style=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX|WS_CLIPCHILDREN;
     RECT rect{0,0,S(900),S(530)}; AdjustWindowRectEx(&rect,style,FALSE,0);
     HWND window=CreateWindowExW(0,wc.lpszClassName,L"GAYClient",style,CW_USEDEFAULT,CW_USEDEFAULT,
                                 rect.right-rect.left,rect.bottom-rect.top,nullptr,nullptr,instance,nullptr);
-    if (!window) { unloadHero(); if (SUCCEEDED(com)) CoUninitialize(); return 1; }
+    if (!window) { UnregisterClassW(wc.lpszClassName,instance); cleanupIcons(); unloadHero(); if (SUCCEEDED(com)) CoUninitialize(); return 1; }
     ShowWindow(window,SW_SHOW); UpdateWindow(window);
     MSG message{};
     while (GetMessageW(&message,nullptr,0,0)>0) {
         if (!IsDialogMessageW(window,&message)) { TranslateMessage(&message); DispatchMessageW(&message); }
     }
-    unloadHero();
+    UnregisterClassW(wc.lpszClassName,instance); cleanupIcons(); unloadHero();
     if (SUCCEEDED(com)) CoUninitialize();
     return 0;
 }

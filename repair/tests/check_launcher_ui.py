@@ -25,6 +25,10 @@ assert 'CreateProcess' not in ui and 'WinExec' not in ui
 dll = (root / 'repair/GAYClientLauncher.dll').read_bytes()
 art = (root / 'repair/assets/launcher-world.jpg').read_bytes()
 assert art[:3] == b'\xff\xd8\xff' and art in dll, 'hero image must be embedded in the launcher DLL'
+mascot = (root / 'repair/assets/mascot.png').read_bytes()
+assert mascot[:8] == b'\x89PNG\r\n\x1a\n' and mascot in dll, 'mascot must be embedded in the launcher DLL'
+assert 'loadImageResource(102,mascotImage,mascotStream)' in ui
+assert 'MAKEINTRESOURCEW(103)' in ui and 'wc.hIcon=bigIcon' in ui
 assert 'FindResourceW' in ui and 'GdiplusStartup' in ui
 binary = subprocess.check_output(['objdump', '-p', str(root / 'repair/GAYClientLauncher.dll')], text=True)
 for symbol in ('ShellExecuteW', 'CoInitializeEx', 'CreateWindowExW', 'SetWindowsHookExW', 'GAYClientAutoloadImport', 'GdiplusStartup', 'FindResourceW', 'GetApplicationUserModelId'):
