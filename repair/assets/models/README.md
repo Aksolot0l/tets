@@ -13,3 +13,22 @@ client, and there is currently no diamond-sword replacement. Its GLB metadata
 identifies five triangle meshes with five materials, no texture images, no
 skinning, and no animations. Any future conversion must retain attribution and
 mark modifications.
+
+### Offline conversion (experimental, not used by the client)
+
+`python repair/tools/convert_katana.py repair/assets/models/cyberpunk-katana.glb katana.gcm`
+converts this static, untextured model into the experimental GCM1 format. The
+output is a derivative of the model above; retain its author/source/license
+attribution and state that the geometry and base colors were converted when
+distributing it. PBR properties (including emissive and metallic), extra vertex
+attributes and material culling settings are not preserved. Placement relative
+to the hand and the game renderer are not implemented.
+
+GCM1 is little-endian: ASCII `GCM1`, uint32 version (1), uint32 vertex count,
+uint32 index count, uint32 group count; then vertices of six float32 values
+(position xyz, normal xyz), uint32 triangle indices, and groups of uint32 first
+index, uint32 index count, four float32 base-color factors (RGBA). Groups cover
+all indices consecutively. Reader limits are 100,000 vertices, 300,000 indices
+and 128 groups. `src/katana_mesh.h` validates the entire byte buffer before
+exposing a borrowed read-only view; its backing bytes must remain alive and
+unchanged throughout use. It is standalone and not wired into the DLL.

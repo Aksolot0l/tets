@@ -42,6 +42,10 @@ SDK и Dear ImGui сюда не включены. Исходников закр�
    - repair/src/visual_trail.h
    - repair/src/visual_jump.h
    - repair/src/visual_accessory.h
+   - repair/src/katana_mesh.h
+   - repair/tools/convert_katana.py
+   - repair/tests/katana_mesh.cpp
+   - repair/tests/check_katana_converter.py
    - repair/tests/visual_accessory.cpp
    - repair/tests/check_visual_accessory.py
    - repair/tests/visual_jump.cpp
@@ -6196,4 +6200,302 @@ assert 'CreateFile' not in mesh and 'ReadProcessMemory' not in mesh
 print('3D crown wiring OK; Windows/Minecraft test required')
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_visual_accessory.py
+================================================================================
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/katana_mesh.h
+================================================================================
+#pragma once
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+
+// Read-only view over offline-converted GCM1 geometry. Independent of the game
+// and renderer; callers own the bytes and must keep them alive while using it.
+namespace katana_mesh {
+constexpr std::uint32_t maxVertices=100000, maxIndices=300000, maxGroups=128;
+struct Vertex { float position[3]{}, normal[3]{}; };
+struct Group { std::uint32_t first=0, count=0; float color[4]{}; };
+inline std::uint32_t u32(const std::uint8_t* p) {
+ return std::uint32_t(p[0]) | (std::uint32_t(p[1])<<8) | (std::uint32_t(p[2])<<16) | (std::uint32_t(p[3])<<24);
+}
+inline float f32(const std::uint8_t* p) {
+ const auto v=u32(p); float result; static_assert(sizeof(result)==4,"32-bit float required"); std::memcpy(&result,&v,4); return result;
+}
+class View {
+public:
+ bool load(const void* bytes,std::size_t length) {
+  *this=View{};
+  if(!bytes || length<20) return false;
+  const auto* p=static_cast<const std::uint8_t*>(bytes);
+  if(std::memcmp(p,"GCM1",4)!=0 || u32(p+4)!=1) return false;
+  const std::uint32_t v=u32(p+8), i=u32(p+12), g=u32(p+16);
+  if(!v || v>maxVertices || !i || i>maxIndices || i%3 || !g || g>maxGroups) return false;
+  const std::uint64_t expect=20ull+24ull*v+4ull*i+24ull*g;
+  if(expect!=length) return false;
+  const std::size_t indexOffset=20+std::size_t(v)*24, groupOffset=indexOffset+std::size_t(i)*4;
+  for(std::uint32_t n=0;n<v;++n) for(int k=0;k<6;++k) {
+   float x=f32(p+20+std::size_t(n)*24+k*4);
+   if(!std::isfinite(x) || std::fabs(x)>1000000.f) return false;
+  }
+  for(std::uint32_t n=0;n<i;++n) if(u32(p+indexOffset+std::size_t(n)*4)>=v) return false;
+  std::uint32_t next=0;
+  for(std::uint32_t n=0;n<g;++n) {
+   const auto* q=p+groupOffset+std::size_t(n)*24;
+   const auto first=u32(q), count=u32(q+4);
+   if(first!=next || !count || count%3 || count>i-first) return false;
+   for(int k=0;k<4;++k) { float x=f32(q+8+k*4); if(!std::isfinite(x) || x<0 || x>1) return false; }
+   next=first+count;
+  }
+  if(next!=i) return false;
+  data_=p; vertices_=v; indices_=i; groups_=g; indexOffset_=indexOffset; groupOffset_=groupOffset; return true;
+ }
+ std::uint32_t vertices() const { return vertices_; }
+ std::uint32_t indices() const { return indices_; }
+ std::uint32_t groups() const { return groups_; }
+ bool vertex(std::uint32_t i,Vertex& out) const {
+  if(!data_ || i>=vertices_) return false;
+  const auto* p=data_+20+std::size_t(i)*24;
+  for(int k=0;k<3;++k) { out.position[k]=f32(p+k*4); out.normal[k]=f32(p+12+k*4); } return true;
+ }
+ bool index(std::uint32_t i,std::uint32_t& out) const {
+  if(!data_ || i>=indices_) return false;
+  out=u32(data_+indexOffset_+std::size_t(i)*4); return true;
+ }
+ bool group(std::uint32_t i,Group& out) const {
+  if(!data_ || i>=groups_) return false;
+  const auto* p=data_+groupOffset_+std::size_t(i)*24;
+  out.first=u32(p); out.count=u32(p+4); for(int k=0;k<4;++k) out.color[k]=f32(p+8+k*4); return true;
+ }
+private:
+ const std::uint8_t* data_=nullptr; std::uint32_t vertices_=0,indices_=0,groups_=0;
+ std::size_t indexOffset_=0,groupOffset_=0;
+};
+}
+================================================================================
+КОНЕЦ ФАЙЛА: repair/src/katana_mesh.h
+================================================================================
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tools/convert_katana.py
+================================================================================
+#!/usr/bin/env python3
+"""Offline, bounded GLB-to-simple-mesh converter for the supplied static katana.
+
+No game or process access. Supports only uncompressed triangle geometry,
+embedded BIN buffers, POSITION/NORMAL float VEC3, 16/32-bit indices, rigid
+node matrices, and untextured base-color materials. Unsupported scene features
+are rejected; other material/vertex properties, including PBR, are discarded.
+Coordinates and base colors are baked; item placement/rendering is absent.
+"""
+from __future__ import annotations
+import json
+import math
+import struct
+import sys
+from pathlib import Path
+
+MAX_FILE = 8 * 1024 * 1024
+MAX_VERTICES = 100_000
+MAX_INDICES = 300_000
+MAX_GROUPS = 128
+I = (1.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.,0.,0.,0.,0.,1.)
+
+def require(ok, message):
+    if not ok:
+        raise ValueError(message)
+
+def matrix_mul(a,b):
+    return tuple(sum(a[k*4+r]*b[c*4+k] for k in range(4)) for c in range(4) for r in range(4))
+
+def transform(m, p, w):
+    return tuple(sum(m[k*4+r]*p[k] for k in range(3))+m[12+r]*w for r in range(3))
+
+def rigid_matrix(values):
+    require(isinstance(values, list) and len(values)==16, 'invalid matrix')
+    m=tuple(float(x) for x in values)
+    require(all(math.isfinite(x) and abs(x)<1e5 for x in m), 'invalid matrix values')
+    require(all(abs(m[i])<1e-5 for i in (3,7,11)) and abs(m[15]-1)<1e-5, 'non-affine matrix')
+    for x in range(3):
+        for y in range(3):
+            dot=sum(m[x*4+k]*m[y*4+k] for k in range(3))
+            require(abs(dot-(1 if x==y else 0))<1e-4, 'scaled/sheared matrix not supported')
+    return m
+
+def parse_glb(data):
+    require(20 <= len(data) <= MAX_FILE, 'file size unsupported')
+    magic,version,total=struct.unpack_from('<4sII',data)
+    require((magic,version,total)==(b'glTF',2,len(data)), 'invalid GLB header')
+    chunks=[]; off=12
+    while off < len(data):
+        require(off+8<=len(data), 'truncated chunk header')
+        length,kind=struct.unpack_from('<I4s',data,off); off+=8
+        require(length%4==0 and off+length<=len(data), 'invalid chunk size')
+        chunks.append((kind,data[off:off+length])); off+=length
+    require(len(chunks)==2 and chunks[0][0]==b'JSON' and chunks[1][0]==b'BIN\0', 'expected JSON and BIN chunks')
+    doc=json.loads(chunks[0][1].decode('utf-8'))
+    require(isinstance(doc,dict) and doc.get('asset',{}).get('version')=='2.0', 'not glTF 2.0')
+    require(not doc.get('extensionsRequired') and not doc.get('images') and not doc.get('textures'), 'extensions/textures unsupported')
+    require(not doc.get('skins') and not doc.get('animations'), 'skinning/animation unsupported')
+    buffers=doc.get('buffers',[])
+    require(len(buffers)==1 and 'uri' not in buffers[0] and isinstance(buffers[0].get('byteLength'),int) and 0<=buffers[0]['byteLength']<=len(chunks[1][1]), 'invalid BIN buffer')
+    return doc,chunks[1][1][:buffers[0]['byteLength']]
+
+def read_accessor(doc, blob, index, component, shape):
+    accessors=doc.get('accessors',[]); views=doc.get('bufferViews',[])
+    require(isinstance(index,int) and 0<=index<len(accessors), 'accessor index invalid')
+    a=accessors[index]
+    require('sparse' not in a and not a.get('normalized',False), 'sparse/normalized accessor unsupported')
+    require(a.get('componentType')==component and a.get('type')==shape, 'unexpected accessor format')
+    vi=a.get('bufferView'); require(isinstance(vi,int) and 0<=vi<len(views), 'invalid buffer view')
+    v=views[vi]; require(v.get('buffer')==0, 'external buffer unsupported')
+    count=a.get('count'); limit=MAX_INDICES if shape=='SCALAR' else MAX_VERTICES
+    require(isinstance(count,int) and 0<count<=limit, 'accessor count invalid')
+    fmt={ (5126,'VEC3'):'<3f', (5123,'SCALAR'):'<H', (5125,'SCALAR'):'<I' }.get((component,shape))
+    require(fmt is not None, 'accessor type unsupported')
+    item=struct.calcsize(fmt); start=v.get('byteOffset',0); length=v.get('byteLength',-1)
+    aoff=a.get('byteOffset',0); stride=v.get('byteStride',item)
+    require(all(isinstance(x,int) for x in (start,length,aoff,stride)), 'invalid offsets')
+    require(start>=0 and length>=0 and aoff>=0 and stride>=item and stride<=252 and start+length<=len(blob), 'invalid buffer bounds')
+    require(aoff+(count-1)*stride+item<=length, 'accessor out of bounds')
+    vals=[struct.unpack_from(fmt,blob,start+aoff+i*stride) for i in range(count)]
+    if shape=='VEC3': require(all(math.isfinite(x) and abs(x)<1e5 for row in vals for x in row), 'invalid vertex')
+    return vals
+
+def convert(data):
+    doc,blob=parse_glb(data); nodes=doc.get('nodes',[]); scenes=doc.get('scenes',[])
+    scene=doc.get('scene',0); require(isinstance(scene,int) and 0<=scene<len(scenes), 'invalid scene')
+    vertices=[]; indices=[]; groups=[]; active=set(); visited=set()
+    def visit(n,parent):
+        require(isinstance(n,int) and 0<=n<len(nodes) and n not in active and n not in visited, 'invalid/cyclic/shared scene node')
+        require(len(active)<64, 'scene nesting too deep'); active.add(n); visited.add(n); node=nodes[n]
+        require(not any(k in node for k in ('translation','rotation','scale','skin','weights')), 'node TRS/skin unsupported')
+        m=matrix_mul(parent,rigid_matrix(node['matrix']) if 'matrix' in node else I)
+        if 'mesh' in node:
+            meshes=doc.get('meshes',[]); mi=node['mesh']; require(isinstance(mi,int) and 0<=mi<len(meshes), 'invalid mesh')
+            for prim in meshes[mi].get('primitives',[]):
+                require(prim.get('mode',4)==4 and not prim.get('targets') and not prim.get('extensions'), 'primitive unsupported')
+                a=prim.get('attributes',{}); pos=read_accessor(doc,blob,a.get('POSITION'),5126,'VEC3')
+                norm=read_accessor(doc,blob,a.get('NORMAL'),5126,'VEC3'); require(len(pos)==len(norm), 'normal count mismatch')
+                ai=prim.get('indices'); acc=doc.get('accessors',[])
+                require(isinstance(ai,int) and 0<=ai<len(acc), 'missing indices')
+                it=acc[ai].get('componentType'); require(it in (5123,5125), 'index type unsupported')
+                ix=[row[0] for row in read_accessor(doc,blob,ai,it,'SCALAR')]
+                require(len(ix)%3==0 and all(i<len(pos) for i in ix), 'invalid triangle indices')
+                require(len(vertices)+len(pos)<=MAX_VERTICES and len(indices)+len(ix)<=MAX_INDICES and len(groups)<MAX_GROUPS, 'mesh too large')
+                material=prim.get('material'); mats=doc.get('materials',[])
+                require(isinstance(material,int) and 0<=material<len(mats), 'missing material')
+                pbr=mats[material].get('pbrMetallicRoughness',{})
+                require('baseColorTexture' not in pbr and not mats[material].get('extensions'), 'textured/extension material unsupported')
+                color=pbr.get('baseColorFactor',[1.,1.,1.,1.]); require(isinstance(color,list) and len(color)==4 and all(isinstance(x,(int,float)) and math.isfinite(x) and 0<=x<=1 for x in color),'invalid color')
+                first_v=len(vertices); first_i=len(indices)
+                baked=[(*transform(m,p,1),*transform(m,norm[j],0)) for j,p in enumerate(pos)]
+                require(all(math.isfinite(x) and abs(x)<=1e6 for row in baked for x in row), 'transformed vertex out of range')
+                vertices.extend(baked)
+                indices.extend(first_v+i for i in ix)
+                groups.append((first_i,len(ix),tuple(float(x) for x in color)))
+        children=node.get('children',[]); require(isinstance(children,list), 'invalid children')
+        for c in children: visit(c,m)
+        active.remove(n)
+    roots=scenes[scene].get('nodes',[]); require(isinstance(roots,list) and roots, 'empty scene')
+    for root in roots: visit(root,I)
+    require(vertices and indices and groups, 'empty mesh')
+    out=bytearray(struct.pack('<4sIIII',b'GCM1',1,len(vertices),len(indices),len(groups)))
+    for v in vertices: out.extend(struct.pack('<6f',*v))
+    for index in indices: out.extend(struct.pack('<I',index))
+    for first,count,color in groups: out.extend(struct.pack('<II4f',first,count,*color))
+    return bytes(out)
+
+def main():
+    if len(sys.argv)!=3:
+        raise SystemExit('usage: convert_katana.py INPUT.glb OUTPUT.gcm')
+    src,dst=map(Path,sys.argv[1:]); require(src.resolve()!=dst.resolve(),'input and output must differ')
+    require(src.stat().st_size<=MAX_FILE,'file too large')
+    data=convert(src.read_bytes()); dst.write_bytes(data)
+    _,_,v,i,g=struct.unpack_from('<4sIIII',data)
+    print(f'Converted {v} vertices, {i//3} triangles, {g} material groups to {dst}')
+
+if __name__=='__main__':
+    main()
+================================================================================
+КОНЕЦ ФАЙЛА: repair/tools/convert_katana.py
+================================================================================
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/katana_mesh.cpp
+================================================================================
+#include "../src/katana_mesh.h"
+#include <cassert>
+#include <cstring>
+#include <fstream>
+#include <iterator>
+#include <vector>
+using namespace katana_mesh;
+static void put32(std::vector<std::uint8_t>& b,std::size_t i,std::uint32_t n) {
+ for(int k=0;k<4;++k) b[i+k]=static_cast<std::uint8_t>(n>>(k*8));
+}
+static void putf(std::vector<std::uint8_t>& b,std::size_t i,float x) { std::uint32_t n=0; std::memcpy(&n,&x,4); put32(b,i,n); }
+int main(int argc,char** argv) {
+ std::vector<std::uint8_t> b(20+3*24+3*4+24); std::memcpy(b.data(),"GCM1",4);
+ put32(b,4,1); put32(b,8,3); put32(b,12,3); put32(b,16,1);
+ putf(b,20+24,1.f); putf(b,20+2*24+4,1.f);
+ auto ix=20+3*24; put32(b,ix+4,1); put32(b,ix+8,2);
+ auto gr=ix+12; put32(b,gr,0); put32(b,gr+4,3); for(int i=0;i<4;++i) putf(b,gr+8+i*4,1.f);
+ View m; assert(m.load(b.data(),b.size())); assert(m.vertices()==3 && m.indices()==3 && m.groups()==1);
+ Vertex v; Group g; std::uint32_t index=99;
+ assert(m.vertex(1,v) && v.position[0]==1.f); assert(m.index(2,index) && index==2); assert(m.group(0,g) && g.count==3 && g.color[3]==1.f);
+ assert(!m.vertex(3,v) && !m.index(3,index) && !m.group(1,g));
+ assert(!m.load(b.data(),b.size()-1) && m.vertices()==0); assert(!m.vertex(0,v));
+ put32(b,ix,3); assert(!m.load(b.data(),b.size())); put32(b,ix,0);
+ put32(b,gr+4,2); assert(!m.load(b.data(),b.size())); put32(b,gr+4,3);
+ put32(b,20,0x7fc00000); assert(!m.load(b.data(),b.size())); put32(b,20,0);
+ putf(b,gr+8,1.2f); assert(!m.load(b.data(),b.size())); putf(b,gr+8,1.f);
+ put32(b,8,0xffffffff); assert(!m.load(b.data(),b.size()));
+ if(argc>1) {
+  std::ifstream f(argv[1],std::ios::binary); assert(f);
+  std::vector<std::uint8_t> asset((std::istreambuf_iterator<char>(f)),std::istreambuf_iterator<char>());
+  assert(m.load(asset.data(),asset.size()));
+  assert(m.vertices()==4572 && m.indices()==7866 && m.groups()==5);
+  assert(m.group(1,g) && g.first==1074 && g.count==888 && g.color[1]>.79f);
+  assert(m.index(7865,index) && index<4572);
+ }
+}
+================================================================================
+КОНЕЦ ФАЙЛА: repair/tests/katana_mesh.cpp
+================================================================================
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/check_katana_converter.py
+================================================================================
+from pathlib import Path
+import importlib.util, json, math, struct
+r=Path(__file__).resolve().parents[1]
+spec=importlib.util.spec_from_file_location('convert_katana',r/'tools/convert_katana.py')
+c=importlib.util.module_from_spec(spec); spec.loader.exec_module(c)
+source=(r/'assets/models/cyberpunk-katana.glb').read_bytes()
+result=c.convert(source)
+magic,version,v,i,g=struct.unpack_from('<4sIIII',result)
+assert (magic,version,v,i,g)==(b'GCM1',1,4572,7866,5)
+assert len(result)==20+v*24+i*4+g*24
+indices=struct.unpack_from('<%dI'%i,result,20+v*24)
+assert max(indices)<v
+at=20+v*24+i*4; groups=[struct.unpack_from('<II4f',result,at+n*24) for n in range(g)]
+assert [x[:2] for x in groups]==[(0,1074),(1074,888),(1962,552),(2514,4224),(6738,1128)]
+assert all(0<=channel<=1 for x in groups for channel in x[2:])
+assert groups[1][3]>.79 and groups[1][2]<.08 # green material preserved
+verts=[struct.unpack_from('<6f',result,20+n*24) for n in range(v)]
+assert all(math.isfinite(x) for vert in verts for x in vert)
+assert min(x[0] for x in verts)<-8 and max(x[0] for x in verts)>8
+assert c.convert(source)==result # deterministic
+for b in (b'',source[:-1],b'BAD!'+source[4:]):
+ try: c.convert(b)
+ except (ValueError,IndexError,KeyError,struct.error,json.JSONDecodeError): pass
+ else: raise AssertionError('corrupted GLB unexpectedly accepted')
+try: c.rigid_matrix([1.,0,0,0,0,2.,0,0,0,0,1.,0,0,0,0,1.])
+except ValueError: pass
+else: raise AssertionError('scaled matrix unexpectedly accepted')
+print('Katana conversion: 4572 vertices, 2622 triangles, 5 colors; no game integration')
+================================================================================
+КОНЕЦ ФАЙЛА: repair/tests/check_katana_converter.py
 ================================================================================

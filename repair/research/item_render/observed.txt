@@ -34,3 +34,19 @@ field. This is a candidate identity relationship only: no stack layout,
 first-person path, diamond identity, thread affinity, transform or safe
 suppression behavior is confirmed. Do not skip/call/hook these functions on
 this evidence alone; the code can modify renderer/tessellator state.
+
+User-supplied ITEM_RENDER_DIAG_3.txt, same executable SHA. In candidate
+0x59f300 the third parameter is used as an item-stack-like object, with
+pointers at +0x10/+0x18. Code in 0x5a10a5 likewise selects that object's
++0x10 pointer and reads a short at +0x36; this resembles the field used by the
+item registration sequence. 0x59f200 is not a no-side-effect draw: it calls
+0x7308c0/0x730bd0/0x730cd0 based on flags in its second parameter. Skipping or
+replacing it based only on a file scan could break setup/cleanup and hand or
+other item draws. 0x509640 is arithmetic on floats/shorts, not verified item
+identity. Which path corresponds to first-person diamond sword, where to place
+custom geometry and whether the current material honors colors remain unknown.
+
+The supplied katana contains 4572 vertices, 7866 triangle indices and five
+materials; no images, skinning or animation. The offline converter produces a
+bounded GCM1 model retaining positions, normals and base colors. This is only
+asset preparation; GCM1 is not yet loaded or displayed by the game client.
