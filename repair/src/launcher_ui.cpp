@@ -4,6 +4,7 @@
 #define _UNICODE
 #include "launcher_ui.h"
 #include "launcher_webview.h"
+#include "launcher_startup_view.h"
 #include <shellapi.h>
 #include <objbase.h>
 #include <gdiplus.h>
@@ -42,7 +43,8 @@ BOOL CALLBACK closeOriginalWindow(HWND window, LPARAM) {
 HWND mainWindow = nullptr, classicWindow = nullptr, playButton = nullptr, logButton = nullptr;
 HWND homeNav=nullptr, profileNav=nullptr, profileList=nullptr, labelEdit=nullptr, nickEdit=nullptr, appEdit=nullptr;
 HWND saveButton=nullptr, newButton=nullptr, deleteButton=nullptr, detectButton=nullptr;
-bool hiddenClassicOnce = false, profilesPage = false, newProfile = false, storeWritable = true, webActive = false;
+bool hiddenClassicOnce = false, profilesPage = false, newProfile = false, storeWritable = true;
+LauncherStartupView startupView;
 LauncherProfiles profiles = defaultLauncherProfiles();
 HBRUSH inputBrush = nullptr, listBrush = nullptr;
 ULONGLONG launchPendingUntil = 0;
@@ -303,6 +305,24 @@ void paint(HWND window) {
     HDC dc=CreateCompatibleDC(screen); HBITMAP bitmap=CreateCompatibleBitmap(screen,client.right,client.bottom);
     if (!dc || !bitmap) { if(bitmap) DeleteObject(bitmap); if(dc) DeleteDC(dc); EndPaint(window,&ps); return; }
     HGDIOBJ old=SelectObject(dc,bitmap); fill(dc,client,rgb(14,24,21));
+    // While WebView initializes, show a neutral branded loading screen rather
+    // than briefly displaying the fully interactive Win32 fallback home page.
+    if (startupView.value()!=LauncherView::Fallback) {
+        if (startupView.value()==LauncherView::Loading) {
+            const int width=MulDiv(client.right,96,dpi), height=MulDiv(client.bottom,96,dpi);
+            const int centerX=width/2, centerY=height/2;
+            if (mascotImage) drawMascot(dc,centerX-48,centerY-103,96);
+            else text(dc,L"G",centerX-48,centerY-103,96,96,fontTitle,rgb(64,217,151),DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+            text(dc,L"GAYCLIENT",centerX-150,centerY+2,300,32,fontBrand,rgb(236,247,240),DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+            text(dc,L"Загружаем лаунчер...",centerX-180,centerY+37,360,26,fontBody,rgb(160,185,169),DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+            int pulse=static_cast<int>((GetTickCount64()/250)%3);
+            for (int i=0;i<3;i++) rounded(dc,centerX-14+i*12,centerY+74,6,6,6,
+                                         i==pulse?rgb(66,221,151):rgb(38,78,56));
+        }
+        BitBlt(screen,0,0,client.right,client.bottom,dc,0,0,SRCCOPY);
+        SelectObject(dc,old); DeleteObject(bitmap); DeleteDC(dc); EndPaint(window,&ps);
+        return;
+    }
     const auto l=layout(); const int x=l.contentX, y=l.top, width=l.contentWidth;
     RECT sidebar{0,0,S(190),client.bottom}; fill(dc,sidebar,rgb(9,18,15));
     if (mascotImage) drawMascot(dc,20,25,46);
@@ -457,18 +477,25 @@ std::string webDispatch(const std::string& message) {
     return response.dump(-1,' ',false,json::error_handler_t::replace);
 }
 void webReady() {
-    webActive=true;
+    if (!startupView.ready()) return;
     for (HWND h : {homeNav,profileNav,profileList,labelEdit,nickEdit,appEdit,saveButton,newButton,deleteButton,detectButton,playButton,logButton}) ShowWindow(h,SW_HIDE);
+    if (mainWindow) InvalidateRect(mainWindow,nullptr,FALSE);
 }
-void webFailure() { webActive=false; if (mainWindow && IsWindow(mainWindow)) switchPage(false); }
+void webFailure() {
+    startupView.failed();
+    if (mainWindow && IsWindow(mainWindow)) {
+        ShowWindow(homeNav,SW_SHOW); ShowWindow(profileNav,SW_SHOW);
+        switchPage(false);
+    }
+}
 LRESULT CALLBACK windowProc(HWND window,UINT msg,WPARAM w,LPARAM l) {
     switch(msg) {
     case WM_CREATE:
         mainWindow=window; shutdownWindow.store(window,std::memory_order_release); makeFonts(); inputBrush=CreateSolidBrush(rgb(29,48,40)); listBrush=CreateSolidBrush(rgb(23,40,32));
-        homeNav=CreateWindowExW(0,L"BUTTON",L"Главная",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(HOME),nullptr,nullptr);
-        profileNav=CreateWindowExW(0,L"BUTTON",L"Профили",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(PROFILES),nullptr,nullptr);
-        playButton=CreateWindowExW(0,L"BUTTON",L"▶   Начать игру",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(PLAY),nullptr,nullptr);
-        logButton=CreateWindowExW(0,L"BUTTON",L"Открыть журнал",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(LOG),nullptr,nullptr);
+        homeNav=CreateWindowExW(0,L"BUTTON",L"Главная",WS_CHILD|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(HOME),nullptr,nullptr);
+        profileNav=CreateWindowExW(0,L"BUTTON",L"Профили",WS_CHILD|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(PROFILES),nullptr,nullptr);
+        playButton=CreateWindowExW(0,L"BUTTON",L"▶   Начать игру",WS_CHILD|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(PLAY),nullptr,nullptr);
+        logButton=CreateWindowExW(0,L"BUTTON",L"Открыть журнал",WS_CHILD|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(LOG),nullptr,nullptr);
         profileList=CreateWindowExW(0,L"LISTBOX",L"",WS_CHILD|WS_TABSTOP|WS_VSCROLL|LBS_NOTIFY|LBS_NOINTEGRALHEIGHT|LBS_OWNERDRAWFIXED|LBS_HASSTRINGS,0,0,0,0,window,reinterpret_cast<HMENU>(LIST),nullptr,nullptr);
         labelEdit=CreateWindowExW(0,L"EDIT",L"",WS_CHILD|WS_TABSTOP|ES_AUTOHSCROLL,0,0,0,0,window,reinterpret_cast<HMENU>(LABEL),nullptr,nullptr);
         nickEdit=CreateWindowExW(0,L"EDIT",L"",WS_CHILD|WS_TABSTOP|ES_AUTOHSCROLL,0,0,0,0,window,reinterpret_cast<HMENU>(NICK),nullptr,nullptr);
@@ -482,7 +509,7 @@ LRESULT CALLBACK windowProc(HWND window,UINT msg,WPARAM w,LPARAM l) {
         placeControls(); SetTimer(window,1,125,nullptr); startLauncherWebView(window,webDispatch,webReady,webFailure); return 0;
     case WM_TIMER: {
         static ULONGLONG lastClassic=0; auto now=GetTickCount64();
-        if (now-lastClassic>=500) { updateClassic(); lastClassic=now; }
+        if (now-lastClassic>=125) { updateClassic(); lastClassic=now; }
         tickLauncherWebView(); updateLauncherWebViewStatus(webStatus());
         if (IsIconic(window)) return 0;
         InvalidateRect(window,nullptr,FALSE);
@@ -593,9 +620,10 @@ DWORD WINAPI uiThread(void*) {
                                 rect.right-rect.left,rect.bottom-rect.top,nullptr,nullptr,instance,nullptr);
     if (!window) { UnregisterClassW(wc.lpszClassName,instance); cleanupIcons(); unloadHero(); if (SUCCEEDED(com)) CoUninitialize(); return 1; }
     ShowWindow(window,SW_SHOW); UpdateWindow(window);
+    updateClassic(); // Hide an already-created original window without waiting for the timer.
     MSG message{};
     while (GetMessageW(&message,nullptr,0,0)>0) {
-        if (webActive || !IsDialogMessageW(window,&message)) { TranslateMessage(&message); DispatchMessageW(&message); }
+        if (startupView.value()==LauncherView::Web || !IsDialogMessageW(window,&message)) { TranslateMessage(&message); DispatchMessageW(&message); }
     }
     UnregisterClassW(wc.lpszClassName,instance); cleanupIcons(); unloadHero();
     if (SUCCEEDED(com)) CoUninitialize();
