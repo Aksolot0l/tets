@@ -73,7 +73,7 @@ inline void begin(std::uintptr_t player,ID3D11DeviceContext* ctx) {
   }
   if (targets[0].rtv && targets[1].rtv) {
    const int index=front==0?1:0; auto& t=targets[index];
-   scope.ctx=ctx; scope.rtv=t.rtv; scope.dsv=t.dsv; scope.srv=t.srv; scope.index=index; scope.gen=generation;
+   scope.ctx=ctx; scope.ctx->AddRef(); scope.rtv=t.rtv; scope.dsv=t.dsv; scope.srv=t.srv; scope.index=index; scope.gen=generation;
    scope.rtv->AddRef(); scope.dsv->AddRef(); scope.srv->AddRef();
   }
  }
@@ -88,7 +88,7 @@ inline void end() {
   if (isRequested() && scope.gen==generation) { front=scope.index; lastFrameTick=GetTickCount64(); lastDraws.store(scope.draws,std::memory_order_relaxed); }
   ReleaseSRWLockExclusive(&lock);
  }
- release(scope.rtv); release(scope.dsv); release(scope.srv); scope={};
+ release(scope.rtv); release(scope.dsv); release(scope.srv); release(scope.ctx); scope={};
 }
 inline ID3D11ShaderResourceView* acquire(ID3D11Device* expected) {
  ID3D11ShaderResourceView* result=nullptr; AcquireSRWLockShared(&lock);

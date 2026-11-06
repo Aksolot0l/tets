@@ -8,8 +8,9 @@ GAYCLIENT — ВСЁ В ОДНОМ: ОПИСАНИЕ HUD, ПРОМПТ И ИСХ
 Имена исходных файлов отмечены перед каждым фрагментом. Внешние заголовки Windows
 SDK и Dear ImGui сюда не включены. Исходников закрытого GAYClientCore.dll нет:
 старый штатный HUD нельзя восстановить полностью по этому файлу.
-Мировой проход и ограничение глубиной проверены пользователем для блоков;
-новый стиль HUD и модель-предпросмотр в игре ещё не проверены.
+Мировой проход с глубиной и настоящая модель в GPU-preview ранее подтверждены
+пользователем; новая автоматическая перспектива, копия шляпы и палитры ещё не
+проверены в игре. Ошибка перекрытия шляпы дальними блоками остаётся.
 
 СОДЕРЖАНИЕ:
 1. Описание модулей, промпт и сборка
@@ -25,6 +26,7 @@ SDK и Dear ImGui сюда не включены. Исходников закр�
    - repair/src/visual_depth_policy.h
    - repair/src/visual_player_skin.h
    - repair/src/visual_player_replay.h
+   - repair/src/visual_preview_camera.h
    - repair/src/visual_model_capture_policy.h
    - repair/src/visual_skin_policy.h
    - repair/src/visual_avatar_preview.h
@@ -58,12 +60,14 @@ SDK и Dear ImGui сюда не включены. Исходников закр�
    - repair/tests/visual_depth_policy.cpp
    - repair/tests/visual_player_skin.cpp
    - repair/tests/visual_player_replay.cpp
+   - repair/tests/visual_preview_camera.cpp
    - repair/tests/visual_replay_mock_types.h
    - repair/tests/visual_model_capture_policy.cpp
    - repair/tests/visual_skin_mock_types.h
    - repair/tests/visual_skin_policy.cpp
    - repair/tests/visual_hooks.cpp
    - repair/tests/check_hud_visual_update.py
+   - repair/tests/check_china_hat.py
 
 ================================================================================
 1. ОПИСАНИЕ МОДУЛЕЙ
@@ -79,7 +83,9 @@ GAYClient — описание модулей и визуала для друг�
 текстом по мотивам макета лаунчера. Это адаптация, а не точная копия макета;
 жизни и хотбар Minecraft не заменяются. Клавиши используют прежнюю отрисовку
 своих состояний. В меню HUD -> Open HUD editor находятся переключатели
-доступных виджетов, прозрачность карточек и цвет текста. Включается также
+доступных виджетов, прозрачность карточек и цвет текста. По новому макету
+добавлены палитры Aogiri Green, Emerald и Graphite и регулировка скругления;
+они меняют настоящие игровые плашки, а не фиктивные значения. Включается также
 отдельная карточка Module List с масштабом, прозрачностью и X/Y; справа
 показывается её предпросмотр. Возможен дубликат старого Active Modules.
 Пока редактор открыт, остальной HUD и уведомления скрываются (если хук
@@ -141,9 +147,10 @@ GPU состояние на наших draw-вызовах восстанавл�
 Сохрани отдельную вкладку Visuals, реальные настройки China Hat и Trail,
 полупрозрачность, пространственную радугу и проверенный пользователем проход с
 depth test: эффекты должны скрываться за блоками. Настройки эффектов имеют
-собственный предпросмотр и скрывают остальной клиентский HUD. Не заменяй его
-копией игровой камеры и не выдавай демонстрационную модель за реальный скин или
-полностью идентичный игровой шейдер. Текущий код предпросмотра — приближение.
+собственный предпросмотр и скрывают остальной клиентский HUD. Цель — отдельный
+предпросмотр настоящей модели спереди, а не копия игровой камеры и не выдуманный
+аватар. Текущий GPU replay использует реальную модель, но пока зависит от
+камеры игры; упрощённый sample — только запасной вариант.
 
 Код ниже — не полноценные исходники закрытого игрового ядра: GAYClientCore.dll
 закрыта. Работай в совместимом C++17/ImGui адаптере; не меняй ABI ag::Settings,
@@ -163,12 +170,18 @@ Visuals содержит отдельные кнопки Settings для China H
 CPU, сохранения в файл или отправки в сеть. В Minecraft поиск не проверен.
 
 В Preview доступен выключенный по умолчанию `Game model replay (test)`.
-Он пробует скопировать прямые GPU-вызовы локального игрока в отдельную текстуру,
-используя игровую камеру: это не копия экрана и не отдельный фронтальный ракурс.
-Модель может обрезаться или не появиться; шляпа/трейл в этом тестовом режиме
-пока не накладываются. Тест не проверен на Windows/Minecraft, возможны падение
-FPS, артефакты, влияние на GPU-запросы и сбой. При выключении галочки возвращается
-предыдущий пример со скином; при перезапуске эксперимент выключен.
+Пользователь подтвердил настоящую игровую модель в подходящем виде от третьего
+лица. Новый вариант пробует на время Preview возвращать из геттера перспективы
+вид от третьего лица спереди, не записывая настройку и поворот игрока; проверка
+производится только для точного EXE, но семантика перехвата в игре не доказана.
+После закрытия возвращается исходное значение геттера. В теории другой код игры
+может записать значение, пока действует перехват. Вертикальный угол не
+выравнивается автоматически. Шляпа при включённом модуле и игровом world
+pass повторяет реальные draw-вызовы на буфер модели с depth и прозрачностью.
+Трейл туда пока не копируется; старый баг перекрытия дальними блоками не
+исправлен. Новые изменения не проверены в Windows/Minecraft и могут вызывать
+артефакты, снижение FPS или сбой. При проблеме снимите галочку и перезапустите
+игру. Отдельной камеры и повторного вызова игрового renderer по-прежнему нет.
 
 Даже если найден настоящий скин, модель в предпросмотре упрощённая и создана
 отдельно: из игры не извлечены mesh, кости, нестандартная геометрия и анимация.
@@ -357,6 +370,8 @@ static bool hudEditorOpen = false, moduleHudEnabled = false;
 static std::atomic<bool> hudEditorActive{false};
 // New Module List HUD settings are per-session; they do not overwrite profiles.
 static float hudScale = 1.f, hudOpacity = .78f, hudX = .78f, hudY = .05f;
+static int hudPalette=0;
+static float hudRounding=8.f;
 static float widgetOpacity = .72f;
 static float hudColor[3] = {.35f,.85f,1.f};
 static std::atomic<const WheelBridge*> externalWheel{nullptr};
@@ -620,7 +635,7 @@ static void pushVisualStyle() {
     if (!guiPushColor || !guiPopColor) return;
     if (guiPushVarFloat && guiPopVar) {
         guiPushVarFloat(ImGuiStyleVar_WindowBorderSize,1.f);
-        guiPushVarFloat(ImGuiStyleVar_WindowRounding,8.f);
+        guiPushVarFloat(ImGuiStyleVar_WindowRounding,hud_theme::rounding(hudRounding));
     }
     guiPushColor(ImGuiCol_WindowBg,ImVec4(.035f,.065f,.055f,.96f));
     guiPushColor(ImGuiCol_Border,ImVec4(.10f,.65f,.37f,.85f));
@@ -804,8 +819,12 @@ static void drawEffectPreview(VisualEditor editor) {
                 if (model) drawImage(d,static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(model)),ImVec2(p.x+32.f,p.y),ImVec2(p.x+247.f,p.y+215.f),ImVec2(0,0),ImVec2(1,1),IM_COL32_WHITE);
             }
             guiDummy(ImVec2(280.f,215.f));
-            realText("Third person; turn to face camera.",nullptr);
-            realText("Effect overlay not available in test.",nullptr);
+            switch (PlayerPreviewCameraStatus()) {
+            case 1: realText("Auto front unavailable; use F5.",nullptr); break;
+            case 3: realText("Auto front requested; look level.",nullptr); break;
+            default: realText("Waiting for camera; use F5 if needed.",nullptr); break;
+            }
+            realText(editor==VisualEditor::Hat?"Hat preview: enable China Hat.":"Trail preview not available yet.",nullptr);
         } else {
             auto skin=visual_player_skin::acquire(frameDevice); previewFrameView=skin.view;
             if (skin.view) {
@@ -847,10 +866,10 @@ static void drawVisualEditor() {
 static bool themedBegin(const char* name,bool* open,int flags) {
     if (!insideLegacyHud || !hud_theme::card(name) || !guiPushColor || !guiPopColor || !guiPushVarFloat || !guiPopVar)
         return realGuiBegin(name,open,flags);
-    const auto bg=hud_theme::background(widgetOpacity*legacyOpacity), border=hud_theme::border(widgetOpacity*legacyOpacity);
+    const auto bg=hud_theme::background(widgetOpacity*legacyOpacity,hudPalette), border=hud_theme::border(widgetOpacity*legacyOpacity,hudPalette);
     guiPushColor(ImGuiCol_WindowBg,ImVec4(bg.r,bg.g,bg.b,bg.a));
     guiPushColor(ImGuiCol_Border,ImVec4(border.r,border.g,border.b,border.a));
-    guiPushVarFloat(ImGuiStyleVar_WindowRounding,8.f);
+    guiPushVarFloat(ImGuiStyleVar_WindowRounding,hud_theme::rounding(hudRounding));
     guiPushVarFloat(ImGuiStyleVar_WindowBorderSize,1.f);
     // Keystrokes deliberately used NoBackground: add the same card, leaving
     // the core's actual key-state drawing intact.
@@ -866,12 +885,12 @@ static void drawModuleHud(void* runtime, bool preview) {
     const float x = preview ? 390.f+hudX*180.f : hudX*static_cast<float>(frameWidth);
     const float y = preview ? 90.f+hudY*180.f : hudY*static_cast<float>(frameHeight);
     guiSetNextPos(ImVec2(x,y),ImGuiCond_Always,ImVec2(0,0));
-    const auto bg=hud_theme::background(hudOpacity), border=hud_theme::border(hudOpacity);
+    const auto bg=hud_theme::background(hudOpacity,hudPalette), border=hud_theme::border(hudOpacity,hudPalette);
     guiPushColor(ImGuiCol_WindowBg,ImVec4(bg.r,bg.g,bg.b,bg.a));
     guiPushColor(ImGuiCol_Border,ImVec4(border.r,border.g,border.b,border.a));
     guiPushColor(ImGuiCol_Text,ImVec4(hudColor[0],hudColor[1],hudColor[2],1.f));
     const bool vars=guiPushVarFloat && guiPopVar;
-    if (vars) { guiPushVarFloat(ImGuiStyleVar_WindowRounding,8.f); guiPushVarFloat(ImGuiStyleVar_WindowBorderSize,1.f); }
+    if (vars) { guiPushVarFloat(ImGuiStyleVar_WindowRounding,hud_theme::rounding(hudRounding)); guiPushVarFloat(ImGuiStyleVar_WindowBorderSize,1.f); }
     const int flags=ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|
         ImGuiWindowFlags_NoInputs|ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|
         ImGuiWindowFlags_NoFocusOnAppearing;
@@ -939,6 +958,14 @@ static void drawHudEditor(void* runtime) {
             guiSliderFloat(id,value,low,high,"%.2f",0);
             if (guiPushWidth && guiPopWidth) guiPopWidth();
         };
+        realText("Palette",nullptr);
+        for (int i=0;i<3;i++) {
+            if (guiButton && guiButton(hud_theme::palette(i).name,ImVec2(-1.f,0.f))) {
+                hudPalette=i; const auto c=hud_theme::palette(i).accent;
+                hudColor[0]=c.r; hudColor[1]=c.g; hudColor[2]=c.b;
+            }
+        }
+        slider("Card rounding",&hudRounding,0.f,20.f);
         if (hudThemeReady.load(std::memory_order_acquire)) slider("Widget background opacity",&widgetOpacity,0.f,1.f);
         else realText("Widget theme unavailable; original widgets retained.",nullptr);
         if (guiColorEdit3) { realText("HUD text color",nullptr); if (guiPushWidth && guiPopWidth) guiPushWidth(-1.f);
@@ -975,6 +1002,7 @@ static void patchedDrawGui(void* runtime) {
         SetTrailEnabled(false);
         SetPlayerSkinPreviewActive(false);
         SetPlayerModelPreviewActive(false);
+        SetPlayerPreviewHatActive(false);
         if (bridgeActive) bridgeActive(false);
         DisableUwpExtraInput();
         log("overlay disabled by Delete; DLLs remain loaded until game exit");
@@ -985,6 +1013,7 @@ static void patchedDrawGui(void* runtime) {
     const bool editingVisual=menuOpen && visualEditor!=VisualEditor::None && canVisualPreview();
     SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options);
     SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && previewGameModelTest);
+    SetPlayerPreviewHatActive(editingVisual && visualEditor==VisualEditor::Hat && previewGameModelTest);
     if (!menuOpen || (!hudEditorOpen && !editingVisual)) realDrawGui(runtime);
     if (editingVisual) { drawVisualEditor(); return; }
     if (menuOpen && hudEditorOpen && hudHooksReady) { drawHudEditor(runtime); return; }
@@ -1312,7 +1341,6 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID) {
 КОНЕЦ ФАЙЛА: repair/src/compat.cpp
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/hud_module_list.h
 ================================================================================
@@ -1340,7 +1368,6 @@ template<class Emit> void labels(const std::array<bool,ag::kModuleCount>& enable
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/hud_module_list.h
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/hud_theme.h
@@ -1370,14 +1397,23 @@ inline bool card(const char* name) {
 }
 inline float alpha(float v) { return std::isfinite(v) ? std::clamp(v,0.f,1.f) : .72f; }
 struct Rgba { float r,g,b,a; };
-inline Rgba background(float opacity) { return {.025f,.045f,.038f,alpha(opacity)}; }
-inline Rgba border(float opacity) { return {.28f,.68f,.41f,alpha(opacity)*.46f}; }
+// Palette names and colors from the supplied HUD mockup. Actual labels,
+// values and controls remain the game's real widgets, not mock data.
+struct Palette { const char* name; Rgba bg, border, accent; };
+inline constexpr Palette palettes[] = {
+ {"Aogiri Green",{8.f/255,19.f/255,13.f/255,1},{47.f/255,122.f/255,74.f/255,1},{77.f/255,1,136.f/255,1}},
+ {"Emerald",{7.f/255,19.f/255,15.f/255,1},{43.f/255,110.f/255,90.f/255,1},{46.f/255,230.f/255,160.f/255,1}},
+ {"Graphite",{13.f/255,17.f/255,16.f/255,1},{58.f/255,84.f/255,68.f/255,1},{157.f/255,1,180.f/255,1}},
+};
+inline const Palette& palette(int i) { return palettes[i>=0 && i<3 ? i:0]; }
+inline Rgba background(float opacity,int theme=0) { auto c=palette(theme).bg; c.a=alpha(opacity); return c; }
+inline Rgba border(float opacity,int theme=0) { auto c=palette(theme).border; c.a=alpha(opacity)*.75f; return c; }
+inline float rounding(float v) { return std::isfinite(v) ? std::clamp(v,0.f,20.f) : 8.f; }
 }
 
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/hud_theme.h
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/settings.h
@@ -1484,7 +1520,6 @@ struct Settings {
 КОНЕЦ ФАЙЛА: repair/src/settings.h
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/china_hat_native.cpp
 ================================================================================
@@ -1507,6 +1542,7 @@ struct Settings {
 #include "visual_gpu_depth.h"
 #include "visual_player_skin.h"
 #include "visual_player_replay.h"
+#include "visual_preview_camera.h"
 #include <d3d11.h>
 #include "hat_animation.h"
 #include <bcrypt.h>
@@ -1518,6 +1554,7 @@ struct Settings {
 
 namespace {
 using ClientTick = void (*)(void*,int,int);
+using GetPerspective = int (*)(void*);
 // In the recorded x64 dispatcher, the fourth parameter is passed in XMM3;
 // preserve it as float even though this wrapper's exact meaning is unknown.
 using PlayerRender = std::intptr_t (*)(void*,void*,void*,float,float);
@@ -1530,6 +1567,7 @@ using TessDraw = void (*)(void*,void*,std::int64_t);
 using TessEnd = void (*)(void*,void*,std::int64_t,std::uint8_t);
 constexpr std::uint32_t playerRva=0x581910, screenRva=0x3528c0, clientTickRva=0x11b2d0, beginRva=0x5d0660,
  colorRva=0x5d0890, vertexRva=0x5d0a90, drawRva=0x5d1840, endRva=0x5d14f0, worldEntitiesRva=0x5ae250;
+constexpr std::uint32_t perspectiveRva=0x488420; // candidate Options getter; separately validated
 constexpr std::uint32_t originRva=0x19436e8, tessRva=0x1925550, contextRva=0x1913b40,
  shaderColorRva=0x192ae08, shaderFlagRva=0x192ae18;
 std::atomic<bool> available{false}, enabled{false};
@@ -1542,7 +1580,10 @@ std::atomic<bool> hatRainbow{true}, trailRainbow{true}, vertexGradient{false};
 std::atomic<bool> strictDepth{true}, worldHookReady{false}, gpuHooksReady{false};
 // Off by default: preserve the current world pass until the alternate timing
 // is actually tested by the player. Does not change trail or legacy mode.
+std::atomic<bool> previewCameraCandidate{false}, previewCameraHookReady{false};
+std::atomic<ULONGLONG> lastCameraOverride{0};
 std::atomic<bool> hatPlayerPass{false};
+std::atomic<bool> previewHatCapture{false};
 std::atomic<int> hatPlayerPassStatus{0}, hatPlayerCompare{0}, worldDepthCompare{0};
 std::atomic<ULONGLONG> lastPlayerPassAttempt{0};
 // 0 waiting, 1 guarded GPU draw, 2 no scene depth, 3 hooks unavailable,
@@ -1593,6 +1634,7 @@ ClientTick originalTick=nullptr;
 std::atomic<std::uintptr_t> clientInstance{0};
 std::atomic<ULONGLONG> lastClientTick{0};
 PlayerRender originalPlayer=nullptr;
+GetPerspective originalPerspective=nullptr;
 ScreenRender originalScreen=nullptr;
 EntitiesRender originalEntities=nullptr;
 TessBegin tessBegin=nullptr; TessColor tessColor=nullptr; TessVertex tessVertex=nullptr;
@@ -1677,6 +1719,7 @@ bool fileCodeAt(const BYTE* file,std::size_t size,const IMAGE_NT_HEADERS64& nt,s
  return false;
 }
 bool validateGame() {
+ previewCameraCandidate.store(false,std::memory_order_release);
  HMODULE module=GetModuleHandleW(nullptr); if (!module) return false;
  wchar_t path[32768]{}; DWORD n=GetModuleFileNameW(module,path,32768);
  if (!n || n>=32768) return false;
@@ -1712,13 +1755,33 @@ bool validateGame() {
     const BYTE* fromFile=nullptr; std::uint8_t inMemory[16]{};
     if (!fileCodeAt(bytes,size,nt,table,rva,fromFile) || !read(image+rva,inMemory,16) || std::memcmp(inMemory,fromFile,16)!=0) valid=false;
    }
-   if (valid) base=image;
+   if (valid) {
+    // Optional feature: if another mod changed this candidate, disable only
+    // the camera experiment, not the already-working visuals.
+    const BYTE* fromFile=nullptr; std::uint8_t inMemory[16]{};
+    const bool camera=fileCodeAt(bytes,size,nt,table,perspectiveRva,fromFile) &&
+      read(image+perspectiveRva,inMemory,16) && std::memcmp(inMemory,fromFile,16)==0;
+    previewCameraCandidate.store(camera,std::memory_order_release);
+    base=image;
+   }
   }
   UnmapViewOfFile(bytes);
  }
  if (mapping) CloseHandle(mapping); CloseHandle(file); return valid;
 }
 
+// Return the stored game value except while the explicit model preview is
+// active. No Options setter or player rotation writes are performed.
+int perspectiveHook(void* options) {
+ const int original=originalPerspective(options);
+ if (!visual_player_replay::isRequested()) return original;
+ std::uintptr_t player=0;
+ if (visual_preview_camera::overrideFront(visual_player_replay::isRequested(),localPlayer(player),options!=nullptr,original)) {
+  lastCameraOverride.store(GetTickCount64(),std::memory_order_relaxed);
+  return 2;
+ }
+ return original;
+}
 // 1.1.5 candidate tick signature, called only after exact EXE identity and
 // loaded/file code comparison. This observes the live ClientInstance; it never
 // writes to the instance or changes the original tick arguments.
@@ -1775,7 +1838,14 @@ std::intptr_t playerHook(void* self,void* entity,void* pos,float renderValue,flo
   ~CaptureScope() { if(active) { visual_gpu_depth::inPlayerCapture=false; visual_player_replay::end(); visual_player_skin::end(); } if(ctx)ctx->Release(); }
  } captureScope{captureContext,capture};
  const auto result=originalPlayer(self,entity,pos,renderValue,partial);
- if (capture) { visual_gpu_depth::inPlayerCapture=false; visual_player_replay::end(); visual_player_skin::end(); captureScope.active=false; }
+ if (capture) {
+  visual_gpu_depth::inPlayerCapture=false; visual_player_skin::end();
+  // Keep the actor target alive until the entity pass finishes so the existing
+  // world-hat draw can be copied into its own depth buffer. No other actor is
+  // captured in the meantime. Outside that pass, publish immediately.
+  if (!inEntityPass) visual_player_replay::end();
+  captureScope.active=false;
+ }
  // Do not clear a local-player frame when another player's renderer runs.
  if (anyVisual()) {
   std::uintptr_t local=0;
@@ -1813,7 +1883,7 @@ std::intptr_t entitiesDiagnosticHook(void* self,float partial) {
  entityPlayerPass=hatPlayerPass.load(std::memory_order_acquire);
  playerPassAttempted=false;
  inEntityPass=true;
- struct EntityScope { ~EntityScope() { inEntityPass=false; } } scope;
+ struct EntityScope { ~EntityScope() { visual_player_replay::end(); inEntityPass=false; } } scope;
  auto result=originalEntities(self,partial);
  inEntityPass=false;
  if (!anyVisual()) return result;
@@ -1842,7 +1912,12 @@ std::intptr_t entitiesDiagnosticHook(void* self,float partial) {
   visual_gpu_depth::expectedContext=ctx; visual_gpu_depth::expectedDepth=dsv; visual_gpu_depth::worldCompare=compare;
   auto rejected=visual_gpu_depth::rejected.load(std::memory_order_relaxed);
   auto submitted=visual_gpu_depth::submitted.load(std::memory_order_relaxed);
-  if (visual_depth_policy::entitiesHat(entityPlayerPass)) renderHat(visible);
+  if (visual_depth_policy::entitiesHat(entityPlayerPass)) {
+   const bool previous=visual_gpu_depth::inHatCapture;
+   visual_gpu_depth::inHatCapture=previewHatCapture.load(std::memory_order_acquire);
+   struct RestoreHatCapture { bool previous; ~RestoreHatCapture() { visual_gpu_depth::inHatCapture=previous; } } restore{previous};
+   renderHat(visible);
+  }
   renderTrail(local);
   visual_gpu_depth::expectedContext=nullptr; visual_gpu_depth::expectedDepth=nullptr;
   const bool blocked=visual_gpu_depth::rejected.load(std::memory_order_relaxed)!=rejected;
@@ -1874,7 +1949,12 @@ void drawHatAtPlayer(const PlayerFrame& player) {
   visual_gpu_depth::expectedContext=ctx; visual_gpu_depth::expectedDepth=dsv; visual_gpu_depth::worldCompare=compare;
   const auto rejected=visual_gpu_depth::rejected.load(std::memory_order_relaxed);
   const auto submitted=visual_gpu_depth::submitted.load(std::memory_order_relaxed);
-  renderHat(player);
+  {
+   const bool previous=visual_gpu_depth::inHatCapture;
+   visual_gpu_depth::inHatCapture=previewHatCapture.load(std::memory_order_acquire);
+   struct RestoreHatCapture { bool previous; ~RestoreHatCapture() { visual_gpu_depth::inHatCapture=previous; } } restore{previous};
+   renderHat(player);
+  }
   visual_gpu_depth::expectedContext=nullptr; visual_gpu_depth::expectedDepth=nullptr;
   const bool blocked=visual_gpu_depth::rejected.load(std::memory_order_relaxed)!=rejected;
   const bool drew=visual_gpu_depth::submitted.load(std::memory_order_relaxed)!=submitted;
@@ -2110,6 +2190,12 @@ bool installHooks() {
     visual_gpu_depth::replayBegin.store(&visual_player_replay::beginDraw,std::memory_order_release);
    }
    ctx->Release();
+   if (gpu && previewCameraCandidate.load(std::memory_order_acquire)) {
+    visual_hooks::Hook camera[]={{reinterpret_cast<void*>(base+perspectiveRva),reinterpret_cast<void*>(&perspectiveHook),reinterpret_cast<void**>(&originalPerspective)}};
+    const bool installedCamera=visual_hooks::install(camera,1,createHook,enableHook,disableHook,removeHook);
+    previewCameraHookReady.store(installedCamera,std::memory_order_release);
+    if (!installedCamera) log("preview camera unavailable; manual third person remains available");
+   }
    if (!gpu) log("GPU depth guard unavailable; strict visual draw disabled");
   }
  }
@@ -2134,8 +2220,15 @@ void SetPlayerSkinPreviewActive(bool value) {
  if (visual_player_skin::isRequested()) return;
  if (enableVisual() && gpuHooksReady.load(std::memory_order_acquire)) visual_player_skin::setRequested(true);
 }
+int PlayerPreviewCameraStatus() {
+ if (!visual_player_replay::isRequested()) return 0;
+ if (!previewCameraHookReady.load(std::memory_order_acquire)) return 1;
+ const auto t=lastCameraOverride.load(std::memory_order_relaxed),now=GetTickCount64();
+ return t && now>=t && now-t<=1000 ? 3 : 2;
+}
+void SetPlayerPreviewHatActive(bool value) { previewHatCapture.store(value,std::memory_order_release); }
 void SetPlayerModelPreviewActive(bool value) {
- if (!value) { visual_player_replay::setRequested(false); return; }
+ if (!value) { visual_player_replay::setRequested(false); lastCameraOverride.store(0,std::memory_order_relaxed); return; }
  if (visual_player_replay::isRequested()) return;
  if (enableVisual() && gpuHooksReady.load(std::memory_order_acquire)) visual_player_replay::setRequested(true);
 }
@@ -2195,7 +2288,6 @@ bool InitializeChinaHat(HatCreateHook create,HatToggleHook enable,HatToggleHook 
 КОНЕЦ ФАЙЛА: repair/src/china_hat_native.cpp
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/china_hat_native.h
 ================================================================================
@@ -2207,6 +2299,8 @@ struct ID3D11DeviceContext;
 void SetPlayerSkinPreviewActive(bool enabled);
 // Experimental GPU draw replay, never enabled unless the user selects it.
 void SetPlayerModelPreviewActive(bool enabled);
+void SetPlayerPreviewHatActive(bool enabled);
+int PlayerPreviewCameraStatus();
 void ObserveVisualContext(ID3D11DeviceContext* context);
 int VisualDepthBefore();
 int VisualDepthAfter();
@@ -2260,7 +2354,6 @@ int TrailFillStatus();
 КОНЕЦ ФАЙЛА: repair/src/china_hat_native.h
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/visual_settings.h
 ================================================================================
@@ -2296,7 +2389,6 @@ inline float sanitizeVisualParam(VisualParam param,float value) {
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_settings.h
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/visual_gpu_depth.h
@@ -2339,6 +2431,8 @@ using ReplayEnd=void (*)(ID3D11DeviceContext*);
 inline std::atomic<ReplayBegin> replayBegin{nullptr};
 inline std::atomic<ReplayEnd> replayEnd{nullptr};
 inline thread_local bool inPlayerCapture=false;
+// Only while the existing world hat is submitted; off by default.
+inline thread_local bool inHatCapture=false;
 inline thread_local ID3D11DeviceContext* expectedContext=nullptr;
 inline thread_local ID3D11DepthStencilView* expectedDepth=nullptr;
 inline thread_local D3D11_COMPARISON_FUNC worldCompare=D3D11_COMPARISON_LESS_EQUAL;
@@ -2414,6 +2508,16 @@ template<class Call> void draw(ID3D11DeviceContext* ctx,Call call,bool replayabl
  Guard guard(ctx);
  if (!guard.active) { rejected.fetch_add(1,std::memory_order_relaxed); return; }
  submitted.fetch_add(1,std::memory_order_relaxed); call();
+ // Copy the *already submitted* hat into the pending player target while the
+ // same depth/blend guard is active. Never issue an extra world draw.
+ if (inHatCapture && replayable) {
+  auto begin=replayBegin.load(std::memory_order_acquire); auto end=replayEnd.load(std::memory_order_acquire);
+  if (begin && end && begin(ctx)) {
+   struct Restore { ID3D11DeviceContext* ctx; ReplayEnd end; ~Restore() { end(ctx); inHatCapture=true; } } restore{ctx,end};
+   inHatCapture=false;
+   call();
+  }
+ }
 }
 inline void STDMETHODCALLTYPE onDraw(ID3D11DeviceContext* c,UINT n,UINT start) {
  draw(c,[&]{ originalDraw(c,n,start); },true);
@@ -2470,7 +2574,6 @@ inline bool matches(ID3D11DeviceContext* ctx) {
 КОНЕЦ ФАЙЛА: repair/src/visual_gpu_depth.h
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/visual_depth_policy.h
 ================================================================================
@@ -2492,7 +2595,6 @@ inline bool entitiesHat(bool selected) { return !selected; }
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_depth_policy.h
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/visual_player_skin.h
@@ -2598,7 +2700,6 @@ inline void next() { AcquireSRWLockExclusive(&lock); if (count) selected=(select
 КОНЕЦ ФАЙЛА: repair/src/visual_player_skin.h
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/visual_player_replay.h
 ================================================================================
@@ -2677,7 +2778,7 @@ inline void begin(std::uintptr_t player,ID3D11DeviceContext* ctx) {
   }
   if (targets[0].rtv && targets[1].rtv) {
    const int index=front==0?1:0; auto& t=targets[index];
-   scope.ctx=ctx; scope.rtv=t.rtv; scope.dsv=t.dsv; scope.srv=t.srv; scope.index=index; scope.gen=generation;
+   scope.ctx=ctx; scope.ctx->AddRef(); scope.rtv=t.rtv; scope.dsv=t.dsv; scope.srv=t.srv; scope.index=index; scope.gen=generation;
    scope.rtv->AddRef(); scope.dsv->AddRef(); scope.srv->AddRef();
   }
  }
@@ -2692,7 +2793,7 @@ inline void end() {
   if (isRequested() && scope.gen==generation) { front=scope.index; lastFrameTick=GetTickCount64(); lastDraws.store(scope.draws,std::memory_order_relaxed); }
   ReleaseSRWLockExclusive(&lock);
  }
- release(scope.rtv); release(scope.dsv); release(scope.srv); scope={};
+ release(scope.rtv); release(scope.dsv); release(scope.srv); release(scope.ctx); scope={};
 }
 inline ID3D11ShaderResourceView* acquire(ID3D11Device* expected) {
  ID3D11ShaderResourceView* result=nullptr; AcquireSRWLockShared(&lock);
@@ -2759,6 +2860,25 @@ inline void endDraw(ID3D11DeviceContext* ctx) {
 КОНЕЦ ФАЙЛА: repair/src/visual_player_replay.h
 ================================================================================
 
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/visual_preview_camera.h
+================================================================================
+#pragma once
+// Candidate Bedrock perspective values for the exact validated build.
+// Do not set/persist options: override only the getter result while the
+// explicitly requested model preview is active, and only for a live player.
+namespace visual_preview_camera {
+inline bool overrideFront(bool requested,bool livePlayer,bool optionsValid,int value) {
+ return requested && livePlayer && optionsValid && value>=0 && value<=2;
+}
+inline int resolve(bool requested,bool livePlayer,bool optionsValid,int original) {
+ return overrideFront(requested,livePlayer,optionsValid,original)?2:original;
+}
+}
+
+================================================================================
+КОНЕЦ ФАЙЛА: repair/src/visual_preview_camera.h
+================================================================================
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/visual_model_capture_policy.h
@@ -2785,7 +2905,6 @@ inline bool safeDraw(bool contextOk,bool depthOk,bool stencil,bool outputUav,boo
 КОНЕЦ ФАЙЛА: repair/src/visual_model_capture_policy.h
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/visual_skin_policy.h
 ================================================================================
@@ -2804,7 +2923,6 @@ inline float vScale(std::uint32_t width,std::uint32_t height) { return height ? 
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_skin_policy.h
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/visual_avatar_preview.h
@@ -2856,7 +2974,6 @@ inline float trailHeight(float normalizedHeight) { return std::clamp(normalizedH
 КОНЕЦ ФАЙЛА: repair/src/visual_avatar_preview.h
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/visual_gradient.h
 ================================================================================
@@ -2885,7 +3002,6 @@ inline china_hat::Color trail(std::size_t index, std::size_t count, float timePh
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_gradient.h
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/visual_color.h
@@ -2925,7 +3041,6 @@ inline std::array<float,4> animated(bool enabled,bool rainbow,std::array<float,3
 КОНЕЦ ФАЙЛА: repair/src/visual_color.h
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/visual_ribbon.h
 ================================================================================
@@ -2951,7 +3066,6 @@ bool segment(const china_hat::Vertex& a,const china_hat::Vertex& b,float height,
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_ribbon.h
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/visual_trail.h
@@ -3004,7 +3118,6 @@ private:
 КОНЕЦ ФАЙЛА: repair/src/visual_trail.h
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/hat_animation.h
 ================================================================================
@@ -3024,7 +3137,6 @@ inline float bob(std::uint64_t now,float amplitude=.07f,float speed=.3125f) {
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/hat_animation.h
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/china_hat_lines.h
@@ -3057,7 +3169,6 @@ template<class Emit> bool emitWireframe(const Mesh& mesh, std::size_t spokes, Em
 КОНЕЦ ФАЙЛА: repair/src/china_hat_lines.h
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/china_hat_player.h
 ================================================================================
@@ -3086,7 +3197,6 @@ bool fromClient(std::uintptr_t client,std::uint64_t tick,std::uint64_t now,Read 
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/china_hat_player.h
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/china_hat_validation.h
@@ -3120,7 +3230,6 @@ inline bool identity(const std::uint8_t* hash, std::uint32_t timestamp, std::siz
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/china_hat_validation.h
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/china_hat_hash.h
@@ -3166,7 +3275,6 @@ bool hashHatExecutable(Api& api, const std::uint8_t* bytes, std::size_t size, st
 КОНЕЦ ФАЙЛА: repair/src/china_hat_hash.h
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/visual_hooks.h
 ================================================================================
@@ -3200,7 +3308,6 @@ bool install(Hook* hooks,std::size_t count,Create create,Enable enable,Disable d
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_hooks.h
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/research/china_hat/hat_mesh.h
@@ -3284,7 +3391,6 @@ inline bool build(Mesh& out, Point head, float radius, float height,
 КОНЕЦ ФАЙЛА: repair/research/china_hat/hat_mesh.h
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/pointer_mapping.h
 ================================================================================
@@ -3311,7 +3417,6 @@ inline bool uwp_client_pointer(float pointerX, float pointerY, float left, float
 КОНЕЦ ФАЙЛА: repair/src/pointer_mapping.h
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/uwp_extra.h
 ================================================================================
@@ -3330,7 +3435,6 @@ void DisableUwpExtraInput();
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/uwp_extra.h
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/uwp_extra.cpp
@@ -3509,7 +3613,6 @@ void TakeUwpWheel(int& horizontal, int& vertical) {
 КОНЕЦ ФАЙЛА: repair/src/uwp_extra.cpp
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/page_scroll.h
 ================================================================================
@@ -3540,7 +3643,6 @@ struct PageScrollRepeat {
 КОНЕЦ ФАЙЛА: repair/src/page_scroll.h
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/wheel_bridge.h
 ================================================================================
@@ -3565,7 +3667,6 @@ static_assert(sizeof(WheelBridge) == 16, "wheel bridge ABI");
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/wheel_bridge.h
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/wheel_counter.h
@@ -3596,7 +3697,6 @@ struct WheelCounter {
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/wheel_counter.h
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/coordinates_115.h
@@ -3678,7 +3778,6 @@ template<class Read> bool readPosition115(std::uint64_t base, Read read, Positio
 КОНЕЦ ФАЙЛА: repair/src/coordinates_115.h
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/mouse_diagnostic_patch.h
 ================================================================================
@@ -3708,7 +3807,6 @@ inline void apply(unsigned char* image) { std::memset(image + branchRva, 0x90, 6
 КОНЕЦ ФАЙЛА: repair/src/mouse_diagnostic_patch.h
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/disable_hotkey.h
 ================================================================================
@@ -3729,7 +3827,6 @@ public:
 КОНЕЦ ФАЙЛА: repair/src/disable_hotkey.h
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/hud_theme.cpp
 ================================================================================
@@ -3743,13 +3840,17 @@ int main() {
  assert(!hud_theme::card(nullptr)); assert(hud_theme::card("##notification_12"));
  assert(!hud_theme::card("##notification_")); assert(!hud_theme::card("##notification_else"));
  assert(hud_theme::background(0).a==0); assert(hud_theme::background(2).a==1);
+ assert(hud_theme::palette(-1).bg.r==hud_theme::palette(0).bg.r);
+ assert(hud_theme::palette(1).accent.g!=hud_theme::palette(2).accent.g);
+ assert(hud_theme::background(.5f,1).a==.5f);
+ assert(hud_theme::rounding(-1)==0 && hud_theme::rounding(21)==20);
+ assert(hud_theme::rounding(std::numeric_limits<float>::quiet_NaN())==8);
  assert(hud_theme::border(0).a==0); assert(hud_theme::background(std::numeric_limits<float>::quiet_NaN()).a==.72f);
 }
 
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/hud_theme.cpp
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/hud_module_list.cpp
@@ -3772,7 +3873,6 @@ int main() {
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/hud_module_list.cpp
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/visual_avatar_preview.cpp
@@ -3817,7 +3917,6 @@ int main() {
 КОНЕЦ ФАЙЛА: repair/tests/visual_avatar_preview.cpp
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/visual_color.cpp
 ================================================================================
@@ -3846,7 +3945,6 @@ int main() {
 КОНЕЦ ФАЙЛА: repair/tests/visual_color.cpp
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/visual_gradient.cpp
 ================================================================================
@@ -3873,7 +3971,6 @@ int main() {
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_gradient.cpp
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/visual_gpu_depth.cpp
@@ -3946,6 +4043,19 @@ int main() {
  });
  assert(calls==2 && ctx.curDepth==&ctx.depth && ctx.curBlend==&ctx.blend && ctx.stencil==7 && ctx.mask==0xfffffffe);
  assert(ctx.factor[0]==.2f && ctx.factor[3]==.5f && ctx.depth.refs==1 && ctx.blend.refs==1 && ctx.view.refs==1);
+ // Only a submitted hat is copied, with the world's guarded opacity/depth
+ // still active; failures skip the copy but never suppress the world draw.
+ replayBegin.store(&beginReplay); replayEnd.store(&endReplay); inHatCapture=true;
+ int copyPass=0, oldStarts=replayStarts, oldEnds=replayEnds;
+ draw(&ctx,[&]{++copyPass; assert(ctx.curDepth!=&ctx.depth && ctx.curBlend!=&ctx.blend);},true);
+ assert(copyPass==2 && replayStarts==oldStarts+1 && replayEnds==oldEnds+1 && inHatCapture);
+ assert(ctx.curDepth==&ctx.depth && ctx.curBlend==&ctx.blend);
+ replayAllowed=false; copyPass=0;
+ draw(&ctx,[&]{++copyPass;},true); assert(copyPass==1 && replayEnds==oldEnds+1);
+ replayAllowed=true; copyPass=0;
+ try {draw(&ctx,[&]{if(++copyPass==2) throw 7;},true); assert(false);} catch(int e) {assert(e==7);}
+ assert(copyPass==2 && replayEnds==oldEnds+2 && inHatCapture && ctx.curDepth==&ctx.depth && ctx.curBlend==&ctx.blend);
+ inHatCapture=false; replayBegin.store(nullptr); replayEnd.store(nullptr);
  int before=ctx.sets; ctx.dsv=&ctx.other; draw(&ctx,[&]{++calls;}); assert(calls==2 && ctx.sets==before && ctx.other.refs==1);
  ctx.dsv=&ctx.view; ctx.device.failBlend=true; draw(&ctx,[&]{++calls;}); assert(calls==2 && ctx.sets==before);
  assert(ctx.curDepth==&ctx.depth && ctx.curBlend==&ctx.blend && ctx.depth.refs==1 && ctx.blend.refs==1 && ctx.view.refs==1);
@@ -3979,7 +4089,6 @@ int main() {
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_gpu_depth.cpp
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/visual_gpu_mock_types.h
@@ -4025,7 +4134,6 @@ struct ID3D11Buffer {};
 КОНЕЦ ФАЙЛА: repair/tests/visual_gpu_mock_types.h
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/visual_depth_policy.cpp
 ================================================================================
@@ -4064,7 +4172,6 @@ int main() {
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_depth_policy.cpp
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/visual_player_skin.cpp
@@ -4124,7 +4231,6 @@ int main() {
 КОНЕЦ ФАЙЛА: repair/tests/visual_player_skin.cpp
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/visual_player_replay.cpp
 ================================================================================
@@ -4145,6 +4251,9 @@ struct Device:Obj<ID3D11Device> {
 };
 struct Depth:Obj<ID3D11DepthStencilState> {D3D11_DEPTH_STENCIL_DESC desc{TRUE,D3D11_COMPARISON_LESS,FALSE}; void GetDesc(D3D11_DEPTH_STENCIL_DESC* d) override {*d=desc;} };
 struct Context:ID3D11DeviceContext {
+ unsigned refs=1;
+ ULONG AddRef() override { return ++refs; }
+ ULONG Release() override { assert(refs>1); return --refs; }
  Device* device=new Device; Depth* depth=new Depth;
  ID3D11RenderTargetView* target=new Obj<ID3D11RenderTargetView>;
  ID3D11DepthStencilView* dsv=new Obj<ID3D11DepthStencilView>;
@@ -4178,13 +4287,13 @@ int main() {
  {
   Context c;
   begin(1,&c); assert(!scope.ctx && c.clears==0);
-  setRequested(true); begin(1,&c); assert(scope.ctx==&c && c.clears==1 && !acquire(c.device));
+  setRequested(true); begin(1,&c); assert(scope.ctx==&c && c.refs==2 && c.clears==1 && !acquire(c.device));
   const auto oldViewport=c.viewport; const auto oldScissor=c.scissors;
   assert(beginDraw(&c) && saved.active && c.sets==3 && c.depthClears==1);
   assert(c.curTarget==scope.rtv && c.curDsv==scope.dsv && c.viewport.Height==768 && c.scissors.right==256);
   endDraw(&c); assert(!saved.active && c.sets==6 && scope.draws==1);
   assert(c.curTarget==c.target && c.curDsv==c.dsv && std::memcmp(&oldViewport,&c.viewport,sizeof(oldViewport))==0 && std::memcmp(&oldScissor,&c.scissors,sizeof(oldScissor))==0);
-  end(); auto* image=acquire(c.device); assert(image); image->Release();
+  end(); assert(c.refs==1); auto* image=acquire(c.device); assert(image); image->Release();
   mockTick+=2001; assert(!acquire(c.device)); mockTick=100;
   // A view bound for reading prevents any clear or target mutation.
   c.bound=targets[1].srv; const int clears=c.clears; begin(1,&c); assert(!scope.ctx && c.clears==clears); c.bound=nullptr;
@@ -4205,7 +4314,7 @@ int main() {
   setRequested(false); c.device->fail=true; setRequested(true); begin(1,&c); assert(!scope.ctx && creationFailed);
   c.device->fail=false; begin(1,&c); assert(!scope.ctx && creationFailed);
   setRequested(false); setRequested(true); begin(2,&c); assert(scope.ctx); end(); setRequested(false);
-  assert(liveObjects==4); // context-owned device, depth, world render target and DSV
+  assert(c.refs==1); assert(liveObjects==4); // context-owned device, depth, world render target and DSV
  }
  assert(liveObjects==0);
 }
@@ -4214,6 +4323,26 @@ int main() {
 КОНЕЦ ФАЙЛА: repair/tests/visual_player_replay.cpp
 ================================================================================
 
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/visual_preview_camera.cpp
+================================================================================
+#include "../src/visual_preview_camera.h"
+#include <cassert>
+int main() {
+ using namespace visual_preview_camera;
+ assert(resolve(true,true,true,0)==2); assert(resolve(true,true,true,1)==2);
+ assert(resolve(true,true,true,2)==2); assert(resolve(true,true,true,3)==3);
+ assert(resolve(false,true,true,0)==0); assert(resolve(true,false,true,0)==0);
+ assert(resolve(true,true,false,1)==1); assert(resolve(true,true,true,-1)==-1);
+ // The user's stored setting is an input only: turning the request off restores
+ // the exact original returned by the game, including a changed setting.
+ assert(resolve(true,true,true,0)==2 && resolve(false,true,true,0)==0);
+ assert(resolve(true,true,true,1)==2 && resolve(false,true,true,1)==1);
+}
+
+================================================================================
+КОНЕЦ ФАЙЛА: repair/tests/visual_preview_camera.cpp
+================================================================================
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/visual_replay_mock_types.h
@@ -4252,6 +4381,8 @@ struct ID3D11Device:Base {
  virtual D3D_FEATURE_LEVEL GetFeatureLevel()=0;
 };
 struct ID3D11DeviceContext {
+ virtual ULONG AddRef()=0;
+ virtual ULONG Release()=0;
  virtual void VSGetShaderResources(UINT,UINT,ID3D11ShaderResourceView**)=0;
  virtual void HSGetShaderResources(UINT,UINT,ID3D11ShaderResourceView**)=0;
  virtual void DSGetShaderResources(UINT,UINT,ID3D11ShaderResourceView**)=0;
@@ -4276,7 +4407,6 @@ struct ID3D11DeviceContext {
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_replay_mock_types.h
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/visual_model_capture_policy.cpp
@@ -4306,7 +4436,6 @@ int main() {
 КОНЕЦ ФАЙЛА: repair/tests/visual_model_capture_policy.cpp
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/visual_skin_mock_types.h
 ================================================================================
@@ -4335,7 +4464,6 @@ struct ID3D11DeviceContext { virtual void GetDevice(ID3D11Device**)=0; virtual v
 КОНЕЦ ФАЙЛА: repair/tests/visual_skin_mock_types.h
 ================================================================================
 
-
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/visual_skin_policy.cpp
 ================================================================================
@@ -4355,7 +4483,6 @@ int main() {
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_skin_policy.cpp
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/visual_hooks.cpp
@@ -4396,7 +4523,6 @@ int main() {
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_hooks.cpp
 ================================================================================
-
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/check_hud_visual_update.py
@@ -4457,7 +4583,7 @@ assert 'Old overlay (see-through)' in u and 'SetVisualLegacyMode(legacy)' in u
 # core windows during actual HUD/notification drawing, and falls back safely.
 theme=(r/'src/hud_theme.h').read_text()
 assert 'insideLegacyHud || !hud_theme::card(name)' in u
-assert 'hud_theme::background(widgetOpacity*legacyOpacity)' in u
+assert 'hud_theme::background(widgetOpacity*legacyOpacity,hudPalette)' in u
 assert 'insideLegacyHud=true; realDrawHud(runtime)' in u
 assert 'realNotificationDraw(queue,s)' in u and 'insideLegacyHud=previous; legacyOpacity=oldOpacity' in u
 assert 'mhRemove(reinterpret_cast<void*>(guiBegin))' in u
@@ -4487,7 +4613,7 @@ print('Read-only skin candidate preview: static OK; Windows test required')
 
 replay=(r/'src/visual_player_replay.h').read_text()
 assert 'static bool previewGameModelTest=false' in u
-assert 'Game model replay (test)' in u and 'Effect overlay not available in test.' in u
+assert 'Game model replay (test)' in u and 'Trail preview not available yet.' in u
 assert 'SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && previewGameModelTest)' in u
 assert 'visual_player_replay::acquire(frameDevice)' in u and 'previewFrameView=model' in u
 assert 'scope.draws>=128' in replay and 'srvBound(ctx,scope.srv)' in replay and 'outputBound(ctx,scope.rtv,scope.dsv)' in replay
@@ -4502,6 +4628,127 @@ assert 'originalIndirect(c,b,off); },true' not in gpu and 'originalAuto(c); },tr
 assert 'NestedScope' in n and 'visual_player_replay::end()' in n
 print('Opt-in replay wiring: static OK; D3D11/Minecraft test required')
 
+# Preview camera is opt-in and returns the underlying getter outside the test.
+camera=(r/'src/visual_preview_camera.h').read_text()
+assert 'perspectiveRva=0x488420' in n and 'fileCodeAt(bytes,size,nt,table,perspectiveRva' in n
+assert 'originalPerspective(options)' in n and 'if (!visual_player_replay::isRequested()) return original;' in n
+assert 'localPlayer(player),options!=nullptr,original' in n and 'value>=0 && value<=2' in camera
+assert 'SetPlayerPreviewHatActive(editingVisual && visualEditor==VisualEditor::Hat && previewGameModelTest)' in u
+assert 'inHatCapture && replayable' in gpu and 'submitted.fetch_add(1,std::memory_order_relaxed); call();' in gpu
+assert 'struct EntityScope { ~EntityScope() { visual_player_replay::end();' in n
+for palette in ('Aogiri Green','Emerald','Graphite'): assert palette in theme
+print('Camera/hat replay and HUD palette wiring: static OK; Windows test required')
+
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_hud_visual_update.py
+================================================================================
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/check_china_hat.py
+================================================================================
+"""Integration checks only; actual native renderer requires Windows/game testing."""
+from pathlib import Path
+r=Path(__file__).resolve().parents[1]
+n=(r/'src/china_hat_native.cpp').read_text()
+u=(r/'src/compat.cpp').read_text()
+v=(r/'src/china_hat_validation.h').read_text()
+assert 'hat_validation::identity(digest' in n and 'hashFile(bytes,size,digest)' in n
+assert 'std::memcmp(inMemory,fromFile,16)!=0' in n
+assert 'std::memcmp(fromFile,sig.bytes,16)!=0' in n
+assert 'state[0x125] || state[0x170] || pending' in n
+assert 'oldFlag' in n and 'saved,sizeof(saved)' in n
+assert 'actual!=actor' in n and 'type!=30' in n
+assert 'hat_player::fromClient' in n and 'clientTickRva=0x11b2d0' in n
+assert 'for (auto rva : {screenRva,endRva,clientTickRva})' in n
+assert 'visual_hooks::install(hooks,3' in n and '&clientTickHook' in n
+local=n[n.index('bool localPlayer('):n.index('bool writable(')]
+assert '0x1921df8' not in local and 'fromClient' in local
+player=(r/'src/china_hat_player.h').read_text()
+assert 'playerSlot=0x60' in player and 'again!=first' in player and 'maxTickAge=2000' in player
+assert 'GetTickCount64()-player.at>250' in n and 'now-player.at>250' in n
+assert 'available{false}, enabled{false}' in n
+assert 'if (!ChinaHatAvailable()) return false;' in n and 'return installHooks();' in n
+assert n.index('installHooks()') < n.index('bool InitializeChinaHat(')
+assert 'China Hat (test)' in u and 'SetChinaHatEnabled(false)' in u
+assert 'Trail (test)' in u and 'SetTrailEnabled(false)' in u
+assert 'Hat height' in u and 'Hat: submitted' in u and 'Trail: submitted' in u
+assert 'ObserveVisualContext(context)' in u
+assert 'OMSetDepthStencilState' not in n  # scoped guard owns and restores GPU state
+assert 'trailGeneration' in n and 'trail.clear()' in n
+assert 'tessBegin(t,4,segments*2)' in n
+hat=n[n.index('void renderHat(const PlayerFrame& player) {'):n.index('void renderTrail(const PlayerFrame& player) {')]
+assert 'visual_color::animated(materialTint.load' in hat and 'hatRainbow.load' in hat
+assert 'Enable colors' in u and 'materialTint{true}' in n
+assert 'Filled hat (test)' in u and 'Filled trail (test)' in u
+assert 'hatFill{true}, trailFill{true}' in n
+assert 'guiBegin("Visuals"' in u and 'Settings##open_hat' in u and 'Settings##open_trail' in u
+assert 'Rainbow hat' in u and 'Rainbow trail' in u
+assert 'hatRainbow{true}, trailRainbow{true}' in n
+assert 'std::atomic<bool> available{false}, enabled{false}' in n and 'trailEnabled{false}' in n
+assert '_ZN5ImGui11BeginTabBarEPKci' in u and '_ZN5ImGui12BeginTabItemEPKcPbi' in u
+for symbol in ('_ZN5ImGui11BeginTabBarEPKci','_ZN5ImGui9EndTabBarEv',
+               '_ZN5ImGui12BeginTabItemEPKcPbi','_ZN5ImGui10EndTabItemEv',
+               '_ZN5ImGui10ColorEdit3EPKcPfi','_ZN5ImGui17SetNextWindowSizeERK6ImVec2i'):
+    assert symbol in u and symbol.encode() in (r.parent/'GAYClientInternal.dll').read_bytes(), symbol
+assert 'drawVisualEditor(); return;' in u and 'drawEffectPreview(current)' in u
+trail=n[n.index('void renderTrail(const PlayerFrame& player) {'):n.index('void screenHook(')]
+assert 'visual_color::animated(materialTint.load' in trail and 'trailRainbow.load' in trail
+assert 'saved,sizeof(saved)' in hat and 'saved,sizeof(saved)' in trail
+assert 'constexpr int segments=48, spokes=12' in hat
+assert 'tessBegin(t,4,2*(segments+spokes))' in hat and 'china_hat::emitWireframe' in hat
+assert hat.index('submitVisual(') < hat.index('tessEnd(')
+assert 'hat_animation::bob(' in hat
+assert 'if (hatFill.load(std::memory_order_acquire))' in hat and 'if (!tessIdle(tess))' in hat
+assert 'if (trailFill.load(std::memory_order_acquire))' in trail and 'if (!tessIdle(tess))' in trail
+assert hat.index('tessBegin(t,4,') < hat.index('tessBegin(t,2,')
+assert trail.index('tessBegin(t,4,') < trail.index('tessBegin(t,2,')
+assert 'param(VisualParam::TrailHeight)' in trail and 'param(VisualParam::TrailSeconds)' in trail
+assert 'visual_ribbon::segment' in trail and 'segments*12' in trail
+assert hat.index('surfaceScratch') < hat.rindex('saved,sizeof(saved)')
+assert trail.index('ribbonScratch') < trail.rindex('saved,sizeof(saved)')
+screen=n[n.index('void screenHook('):n.index('bool ChinaHatAvailable()')]
+assert screen.index('renderHat(visible)') < screen.index('renderTrail(local)')
+assert u.index('InitializeChinaHat(mhCreate') > u.index('mhApply())')
+assert 'GetModuleFileNameW' in n and 'Minecraft.Windows.exe' in n
+assert '0x28,0x83,0xb7,0x2a' in v
+for field in ('HatRadius','HatConeHeight','HatOffset','HatBobAmplitude','HatBobSpeed','HatRainbowSpeed',
+              'TrailHeight','TrailSeconds','TrailRainbowSpeed','HatRed','HatGreen','HatBlue','TrailRed','TrailGreen','TrailBlue'):
+    assert 'VisualParam::'+field in n and 'VisualParam::'+field in u, field
+print('Experimental China Hat gating, input and render wiring: static OK (Windows game test required)')
+
+# Recorded diagnostic bytes are checked independently of the C++ initializer.
+import re
+observed=(r/'research/china_hat/observed-build.txt').read_text()
+labels=['player-render','entity-render','render-entities','render-level','tess-begin','tess-color','tess-vertex','tess-draw']
+entries=re.findall(r'\{0x[0-9a-f]+, \{([^}]+)\}\}',v)
+assert len(entries)==len(labels)
+for label,entry in zip(labels,entries):
+    recorded=re.search(r'^'+re.escape(label)+r': ([0-9a-f]{32})$',observed,re.M).group(1)
+    encoded=bytes(int(x,16) for x in re.findall(r'0x[0-9a-f]{2}',entry)).hex()
+    assert encoded==recorded, label
+print('Recorded prologues: OK')
+
+# Optional earlier player-pass experiment: no depth bypass, no second hat in
+# the normal world path; original trail and legacy overlay remain independent.
+assert 'hatPlayerPass{false}' in n
+assert 'if (inEntityPass) return originalEntities(self,partial);' in n
+assert 'isLocal && enabled.load(std::memory_order_acquire)' in n
+assert 'playerPassAttempted=true' in n and 'drawHatAtPlayer(frame)' in n
+assert 'if (visual_depth_policy::entitiesHat(entityPlayerPass)) {' in n and 'renderHat(visible);' in n
+alt=n[n.index('void drawHatAtPlayer(const PlayerFrame& player) {'):n.index('// Activate D3D guards')]
+assert 'visual_depth_policy::worldDraw(' in alt and 'visual_gpu_depth::matches(ctx)' in alt
+assert 'visual_gpu_depth::expectedDepth=dsv' in alt and 'visual_gpu_depth::expectedDepth=nullptr' in alt
+assert 'renderHat(player)' in alt and 'renderTrail(' not in alt
+assert 'Hat at player pass (test)' in u and 'Player compare:' in u and 'World compare:' in u
+print('Alternative player timing, mutual exclusion and depth gate: static OK; Windows test required')
+
+# On this build's observed dispatcher the fourth argument is in XMM3 (float).
+# Do not let the observer clobber it before forwarding to the game renderer.
+assert 'using PlayerRender = std::intptr_t (*)(void*,void*,void*,float,float);' in n
+assert 'playerHook(void* self,void* entity,void* pos,float renderValue,float partial)' in n
+assert 'originalPlayer(self,entity,pos,renderValue,partial)' in n
+print('Player renderer float argument forwarding: static OK; Windows test required')
+
+================================================================================
+КОНЕЦ ФАЙЛА: repair/tests/check_china_hat.py
 ================================================================================

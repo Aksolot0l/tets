@@ -32,6 +32,8 @@ struct ID3D11Device:Base {
  virtual D3D_FEATURE_LEVEL GetFeatureLevel()=0;
 };
 struct ID3D11DeviceContext {
+ virtual ULONG AddRef()=0;
+ virtual ULONG Release()=0;
  virtual void VSGetShaderResources(UINT,UINT,ID3D11ShaderResourceView**)=0;
  virtual void HSGetShaderResources(UINT,UINT,ID3D11ShaderResourceView**)=0;
  virtual void DSGetShaderResources(UINT,UINT,ID3D11ShaderResourceView**)=0;

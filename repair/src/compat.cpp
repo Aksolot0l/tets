@@ -153,6 +153,8 @@ static bool hudEditorOpen = false, moduleHudEnabled = false;
 static std::atomic<bool> hudEditorActive{false};
 // New Module List HUD settings are per-session; they do not overwrite profiles.
 static float hudScale = 1.f, hudOpacity = .78f, hudX = .78f, hudY = .05f;
+static int hudPalette=0;
+static float hudRounding=8.f;
 static float widgetOpacity = .72f;
 static float hudColor[3] = {.35f,.85f,1.f};
 static std::atomic<const WheelBridge*> externalWheel{nullptr};
@@ -416,7 +418,7 @@ static void pushVisualStyle() {
     if (!guiPushColor || !guiPopColor) return;
     if (guiPushVarFloat && guiPopVar) {
         guiPushVarFloat(ImGuiStyleVar_WindowBorderSize,1.f);
-        guiPushVarFloat(ImGuiStyleVar_WindowRounding,8.f);
+        guiPushVarFloat(ImGuiStyleVar_WindowRounding,hud_theme::rounding(hudRounding));
     }
     guiPushColor(ImGuiCol_WindowBg,ImVec4(.035f,.065f,.055f,.96f));
     guiPushColor(ImGuiCol_Border,ImVec4(.10f,.65f,.37f,.85f));
@@ -600,8 +602,12 @@ static void drawEffectPreview(VisualEditor editor) {
                 if (model) drawImage(d,static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(model)),ImVec2(p.x+32.f,p.y),ImVec2(p.x+247.f,p.y+215.f),ImVec2(0,0),ImVec2(1,1),IM_COL32_WHITE);
             }
             guiDummy(ImVec2(280.f,215.f));
-            realText("Third person; turn to face camera.",nullptr);
-            realText("Effect overlay not available in test.",nullptr);
+            switch (PlayerPreviewCameraStatus()) {
+            case 1: realText("Auto front unavailable; use F5.",nullptr); break;
+            case 3: realText("Auto front requested; look level.",nullptr); break;
+            default: realText("Waiting for camera; use F5 if needed.",nullptr); break;
+            }
+            realText(editor==VisualEditor::Hat?"Hat preview: enable China Hat.":"Trail preview not available yet.",nullptr);
         } else {
             auto skin=visual_player_skin::acquire(frameDevice); previewFrameView=skin.view;
             if (skin.view) {
@@ -643,10 +649,10 @@ static void drawVisualEditor() {
 static bool themedBegin(const char* name,bool* open,int flags) {
     if (!insideLegacyHud || !hud_theme::card(name) || !guiPushColor || !guiPopColor || !guiPushVarFloat || !guiPopVar)
         return realGuiBegin(name,open,flags);
-    const auto bg=hud_theme::background(widgetOpacity*legacyOpacity), border=hud_theme::border(widgetOpacity*legacyOpacity);
+    const auto bg=hud_theme::background(widgetOpacity*legacyOpacity,hudPalette), border=hud_theme::border(widgetOpacity*legacyOpacity,hudPalette);
     guiPushColor(ImGuiCol_WindowBg,ImVec4(bg.r,bg.g,bg.b,bg.a));
     guiPushColor(ImGuiCol_Border,ImVec4(border.r,border.g,border.b,border.a));
-    guiPushVarFloat(ImGuiStyleVar_WindowRounding,8.f);
+    guiPushVarFloat(ImGuiStyleVar_WindowRounding,hud_theme::rounding(hudRounding));
     guiPushVarFloat(ImGuiStyleVar_WindowBorderSize,1.f);
     // Keystrokes deliberately used NoBackground: add the same card, leaving
     // the core's actual key-state drawing intact.
@@ -662,12 +668,12 @@ static void drawModuleHud(void* runtime, bool preview) {
     const float x = preview ? 390.f+hudX*180.f : hudX*static_cast<float>(frameWidth);
     const float y = preview ? 90.f+hudY*180.f : hudY*static_cast<float>(frameHeight);
     guiSetNextPos(ImVec2(x,y),ImGuiCond_Always,ImVec2(0,0));
-    const auto bg=hud_theme::background(hudOpacity), border=hud_theme::border(hudOpacity);
+    const auto bg=hud_theme::background(hudOpacity,hudPalette), border=hud_theme::border(hudOpacity,hudPalette);
     guiPushColor(ImGuiCol_WindowBg,ImVec4(bg.r,bg.g,bg.b,bg.a));
     guiPushColor(ImGuiCol_Border,ImVec4(border.r,border.g,border.b,border.a));
     guiPushColor(ImGuiCol_Text,ImVec4(hudColor[0],hudColor[1],hudColor[2],1.f));
     const bool vars=guiPushVarFloat && guiPopVar;
-    if (vars) { guiPushVarFloat(ImGuiStyleVar_WindowRounding,8.f); guiPushVarFloat(ImGuiStyleVar_WindowBorderSize,1.f); }
+    if (vars) { guiPushVarFloat(ImGuiStyleVar_WindowRounding,hud_theme::rounding(hudRounding)); guiPushVarFloat(ImGuiStyleVar_WindowBorderSize,1.f); }
     const int flags=ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|
         ImGuiWindowFlags_NoInputs|ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|
         ImGuiWindowFlags_NoFocusOnAppearing;
@@ -735,6 +741,14 @@ static void drawHudEditor(void* runtime) {
             guiSliderFloat(id,value,low,high,"%.2f",0);
             if (guiPushWidth && guiPopWidth) guiPopWidth();
         };
+        realText("Palette",nullptr);
+        for (int i=0;i<3;i++) {
+            if (guiButton && guiButton(hud_theme::palette(i).name,ImVec2(-1.f,0.f))) {
+                hudPalette=i; const auto c=hud_theme::palette(i).accent;
+                hudColor[0]=c.r; hudColor[1]=c.g; hudColor[2]=c.b;
+            }
+        }
+        slider("Card rounding",&hudRounding,0.f,20.f);
         if (hudThemeReady.load(std::memory_order_acquire)) slider("Widget background opacity",&widgetOpacity,0.f,1.f);
         else realText("Widget theme unavailable; original widgets retained.",nullptr);
         if (guiColorEdit3) { realText("HUD text color",nullptr); if (guiPushWidth && guiPopWidth) guiPushWidth(-1.f);
@@ -771,6 +785,7 @@ static void patchedDrawGui(void* runtime) {
         SetTrailEnabled(false);
         SetPlayerSkinPreviewActive(false);
         SetPlayerModelPreviewActive(false);
+        SetPlayerPreviewHatActive(false);
         if (bridgeActive) bridgeActive(false);
         DisableUwpExtraInput();
         log("overlay disabled by Delete; DLLs remain loaded until game exit");
@@ -781,6 +796,7 @@ static void patchedDrawGui(void* runtime) {
     const bool editingVisual=menuOpen && visualEditor!=VisualEditor::None && canVisualPreview();
     SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options);
     SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && previewGameModelTest);
+    SetPlayerPreviewHatActive(editingVisual && visualEditor==VisualEditor::Hat && previewGameModelTest);
     if (!menuOpen || (!hudEditorOpen && !editingVisual)) realDrawGui(runtime);
     if (editingVisual) { drawVisualEditor(); return; }
     if (menuOpen && hudEditorOpen && hudHooksReady) { drawHudEditor(runtime); return; }

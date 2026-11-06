@@ -66,6 +66,19 @@ int main() {
  });
  assert(calls==2 && ctx.curDepth==&ctx.depth && ctx.curBlend==&ctx.blend && ctx.stencil==7 && ctx.mask==0xfffffffe);
  assert(ctx.factor[0]==.2f && ctx.factor[3]==.5f && ctx.depth.refs==1 && ctx.blend.refs==1 && ctx.view.refs==1);
+ // Only a submitted hat is copied, with the world's guarded opacity/depth
+ // still active; failures skip the copy but never suppress the world draw.
+ replayBegin.store(&beginReplay); replayEnd.store(&endReplay); inHatCapture=true;
+ int copyPass=0, oldStarts=replayStarts, oldEnds=replayEnds;
+ draw(&ctx,[&]{++copyPass; assert(ctx.curDepth!=&ctx.depth && ctx.curBlend!=&ctx.blend);},true);
+ assert(copyPass==2 && replayStarts==oldStarts+1 && replayEnds==oldEnds+1 && inHatCapture);
+ assert(ctx.curDepth==&ctx.depth && ctx.curBlend==&ctx.blend);
+ replayAllowed=false; copyPass=0;
+ draw(&ctx,[&]{++copyPass;},true); assert(copyPass==1 && replayEnds==oldEnds+1);
+ replayAllowed=true; copyPass=0;
+ try {draw(&ctx,[&]{if(++copyPass==2) throw 7;},true); assert(false);} catch(int e) {assert(e==7);}
+ assert(copyPass==2 && replayEnds==oldEnds+2 && inHatCapture && ctx.curDepth==&ctx.depth && ctx.curBlend==&ctx.blend);
+ inHatCapture=false; replayBegin.store(nullptr); replayEnd.store(nullptr);
  int before=ctx.sets; ctx.dsv=&ctx.other; draw(&ctx,[&]{++calls;}); assert(calls==2 && ctx.sets==before && ctx.other.refs==1);
  ctx.dsv=&ctx.view; ctx.device.failBlend=true; draw(&ctx,[&]{++calls;}); assert(calls==2 && ctx.sets==before);
  assert(ctx.curDepth==&ctx.depth && ctx.curBlend==&ctx.blend && ctx.depth.refs==1 && ctx.blend.refs==1 && ctx.view.refs==1);

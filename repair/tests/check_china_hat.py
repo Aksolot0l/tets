@@ -86,7 +86,7 @@ assert 'hatPlayerPass{false}' in n
 assert 'if (inEntityPass) return originalEntities(self,partial);' in n
 assert 'isLocal && enabled.load(std::memory_order_acquire)' in n
 assert 'playerPassAttempted=true' in n and 'drawHatAtPlayer(frame)' in n
-assert 'if (visual_depth_policy::entitiesHat(entityPlayerPass)) renderHat(visible)' in n
+assert 'if (visual_depth_policy::entitiesHat(entityPlayerPass)) {' in n and 'renderHat(visible);' in n
 alt=n[n.index('void drawHatAtPlayer(const PlayerFrame& player) {'):n.index('// Activate D3D guards')]
 assert 'visual_depth_policy::worldDraw(' in alt and 'visual_gpu_depth::matches(ctx)' in alt
 assert 'visual_gpu_depth::expectedDepth=dsv' in alt and 'visual_gpu_depth::expectedDepth=nullptr' in alt

@@ -23,6 +23,16 @@ inline bool card(const char* name) {
 }
 inline float alpha(float v) { return std::isfinite(v) ? std::clamp(v,0.f,1.f) : .72f; }
 struct Rgba { float r,g,b,a; };
-inline Rgba background(float opacity) { return {.025f,.045f,.038f,alpha(opacity)}; }
-inline Rgba border(float opacity) { return {.28f,.68f,.41f,alpha(opacity)*.46f}; }
+// Palette names and colors from the supplied HUD mockup. Actual labels,
+// values and controls remain the game's real widgets, not mock data.
+struct Palette { const char* name; Rgba bg, border, accent; };
+inline constexpr Palette palettes[] = {
+ {"Aogiri Green",{8.f/255,19.f/255,13.f/255,1},{47.f/255,122.f/255,74.f/255,1},{77.f/255,1,136.f/255,1}},
+ {"Emerald",{7.f/255,19.f/255,15.f/255,1},{43.f/255,110.f/255,90.f/255,1},{46.f/255,230.f/255,160.f/255,1}},
+ {"Graphite",{13.f/255,17.f/255,16.f/255,1},{58.f/255,84.f/255,68.f/255,1},{157.f/255,1,180.f/255,1}},
+};
+inline const Palette& palette(int i) { return palettes[i>=0 && i<3 ? i:0]; }
+inline Rgba background(float opacity,int theme=0) { auto c=palette(theme).bg; c.a=alpha(opacity); return c; }
+inline Rgba border(float opacity,int theme=0) { auto c=palette(theme).border; c.a=alpha(opacity)*.75f; return c; }
+inline float rounding(float v) { return std::isfinite(v) ? std::clamp(v,0.f,20.f) : 8.f; }
 }

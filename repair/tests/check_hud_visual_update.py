@@ -54,7 +54,7 @@ assert 'Old overlay (see-through)' in u and 'SetVisualLegacyMode(legacy)' in u
 # core windows during actual HUD/notification drawing, and falls back safely.
 theme=(r/'src/hud_theme.h').read_text()
 assert 'insideLegacyHud || !hud_theme::card(name)' in u
-assert 'hud_theme::background(widgetOpacity*legacyOpacity)' in u
+assert 'hud_theme::background(widgetOpacity*legacyOpacity,hudPalette)' in u
 assert 'insideLegacyHud=true; realDrawHud(runtime)' in u
 assert 'realNotificationDraw(queue,s)' in u and 'insideLegacyHud=previous; legacyOpacity=oldOpacity' in u
 assert 'mhRemove(reinterpret_cast<void*>(guiBegin))' in u
@@ -84,7 +84,7 @@ print('Read-only skin candidate preview: static OK; Windows test required')
 
 replay=(r/'src/visual_player_replay.h').read_text()
 assert 'static bool previewGameModelTest=false' in u
-assert 'Game model replay (test)' in u and 'Effect overlay not available in test.' in u
+assert 'Game model replay (test)' in u and 'Trail preview not available yet.' in u
 assert 'SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && previewGameModelTest)' in u
 assert 'visual_player_replay::acquire(frameDevice)' in u and 'previewFrameView=model' in u
 assert 'scope.draws>=128' in replay and 'srvBound(ctx,scope.srv)' in replay and 'outputBound(ctx,scope.rtv,scope.dsv)' in replay
@@ -98,3 +98,14 @@ assert 'originalInstanced(c,n,instances,start,first); },true' in gpu
 assert 'originalIndirect(c,b,off); },true' not in gpu and 'originalAuto(c); },true' not in gpu
 assert 'NestedScope' in n and 'visual_player_replay::end()' in n
 print('Opt-in replay wiring: static OK; D3D11/Minecraft test required')
+
+# Preview camera is opt-in and returns the underlying getter outside the test.
+camera=(r/'src/visual_preview_camera.h').read_text()
+assert 'perspectiveRva=0x488420' in n and 'fileCodeAt(bytes,size,nt,table,perspectiveRva' in n
+assert 'originalPerspective(options)' in n and 'if (!visual_player_replay::isRequested()) return original;' in n
+assert 'localPlayer(player),options!=nullptr,original' in n and 'value>=0 && value<=2' in camera
+assert 'SetPlayerPreviewHatActive(editingVisual && visualEditor==VisualEditor::Hat && previewGameModelTest)' in u
+assert 'inHatCapture && replayable' in gpu and 'submitted.fetch_add(1,std::memory_order_relaxed); call();' in gpu
+assert 'struct EntityScope { ~EntityScope() { visual_player_replay::end();' in n
+for palette in ('Aogiri Green','Emerald','Graphite'): assert palette in theme
+print('Camera/hat replay and HUD palette wiring: static OK; Windows test required')

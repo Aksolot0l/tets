@@ -15,6 +15,9 @@ struct Device:Obj<ID3D11Device> {
 };
 struct Depth:Obj<ID3D11DepthStencilState> {D3D11_DEPTH_STENCIL_DESC desc{TRUE,D3D11_COMPARISON_LESS,FALSE}; void GetDesc(D3D11_DEPTH_STENCIL_DESC* d) override {*d=desc;} };
 struct Context:ID3D11DeviceContext {
+ unsigned refs=1;
+ ULONG AddRef() override { return ++refs; }
+ ULONG Release() override { assert(refs>1); return --refs; }
  Device* device=new Device; Depth* depth=new Depth;
  ID3D11RenderTargetView* target=new Obj<ID3D11RenderTargetView>;
  ID3D11DepthStencilView* dsv=new Obj<ID3D11DepthStencilView>;
@@ -48,13 +51,13 @@ int main() {
  {
   Context c;
   begin(1,&c); assert(!scope.ctx && c.clears==0);
-  setRequested(true); begin(1,&c); assert(scope.ctx==&c && c.clears==1 && !acquire(c.device));
+  setRequested(true); begin(1,&c); assert(scope.ctx==&c && c.refs==2 && c.clears==1 && !acquire(c.device));
   const auto oldViewport=c.viewport; const auto oldScissor=c.scissors;
   assert(beginDraw(&c) && saved.active && c.sets==3 && c.depthClears==1);
   assert(c.curTarget==scope.rtv && c.curDsv==scope.dsv && c.viewport.Height==768 && c.scissors.right==256);
   endDraw(&c); assert(!saved.active && c.sets==6 && scope.draws==1);
   assert(c.curTarget==c.target && c.curDsv==c.dsv && std::memcmp(&oldViewport,&c.viewport,sizeof(oldViewport))==0 && std::memcmp(&oldScissor,&c.scissors,sizeof(oldScissor))==0);
-  end(); auto* image=acquire(c.device); assert(image); image->Release();
+  end(); assert(c.refs==1); auto* image=acquire(c.device); assert(image); image->Release();
   mockTick+=2001; assert(!acquire(c.device)); mockTick=100;
   // A view bound for reading prevents any clear or target mutation.
   c.bound=targets[1].srv; const int clears=c.clears; begin(1,&c); assert(!scope.ctx && c.clears==clears); c.bound=nullptr;
@@ -75,7 +78,7 @@ int main() {
   setRequested(false); c.device->fail=true; setRequested(true); begin(1,&c); assert(!scope.ctx && creationFailed);
   c.device->fail=false; begin(1,&c); assert(!scope.ctx && creationFailed);
   setRequested(false); setRequested(true); begin(2,&c); assert(scope.ctx); end(); setRequested(false);
-  assert(liveObjects==4); // context-owned device, depth, world render target and DSV
+  assert(c.refs==1); assert(liveObjects==4); // context-owned device, depth, world render target and DSV
  }
  assert(liveObjects==0);
 }

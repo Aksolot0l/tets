@@ -17,6 +17,7 @@
 #include "visual_gpu_depth.h"
 #include "visual_player_skin.h"
 #include "visual_player_replay.h"
+#include "visual_preview_camera.h"
 #include <d3d11.h>
 #include "hat_animation.h"
 #include <bcrypt.h>
@@ -28,6 +29,7 @@
 
 namespace {
 using ClientTick = void (*)(void*,int,int);
+using GetPerspective = int (*)(void*);
 // In the recorded x64 dispatcher, the fourth parameter is passed in XMM3;
 // preserve it as float even though this wrapper's exact meaning is unknown.
 using PlayerRender = std::intptr_t (*)(void*,void*,void*,float,float);
@@ -40,6 +42,7 @@ using TessDraw = void (*)(void*,void*,std::int64_t);
 using TessEnd = void (*)(void*,void*,std::int64_t,std::uint8_t);
 constexpr std::uint32_t playerRva=0x581910, screenRva=0x3528c0, clientTickRva=0x11b2d0, beginRva=0x5d0660,
  colorRva=0x5d0890, vertexRva=0x5d0a90, drawRva=0x5d1840, endRva=0x5d14f0, worldEntitiesRva=0x5ae250;
+constexpr std::uint32_t perspectiveRva=0x488420; // candidate Options getter; separately validated
 constexpr std::uint32_t originRva=0x19436e8, tessRva=0x1925550, contextRva=0x1913b40,
  shaderColorRva=0x192ae08, shaderFlagRva=0x192ae18;
 std::atomic<bool> available{false}, enabled{false};
@@ -52,7 +55,10 @@ std::atomic<bool> hatRainbow{true}, trailRainbow{true}, vertexGradient{false};
 std::atomic<bool> strictDepth{true}, worldHookReady{false}, gpuHooksReady{false};
 // Off by default: preserve the current world pass until the alternate timing
 // is actually tested by the player. Does not change trail or legacy mode.
+std::atomic<bool> previewCameraCandidate{false}, previewCameraHookReady{false};
+std::atomic<ULONGLONG> lastCameraOverride{0};
 std::atomic<bool> hatPlayerPass{false};
+std::atomic<bool> previewHatCapture{false};
 std::atomic<int> hatPlayerPassStatus{0}, hatPlayerCompare{0}, worldDepthCompare{0};
 std::atomic<ULONGLONG> lastPlayerPassAttempt{0};
 // 0 waiting, 1 guarded GPU draw, 2 no scene depth, 3 hooks unavailable,
@@ -103,6 +109,7 @@ ClientTick originalTick=nullptr;
 std::atomic<std::uintptr_t> clientInstance{0};
 std::atomic<ULONGLONG> lastClientTick{0};
 PlayerRender originalPlayer=nullptr;
+GetPerspective originalPerspective=nullptr;
 ScreenRender originalScreen=nullptr;
 EntitiesRender originalEntities=nullptr;
 TessBegin tessBegin=nullptr; TessColor tessColor=nullptr; TessVertex tessVertex=nullptr;
@@ -187,6 +194,7 @@ bool fileCodeAt(const BYTE* file,std::size_t size,const IMAGE_NT_HEADERS64& nt,s
  return false;
 }
 bool validateGame() {
+ previewCameraCandidate.store(false,std::memory_order_release);
  HMODULE module=GetModuleHandleW(nullptr); if (!module) return false;
  wchar_t path[32768]{}; DWORD n=GetModuleFileNameW(module,path,32768);
  if (!n || n>=32768) return false;
@@ -222,13 +230,33 @@ bool validateGame() {
     const BYTE* fromFile=nullptr; std::uint8_t inMemory[16]{};
     if (!fileCodeAt(bytes,size,nt,table,rva,fromFile) || !read(image+rva,inMemory,16) || std::memcmp(inMemory,fromFile,16)!=0) valid=false;
    }
-   if (valid) base=image;
+   if (valid) {
+    // Optional feature: if another mod changed this candidate, disable only
+    // the camera experiment, not the already-working visuals.
+    const BYTE* fromFile=nullptr; std::uint8_t inMemory[16]{};
+    const bool camera=fileCodeAt(bytes,size,nt,table,perspectiveRva,fromFile) &&
+      read(image+perspectiveRva,inMemory,16) && std::memcmp(inMemory,fromFile,16)==0;
+    previewCameraCandidate.store(camera,std::memory_order_release);
+    base=image;
+   }
   }
   UnmapViewOfFile(bytes);
  }
  if (mapping) CloseHandle(mapping); CloseHandle(file); return valid;
 }
 
+// Return the stored game value except while the explicit model preview is
+// active. No Options setter or player rotation writes are performed.
+int perspectiveHook(void* options) {
+ const int original=originalPerspective(options);
+ if (!visual_player_replay::isRequested()) return original;
+ std::uintptr_t player=0;
+ if (visual_preview_camera::overrideFront(visual_player_replay::isRequested(),localPlayer(player),options!=nullptr,original)) {
+  lastCameraOverride.store(GetTickCount64(),std::memory_order_relaxed);
+  return 2;
+ }
+ return original;
+}
 // 1.1.5 candidate tick signature, called only after exact EXE identity and
 // loaded/file code comparison. This observes the live ClientInstance; it never
 // writes to the instance or changes the original tick arguments.
@@ -285,7 +313,14 @@ std::intptr_t playerHook(void* self,void* entity,void* pos,float renderValue,flo
   ~CaptureScope() { if(active) { visual_gpu_depth::inPlayerCapture=false; visual_player_replay::end(); visual_player_skin::end(); } if(ctx)ctx->Release(); }
  } captureScope{captureContext,capture};
  const auto result=originalPlayer(self,entity,pos,renderValue,partial);
- if (capture) { visual_gpu_depth::inPlayerCapture=false; visual_player_replay::end(); visual_player_skin::end(); captureScope.active=false; }
+ if (capture) {
+  visual_gpu_depth::inPlayerCapture=false; visual_player_skin::end();
+  // Keep the actor target alive until the entity pass finishes so the existing
+  // world-hat draw can be copied into its own depth buffer. No other actor is
+  // captured in the meantime. Outside that pass, publish immediately.
+  if (!inEntityPass) visual_player_replay::end();
+  captureScope.active=false;
+ }
  // Do not clear a local-player frame when another player's renderer runs.
  if (anyVisual()) {
   std::uintptr_t local=0;
@@ -323,7 +358,7 @@ std::intptr_t entitiesDiagnosticHook(void* self,float partial) {
  entityPlayerPass=hatPlayerPass.load(std::memory_order_acquire);
  playerPassAttempted=false;
  inEntityPass=true;
- struct EntityScope { ~EntityScope() { inEntityPass=false; } } scope;
+ struct EntityScope { ~EntityScope() { visual_player_replay::end(); inEntityPass=false; } } scope;
  auto result=originalEntities(self,partial);
  inEntityPass=false;
  if (!anyVisual()) return result;
@@ -352,7 +387,12 @@ std::intptr_t entitiesDiagnosticHook(void* self,float partial) {
   visual_gpu_depth::expectedContext=ctx; visual_gpu_depth::expectedDepth=dsv; visual_gpu_depth::worldCompare=compare;
   auto rejected=visual_gpu_depth::rejected.load(std::memory_order_relaxed);
   auto submitted=visual_gpu_depth::submitted.load(std::memory_order_relaxed);
-  if (visual_depth_policy::entitiesHat(entityPlayerPass)) renderHat(visible);
+  if (visual_depth_policy::entitiesHat(entityPlayerPass)) {
+   const bool previous=visual_gpu_depth::inHatCapture;
+   visual_gpu_depth::inHatCapture=previewHatCapture.load(std::memory_order_acquire);
+   struct RestoreHatCapture { bool previous; ~RestoreHatCapture() { visual_gpu_depth::inHatCapture=previous; } } restore{previous};
+   renderHat(visible);
+  }
   renderTrail(local);
   visual_gpu_depth::expectedContext=nullptr; visual_gpu_depth::expectedDepth=nullptr;
   const bool blocked=visual_gpu_depth::rejected.load(std::memory_order_relaxed)!=rejected;
@@ -384,7 +424,12 @@ void drawHatAtPlayer(const PlayerFrame& player) {
   visual_gpu_depth::expectedContext=ctx; visual_gpu_depth::expectedDepth=dsv; visual_gpu_depth::worldCompare=compare;
   const auto rejected=visual_gpu_depth::rejected.load(std::memory_order_relaxed);
   const auto submitted=visual_gpu_depth::submitted.load(std::memory_order_relaxed);
-  renderHat(player);
+  {
+   const bool previous=visual_gpu_depth::inHatCapture;
+   visual_gpu_depth::inHatCapture=previewHatCapture.load(std::memory_order_acquire);
+   struct RestoreHatCapture { bool previous; ~RestoreHatCapture() { visual_gpu_depth::inHatCapture=previous; } } restore{previous};
+   renderHat(player);
+  }
   visual_gpu_depth::expectedContext=nullptr; visual_gpu_depth::expectedDepth=nullptr;
   const bool blocked=visual_gpu_depth::rejected.load(std::memory_order_relaxed)!=rejected;
   const bool drew=visual_gpu_depth::submitted.load(std::memory_order_relaxed)!=submitted;
@@ -620,6 +665,12 @@ bool installHooks() {
     visual_gpu_depth::replayBegin.store(&visual_player_replay::beginDraw,std::memory_order_release);
    }
    ctx->Release();
+   if (gpu && previewCameraCandidate.load(std::memory_order_acquire)) {
+    visual_hooks::Hook camera[]={{reinterpret_cast<void*>(base+perspectiveRva),reinterpret_cast<void*>(&perspectiveHook),reinterpret_cast<void**>(&originalPerspective)}};
+    const bool installedCamera=visual_hooks::install(camera,1,createHook,enableHook,disableHook,removeHook);
+    previewCameraHookReady.store(installedCamera,std::memory_order_release);
+    if (!installedCamera) log("preview camera unavailable; manual third person remains available");
+   }
    if (!gpu) log("GPU depth guard unavailable; strict visual draw disabled");
   }
  }
@@ -644,8 +695,15 @@ void SetPlayerSkinPreviewActive(bool value) {
  if (visual_player_skin::isRequested()) return;
  if (enableVisual() && gpuHooksReady.load(std::memory_order_acquire)) visual_player_skin::setRequested(true);
 }
+int PlayerPreviewCameraStatus() {
+ if (!visual_player_replay::isRequested()) return 0;
+ if (!previewCameraHookReady.load(std::memory_order_acquire)) return 1;
+ const auto t=lastCameraOverride.load(std::memory_order_relaxed),now=GetTickCount64();
+ return t && now>=t && now-t<=1000 ? 3 : 2;
+}
+void SetPlayerPreviewHatActive(bool value) { previewHatCapture.store(value,std::memory_order_release); }
 void SetPlayerModelPreviewActive(bool value) {
- if (!value) { visual_player_replay::setRequested(false); return; }
+ if (!value) { visual_player_replay::setRequested(false); lastCameraOverride.store(0,std::memory_order_relaxed); return; }
  if (visual_player_replay::isRequested()) return;
  if (enableVisual() && gpuHooksReady.load(std::memory_order_acquire)) visual_player_replay::setRequested(true);
 }

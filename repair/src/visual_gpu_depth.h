@@ -36,6 +36,8 @@ using ReplayEnd=void (*)(ID3D11DeviceContext*);
 inline std::atomic<ReplayBegin> replayBegin{nullptr};
 inline std::atomic<ReplayEnd> replayEnd{nullptr};
 inline thread_local bool inPlayerCapture=false;
+// Only while the existing world hat is submitted; off by default.
+inline thread_local bool inHatCapture=false;
 inline thread_local ID3D11DeviceContext* expectedContext=nullptr;
 inline thread_local ID3D11DepthStencilView* expectedDepth=nullptr;
 inline thread_local D3D11_COMPARISON_FUNC worldCompare=D3D11_COMPARISON_LESS_EQUAL;
@@ -111,6 +113,16 @@ template<class Call> void draw(ID3D11DeviceContext* ctx,Call call,bool replayabl
  Guard guard(ctx);
  if (!guard.active) { rejected.fetch_add(1,std::memory_order_relaxed); return; }
  submitted.fetch_add(1,std::memory_order_relaxed); call();
+ // Copy the *already submitted* hat into the pending player target while the
+ // same depth/blend guard is active. Never issue an extra world draw.
+ if (inHatCapture && replayable) {
+  auto begin=replayBegin.load(std::memory_order_acquire); auto end=replayEnd.load(std::memory_order_acquire);
+  if (begin && end && begin(ctx)) {
+   struct Restore { ID3D11DeviceContext* ctx; ReplayEnd end; ~Restore() { end(ctx); inHatCapture=true; } } restore{ctx,end};
+   inHatCapture=false;
+   call();
+  }
+ }
 }
 inline void STDMETHODCALLTYPE onDraw(ID3D11DeviceContext* c,UINT n,UINT start) {
  draw(c,[&]{ originalDraw(c,n,start); },true);
