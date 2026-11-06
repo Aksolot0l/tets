@@ -1,4 +1,4 @@
-# China Hat: experimental research, not an installed game feature
+# China Hat: experimental, build-specific game feature
 
 Java example: FDPClient's `ChineseHat` handles a 3D render event, interpolates
 entity position and emits a cone relative to the camera. It uses Forge/OpenGL,
@@ -12,18 +12,28 @@ Tessellator entry points. Its offsets are *not* proof they match the user's
 particular binary, and the repository has no license. No source was copied.
 https://github.com/WinsentShame/Zodiak/tree/d2fcb0ffd4f8ada69ca4d84a83d3f546b300d01d
 
-`hat_mesh.h` is our independent cone geometry prototype with tests. It is not
-called by the installed adapter and does not appear in the game. It needs an
-identified player/head position, render timing, material/depth state, game
-camera transform, correct calling convention, and a compatible game binary.
-Do not hook or call arbitrary RVAs until these are validated on the exact game
-build. Third-person, crouch, view-bobbing, first-person hiding, other players,
-transparency, graphics-state restoration, and teardown all need runtime tests.
+`hat_mesh.h` is our independent cone geometry prototype. The installed adapter
+now has an opt-in **wireframe** test path, using candidate game functions and
+render timing. The path is restricted to the exact user-observed SHA-256, PE
+timestamp and image size; diagnostic prologues and loaded code are compared to
+the file. If validation or hook installation fails, the feature is unavailable.
+Before drawing, it checks player identity, position, dimensions and tessellator
+state and restores the global shader color. This reduces risk but does **not**
+prove the private offsets, ABI, local-player chain, material state, or camera
+semantics. Windows runtime testing is essential; no guarantee of an effect,
+correct placement or stability. Other builds never use these hooks.
+
+The hat is off by default; enable `China Hat (test)` in the game menu and use
+third-person view. Save the world before testing. It can be turned off in the
+menu or with Del (which also disables the overlay until restart). The adapter
+remains loaded until the game exits. Crouch, camera modes, animations and
+render order have not been verified. Private game-render hooks are installed only after the user checks the box;
+once installed they remain inert when disabled until the game exits.
 
 `DIAG_RENDER.ps1` is optional, read-only research. It prints the game EXE hash
 (if Windows permits access), PE timestamp/size, and 16 machine-code bytes from
 each of eight executable-section candidate offsets. It prints no process paths,
 addresses, player state, or names, does not transmit anything, and does not
 modify or inject into the game. Candidate bytes alone do not prove compatibility.
-See `repair/tests/china_hat_mesh.cpp` for portable geometry tests. Neither the
-geometry nor this diagnostic is part of the installed client bundle.
+See `repair/tests/china_hat_mesh.cpp` for portable geometry tests. The geometry is compiled into the adapter; the separate diagnostic is not part
+of the installed client bundle.

@@ -199,7 +199,7 @@ Windows и не гарантирует корректную прокрутку �
 воспроизводимое создание EXE из точного исходного файла:
 
 ```
-zig c++ -target x86_64-windows-gnu -std=c++17 -shared -O2 -Irepair/vendor/imgui repair/src/compat.cpp repair/src/uwp_extra.cpp -o repair/GAYClientInternal.dll -ld3d11 -ldxgi -luser32 -lole32 -lapi-ms-win-core-winrt-l1-1-0 -lapi-ms-win-core-winrt-string-l1-1-0 -luuid -static
+zig c++ -target x86_64-windows-gnu -std=c++17 -shared -O2 -Irepair/vendor/imgui repair/src/compat.cpp repair/src/uwp_extra.cpp repair/src/china_hat_native.cpp -o repair/GAYClientInternal.dll -ld3d11 -ldxgi -luser32 -lole32 -lapi-ms-win-core-winrt-l1-1-0 -lapi-ms-win-core-winrt-string-l1-1-0 -luuid -lbcrypt -static
 cd repair/launcher-web
 npm ci --ignore-scripts
 npx tsc --noEmit
@@ -238,3 +238,23 @@ Win32-страницы. Если WebView2 не запустился, срабо�
 старого EXE скрывается сразу после появления окна лаунчера и проверяется снова
 каждые 125 мс; до создания нового окна краткое появление исходного окна всё ещё
 возможно. На Windows порядок появления и обработка ошибок требуют проверки.
+
+## China Hat (test)
+
+В игровом меню добавлен экспериментальный `China Hat (test)`. По умолчанию он
+выключен. При включении адаптер пытается нарисовать каркасную цветную шляпу
+над локальным игроком в виде от третьего лица, не фиксированную картинку на
+экране. Это **эксперимент**, работоспособность/геометрия в Windows и игре ещё
+не проверены; эффект может не появиться, быть расположен неправильно, вызвать
+артефакты или аварийный выход. Перед проверкой сохраните мир.
+
+Доступ только для пользовательского EXE с SHA-256
+`2883b72a3579d95bfec73330c5e06f2463253b7ca530dd59f50885a71a724732` и
+совпадающими PE-параметрами и машинным кодом. Если игра или доступ к EXE не
+подходят, в меню написано `China Hat: unsupported game or unavailable`,
+обычные функции остаются доступны. Совпадение кода не доказывает семантику
+внутренних функций, ABI или правильность цепочки локального игрока. Отрисовка
+пропускается при недоступных данных игрока, занятом tessellator и сомнительных
+значениях; цвет шейдера сохраняется и восстанавливается. Исходный EXE не
+изменяется. `Del` выключает и шляпу, и оверлей, но не выгружает DLL.
+Подробности — в `research/china_hat/README.md`.

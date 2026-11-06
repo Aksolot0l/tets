@@ -18,6 +18,7 @@
 #include "coordinates_115.h"
 #include "mouse_diagnostic_patch.h"
 #include "disable_hotkey.h"
+#include "china_hat_native.h"
 #include <atomic>
 #include <array>
 #include <cstring>
@@ -224,6 +225,7 @@ static void patchedDrawGui(void* runtime) {
     bool editing = getIO && getIO().WantTextInput;
     if (disableHotkey.update(down, down && gameIsForeground(), editing)) {
         overlayDisabled.store(true, std::memory_order_release);
+        SetChinaHatEnabled(false);
         if (bridgeActive) bridgeActive(false);
         DisableUwpExtraInput();
         log("overlay disabled by Delete; DLLs remain loaded until game exit");
@@ -239,6 +241,12 @@ static void patchedDrawGui(void* runtime) {
                       ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse;
     if (guiBegin("##coordinate_switch_115", nullptr, flags)) {
         if (guiCheckbox("Coordinates (test)", &enabled)) setModule(runtime, ag::ModuleId::Coordinates, enabled);
+        if (ChinaHatAvailable()) {
+            bool hat = ChinaHatEnabled();
+            if (guiCheckbox("China Hat (test)", &hat)) SetChinaHatEnabled(hat);
+        } else {
+            realText("China Hat: unsupported game or unavailable", nullptr);
+        }
     }
     guiEnd();
 }
@@ -419,6 +427,8 @@ static DWORD WINAPI bootstrap(void*) {
     auto mhQueueEnable = symbol<ToggleFn>("MH_QueueEnableHook");
     auto mhApply = symbol<InitFn>("MH_ApplyQueued");
     auto mhDisable = symbol<ToggleFn>("MH_DisableHook");
+    auto mhEnable = symbol<ToggleFn>("MH_EnableHook");
+    auto mhRemove = symbol<ToggleFn>("MH_RemoveHook");
     auto bridgeInit = symbol<BridgeInitFn>("_ZN2ag19InitializeUwpBridgeEv");
     bridgeActive = symbol<BridgeActiveFn>("_ZN2ag17SetUwpInputActiveEb");
     void* newFrameTarget = reinterpret_cast<void*>(GetProcAddress(core, "_Z23ImGui_ImplDX11_NewFramev"));
@@ -482,6 +492,10 @@ static DWORD WINAPI bootstrap(void*) {
         log("hook enable failed; attempted to disable hooks"); return 1;
     }
     log("hooks enabled");
+    // Hat is optional and must never block the already working overlay.
+    // Private game-render hooks are deferred until the user checks the box.
+    try { InitializeChinaHat(mhCreate,mhEnable,mhDisable,mhRemove); }
+    catch (...) { log("China Hat initialization failed; overlay remains available"); }
     return 0;
 }
 
