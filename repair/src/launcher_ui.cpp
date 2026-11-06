@@ -6,22 +6,29 @@
 #include <shellapi.h>
 #include <objbase.h>
 #include <gdiplus.h>
+#include "launcher_profiles_win.h"
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <cwchar>
 #include <initializer_list>
 
 namespace {
 std::atomic<LauncherStatus> state{LauncherStatus::Waiting};
-HWND mainWindow = nullptr, classicWindow = nullptr, playButton = nullptr, classicButton = nullptr, logButton = nullptr;
-bool classicVisible = false, hiddenClassicOnce = false;
+HWND mainWindow = nullptr, classicWindow = nullptr, playButton = nullptr, logButton = nullptr;
+HWND homeNav=nullptr, profileNav=nullptr, profileList=nullptr, labelEdit=nullptr, nickEdit=nullptr, appEdit=nullptr;
+HWND saveButton=nullptr, newButton=nullptr, deleteButton=nullptr, detectButton=nullptr;
+bool hiddenClassicOnce = false, profilesPage = false, newProfile = false, storeWritable = true;
+LauncherProfiles profiles = defaultLauncherProfiles();
+HBRUSH inputBrush = nullptr;
 ULONGLONG launchPendingUntil = 0;
 int dpi = 96;
 HFONT fontSmall = nullptr, fontBody = nullptr, fontBold = nullptr, fontTitle = nullptr, fontBrand = nullptr;
 ULONG_PTR gdiplusToken = 0;
 Gdiplus::Image* heroImage = nullptr;
 IStream* heroStream = nullptr;
-constexpr int PLAY = 101, CLASSIC = 102, LOG = 103;
+constexpr int PLAY=101, LOG=103, HOME=104, PROFILES=105, LIST=106, LABEL=107, NICK=108, APPID=109,
+              SAVE=110, NEW_PROFILE=111, DELETE_PROFILE=112, DETECT=113;
 int S(int n) { return MulDiv(n, dpi, 96); }
 COLORREF rgb(int r,int g,int b) { return RGB(r,g,b); }
 void disposeFonts() {
@@ -71,7 +78,8 @@ void drawHero(HDC dc) {
     clip.AddArc(x,y,r,r,180,90); clip.AddArc(x+w-r,y,r,r,270,90);
     clip.AddArc(x+w-r,y+h-r,r,r,0,90); clip.AddArc(x,y+h-r,r,r,90,90); clip.CloseFigure();
     g.SetClip(&clip);
-    g.DrawImage(heroImage,Gdiplus::Rect(S(501),y,S(375),h),0,0,
+    int drift=static_cast<int>(3.0*std::sin(static_cast<double>(GetTickCount64()%12000)/1900.0));
+    g.DrawImage(heroImage,Gdiplus::Rect(S(496+drift),y,S(385),h),0,0,
                 static_cast<int>(heroImage->GetWidth()),static_cast<int>(heroImage->GetHeight()),Gdiplus::UnitPixel);
     Gdiplus::LinearGradientBrush shade(Gdiplus::Point(S(485),y),Gdiplus::Point(S(655),y),
                                        Gdiplus::Color(255,20,43,33),Gdiplus::Color(0,20,43,33));
@@ -100,13 +108,65 @@ void updateClassic() {
     if (!classicWindow || !IsWindow(classicWindow)) {
         classicWindow=nullptr; EnumWindows(findClassic,reinterpret_cast<LPARAM>(&classicWindow));
     }
-    if (classicWindow && !classicVisible && IsWindowVisible(classicWindow)) {
+    if (classicWindow && IsWindowVisible(classicWindow)) {
         bool foreground=GetForegroundWindow()==classicWindow;
         ShowWindow(classicWindow,SW_HIDE);
         if (foreground && !hiddenClassicOnce) SetForegroundWindow(mainWindow);
         hiddenClassicOnce=true;
     }
-    EnableWindow(classicButton,classicWindow != nullptr);
+}
+std::wstring readText(HWND control) {
+    int n=GetWindowTextLengthW(control); if (n<0 || n>1024) return {};
+    std::wstring value(static_cast<size_t>(n)+1,L'\0');
+    int copied=GetWindowTextW(control,&value[0],n+1); value.resize(static_cast<size_t>(copied)); return value;
+}
+void putProfile(const LauncherProfile& p) {
+    SetWindowTextW(labelEdit,toWide(p.label).c_str()); SetWindowTextW(nickEdit,toWide(p.nickname).c_str());
+    SetWindowTextW(appEdit,toWide(p.aumid).c_str());
+}
+void refillProfiles() {
+    SendMessageW(profileList,LB_RESETCONTENT,0,0);
+    for (const auto& p:profiles.entries) { auto name=toWide(p.label); SendMessageW(profileList,LB_ADDSTRING,0,reinterpret_cast<LPARAM>(name.c_str())); }
+    SendMessageW(profileList,LB_SETCURSEL,profiles.selected,0);
+    newProfile=false; putProfile(profiles.entries[profiles.selected]);
+}
+bool persist(const LauncherProfiles& next) {
+    if (!storeWritable || !saveLauncherProfiles(next)) {
+        MessageBoxW(mainWindow,L"Не удалось сохранить профили. Существующий файл не изменён; проверьте доступ к папке LocalAppData.",L"Профили",MB_OK|MB_ICONERROR); return false;
+    }
+    profiles=next; return true;
+}
+void switchPage(bool page) {
+    profilesPage=page;
+    for (HWND h : {profileList,labelEdit,nickEdit,appEdit,saveButton,newButton,deleteButton,detectButton}) ShowWindow(h,page?SW_SHOW:SW_HIDE);
+    for (HWND h : {playButton,logButton}) ShowWindow(h,page?SW_HIDE:SW_SHOW);
+    if (page) refillProfiles();
+    InvalidateRect(homeNav,nullptr,TRUE); InvalidateRect(profileNav,nullptr,TRUE); InvalidateRect(mainWindow,nullptr,FALSE);
+}
+void saveEditedProfile() {
+    LauncherProfile p{toUtf8(readText(labelEdit)),toUtf8(readText(nickEdit)),"1.1.5",toUtf8(readText(appEdit))};
+    if (!validProfile(p)) { MessageBoxW(mainWindow,L"Укажите название профиля. Проверьте длину полей.",L"Профили",MB_OK|MB_ICONWARNING); return; }
+    if (!p.aumid.empty() && !validAppId(toWide(p.aumid))) { MessageBoxW(mainWindow,L"Некорректный App ID. Запустите игру и нажмите «Найти игру».",L"Профили",MB_OK|MB_ICONWARNING); return; }
+    auto next=profiles;
+    if (newProfile) {
+        if(next.entries.size()>=200) { MessageBoxW(mainWindow,L"Максимум 200 профилей.",L"Профили",MB_OK|MB_ICONWARNING); return; }
+        next.entries.push_back(p); next.selected=next.entries.size()-1;
+    } else { p.version=next.entries[next.selected].version; next.entries[next.selected]=p; }
+    if (persist(next)) refillProfiles();
+}
+void deleteSelectedProfile() {
+    if (newProfile) { refillProfiles(); return; }
+    if (profiles.entries.size()<=1) { MessageBoxW(mainWindow,L"Оставьте хотя бы один профиль.",L"Профили",MB_OK|MB_ICONINFORMATION); return; }
+    if (MessageBoxW(mainWindow,L"Удалить локальный профиль? Аккаунт и файлы игры не изменятся.",L"Удаление",MB_YESNO|MB_ICONQUESTION)!=IDYES) return;
+    auto next=profiles; next.entries.erase(next.entries.begin()+next.selected);
+    if(next.selected>=next.entries.size()) next.selected=next.entries.size()-1;
+    if(persist(next)) refillProfiles();
+}
+void detectApp() {
+    auto id=detectMinecraftAppId();
+    if (id.empty()) { MessageBoxW(mainWindow,L"Запустите одно окно Minecraft через меню «Пуск», затем снова нажмите «Найти игру». Если окон несколько, закройте лишние.",L"Поиск игры",MB_OK|MB_ICONINFORMATION); return; }
+    SetWindowTextW(appEdit,id.c_str());
+    MessageBoxW(mainWindow,L"Игра найдена. Нажмите «Сохранить», чтобы использовать её для этого профиля.",L"Поиск игры",MB_OK|MB_ICONINFORMATION);
 }
 const wchar_t* statusTitle(LauncherStatus s) {
     switch(s) {
@@ -129,21 +189,36 @@ const wchar_t* statusDetail(LauncherStatus s) {
     }
 }
 void placeControls() {
+    MoveWindow(homeNav,S(14),S(126),S(162),S(42),TRUE);
+    MoveWindow(profileNav,S(14),S(175),S(162),S(42),TRUE);
     MoveWindow(playButton,S(252),S(255),S(205),S(48),TRUE);
-    MoveWindow(classicButton,S(226),S(462),S(205),S(40),TRUE);
-    MoveWindow(logButton,S(440),S(462),S(160),S(40),TRUE);
+    MoveWindow(logButton,S(226),S(462),S(160),S(40),TRUE);
+    MoveWindow(profileList,S(226),S(164),S(205),S(236),TRUE);
+    MoveWindow(newButton,S(226),S(415),S(99),S(40),TRUE);
+    MoveWindow(deleteButton,S(332),S(415),S(99),S(40),TRUE);
+    MoveWindow(labelEdit,S(460),S(190),S(395),S(32),TRUE);
+    MoveWindow(nickEdit,S(460),S(264),S(395),S(32),TRUE);
+    MoveWindow(appEdit,S(460),S(338),S(395),S(32),TRUE);
+    MoveWindow(detectButton,S(460),S(394),S(180),S(40),TRUE);
+    MoveWindow(saveButton,S(652),S(394),S(203),S(40),TRUE);
+    for (HWND h : {profileList,labelEdit,nickEdit,appEdit}) SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(fontBody),TRUE);
 }
 void drawButton(const DRAWITEMSTRUCT* d) {
     int id=static_cast<int>(d->CtlID); bool pressed=(d->itemState&ODS_SELECTED)!=0;
     bool disabled=(d->itemState&ODS_DISABLED)!=0; HDC dc=d->hDC; RECT r=d->rcItem;
-    COLORREF bg = id==PLAY ? (pressed?rgb(35,168,115):rgb(50,205,142)) : (pressed?rgb(37,65,57):rgb(29,48,43));
+    POINT cursor{}; GetCursorPos(&cursor); bool hovered=WindowFromPoint(cursor)==d->hwndItem;
+    bool nav=id==HOME || id==PROFILES;
+    bool activeNav=(id==HOME&&!profilesPage)||(id==PROFILES&&profilesPage);
+    COLORREF bg = (id==PLAY || id==SAVE) ? (pressed?rgb(35,168,115):hovered?rgb(69,226,157):rgb(50,205,142))
+                  : nav ? (activeNav?rgb(23,52,40):hovered?rgb(17,37,28):rgb(9,18,15))
+                  : (pressed?rgb(37,65,57):hovered?rgb(39,67,54):rgb(29,48,43));
     if (disabled) bg=rgb(34,43,40);
-    fill(dc,r,id==PLAY?rgb(20,43,33):rgb(14,24,21));
+    fill(dc,r,nav?rgb(9,18,15):id==PLAY?rgb(20,43,33):rgb(14,24,21));
     HBRUSH b=CreateSolidBrush(bg); HGDIOBJ ob=SelectObject(dc,b); HGDIOBJ op=SelectObject(dc,GetStockObject(NULL_PEN));
     RoundRect(dc,r.left,r.top,r.right,r.bottom,S(10),S(10)); SelectObject(dc,op); SelectObject(dc,ob); DeleteObject(b);
     wchar_t label[128]{}; GetWindowTextW(d->hwndItem,label,128);
     HGDIOBJ old=SelectObject(dc,fontBold); SetBkMode(dc,TRANSPARENT);
-    SetTextColor(dc,disabled?rgb(107,120,114):(id==PLAY?rgb(8,37,27):rgb(208,225,216)));
+    SetTextColor(dc,disabled?rgb(107,120,114):((id==PLAY || id==SAVE)?rgb(8,37,27):rgb(208,225,216)));
     DrawTextW(dc,label,-1,&r,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX); SelectObject(dc,old);
     if (d->itemState & ODS_FOCUS) { InflateRect(&r,-S(5),-S(5)); DrawFocusRect(dc,&r); }
 }
@@ -158,15 +233,15 @@ void paint(HWND window) {
     text(dc,L"GAYCLIENT",74,28,105,25,fontBrand,rgb(236,247,240));
     text(dc,L"GAME LAUNCHER",75,52,105,17,fontSmall,rgb(111,143,125));
     text(dc,L"НАВИГАЦИЯ",25,99,145,19,fontSmall,rgb(91,123,105));
-    rounded(dc,14,126,162,42,10,rgb(23,52,40));
-    text(dc,L"●",28,126,18,42,fontSmall,rgb(64,217,151));
-    text(dc,L"Главная",51,126,115,42,fontBold,rgb(230,247,237));
     text(dc,L"MINECRAFT",25,430,145,19,fontSmall,rgb(91,123,105));
     text(dc,L"Windows 10",25,454,145,22,fontBody,rgb(197,218,203));
     text(dc,L"Версия 1.1.5",25,479,145,18,fontSmall,rgb(111,143,125));
     text(dc,L"ВАШ ЛАУНЧЕР",226,28,230,22,fontSmall,rgb(112,158,130));
-    text(dc,L"ИГРА  /  КЛИЕНТ",697,28,179,22,fontSmall,rgb(112,143,124),DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+    auto currentName=toWide(profiles.entries[profiles.selected].label);
+    auto currentCaption=std::wstring(L"Профиль: ")+currentName;
+    text(dc,currentCaption.c_str(),515,28,360,22,fontSmall,rgb(151,185,161),DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
 
+    if (!profilesPage) {
     drawHero(dc);
     rounded(dc,252,100,124,24,12,rgb(29,75,52));
     text(dc,L"ВАШ МИР ЖДЁТ",261,100,110,24,fontSmall,rgb(115,232,165));
@@ -175,12 +250,21 @@ void paint(HWND window) {
 
     rounded(dc,226,343,650,97,14,rgb(22,37,31));
     auto s=state.load(std::memory_order_acquire);
-    rounded(dc,246,366,10,10,10,(s==LauncherStatus::Failed || s==LauncherStatus::MultipleGames)?rgb(239,168,90):rgb(59,215,148));
+    int pulse=static_cast<int>(18.0*(1.0+std::sin(static_cast<double>(GetTickCount64()%5000)/800.0)));
+    rounded(dc,246,366,10,10,10,(s==LauncherStatus::Failed || s==LauncherStatus::MultipleGames)?rgb(239,168,90):rgb(45,180+pulse,125));
     bool pending = s==LauncherStatus::Waiting && GetTickCount64()<launchPendingUntil;
     text(dc,L"СТАТУС ПОДКЛЮЧЕНИЯ",265,354,300,18,fontSmall,rgb(108,147,122));
     text(dc,pending?L"Запрос на запуск отправлен":statusTitle(s),265,376,560,23,fontBold,rgb(232,244,235));
     text(dc,pending?L"Ожидаем появления Minecraft.":statusDetail(s),265,404,580,28,fontSmall,rgb(160,185,169),DT_LEFT|DT_WORDBREAK);
     text(dc,L"Не закрывайте лаунчер во время игры",616,464,260,38,fontSmall,rgb(125,153,136),DT_RIGHT|DT_VCENTER|DT_SINGLELINE);
+    } else {
+        text(dc,L"Профили",226,75,650,42,fontTitle,rgb(241,248,243));
+        text(dc,L"Выберите профиль или создайте новый.",226,123,650,24,fontBody,rgb(159,183,167));
+        text(dc,L"НАЗВАНИЕ ПРОФИЛЯ",460,164,395,20,fontSmall,rgb(125,158,137));
+        text(dc,L"НИК — ЛОКАЛЬНАЯ ЗАМЕТКА",460,238,395,20,fontSmall,rgb(125,158,137));
+        text(dc,L"APP ID ИГРЫ",460,312,395,20,fontSmall,rgb(125,158,137));
+        text(dc,L"Ник в профиле не меняет имя в игре или учётную запись.",460,448,400,38,fontSmall,rgb(144,177,154),DT_LEFT|DT_WORDBREAK);
+    }
     BitBlt(screen,0,0,client.right,client.bottom,dc,0,0,SRCCOPY);
     SelectObject(dc,old); DeleteObject(bitmap); DeleteDC(dc); EndPaint(window,&ps);
 }
@@ -206,34 +290,70 @@ void launchGame(HWND window) {
     if (s==LauncherStatus::MultipleGames) {
         MessageBoxW(window,L"Найдено несколько процессов Minecraft. Закройте лишние и перезапустите лаунчер.",L"GAYClient",MB_OK|MB_ICONWARNING); return;
     }
-    auto result=reinterpret_cast<INT_PTR>(ShellExecuteW(window,L"open",L"shell:AppsFolder\\Microsoft.MinecraftUWP_8wekyb3d8bbwe!App",nullptr,nullptr,SW_SHOWNORMAL));
-    if (result<=32) MessageBoxW(window,L"Windows не смогла запустить Minecraft. Попробуйте кнопку «Старый интерфейс» и выберите игру там.",L"Ошибка запуска",MB_OK|MB_ICONERROR);
+    auto appId=toWide(profiles.entries[profiles.selected].aumid);
+    if (!validAppId(appId)) {
+        MessageBoxW(window,L"Игра ещё не выбрана для этого профиля. Откройте Minecraft через меню «Пуск», затем в разделе «Профили» нажмите «Найти игру» и «Сохранить».",L"Выберите игру",MB_OK|MB_ICONINFORMATION);
+        switchPage(true); return;
+    }
+    auto target=std::wstring(L"shell:AppsFolder\\")+appId;
+    auto result=reinterpret_cast<INT_PTR>(ShellExecuteW(window,L"open",target.c_str(),nullptr,nullptr,SW_SHOWNORMAL));
+    if (result<=32) MessageBoxW(window,L"Windows не запустила выбранную игру. Запустите её через меню «Пуск», затем в разделе «Профили» нажмите «Найти игру» и сохраните профиль.",L"Ошибка запуска",MB_OK|MB_ICONERROR);
     else { launchPendingUntil=GetTickCount64()+10000; InvalidateRect(window,nullptr,FALSE); }
 }
 LRESULT CALLBACK windowProc(HWND window,UINT msg,WPARAM w,LPARAM l) {
     switch(msg) {
     case WM_CREATE:
-        mainWindow=window; makeFonts();
+        mainWindow=window; makeFonts(); inputBrush=CreateSolidBrush(rgb(29,48,40));
+        homeNav=CreateWindowExW(0,L"BUTTON",L"Главная",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(HOME),nullptr,nullptr);
+        profileNav=CreateWindowExW(0,L"BUTTON",L"Профили",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(PROFILES),nullptr,nullptr);
         playButton=CreateWindowExW(0,L"BUTTON",L"▶   Начать игру",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(PLAY),nullptr,nullptr);
-        classicButton=CreateWindowExW(0,L"BUTTON",L"Старый интерфейс",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(CLASSIC),nullptr,nullptr);
         logButton=CreateWindowExW(0,L"BUTTON",L"Открыть журнал",WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(LOG),nullptr,nullptr);
-        if (!playButton || !classicButton || !logButton) return -1;
-        placeControls(); EnableWindow(classicButton,FALSE); SetTimer(window,1,500,nullptr); return 0;
-    case WM_TIMER: updateClassic(); InvalidateRect(window,nullptr,FALSE); return 0;
+        profileList=CreateWindowExW(0,L"LISTBOX",L"",WS_CHILD|WS_TABSTOP|WS_BORDER|WS_VSCROLL|LBS_NOTIFY|LBS_NOINTEGRALHEIGHT,0,0,0,0,window,reinterpret_cast<HMENU>(LIST),nullptr,nullptr);
+        labelEdit=CreateWindowExW(0,L"EDIT",L"",WS_CHILD|WS_TABSTOP|WS_BORDER|ES_AUTOHSCROLL,0,0,0,0,window,reinterpret_cast<HMENU>(LABEL),nullptr,nullptr);
+        nickEdit=CreateWindowExW(0,L"EDIT",L"",WS_CHILD|WS_TABSTOP|WS_BORDER|ES_AUTOHSCROLL,0,0,0,0,window,reinterpret_cast<HMENU>(NICK),nullptr,nullptr);
+        appEdit=CreateWindowExW(0,L"EDIT",L"",WS_CHILD|WS_TABSTOP|WS_BORDER|ES_AUTOHSCROLL,0,0,0,0,window,reinterpret_cast<HMENU>(APPID),nullptr,nullptr);
+        saveButton=CreateWindowExW(0,L"BUTTON",L"Сохранить",WS_CHILD|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(SAVE),nullptr,nullptr);
+        newButton=CreateWindowExW(0,L"BUTTON",L"+ Новый",WS_CHILD|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(NEW_PROFILE),nullptr,nullptr);
+        deleteButton=CreateWindowExW(0,L"BUTTON",L"Удалить",WS_CHILD|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(DELETE_PROFILE),nullptr,nullptr);
+        detectButton=CreateWindowExW(0,L"BUTTON",L"Найти игру",WS_CHILD|WS_TABSTOP|BS_OWNERDRAW,0,0,0,0,window,reinterpret_cast<HMENU>(DETECT),nullptr,nullptr);
+        if (!homeNav || !profileNav || !playButton || !logButton || !profileList || !labelEdit || !nickEdit || !appEdit || !saveButton || !newButton || !deleteButton || !detectButton || !inputBrush) return -1;
+        SendMessageW(labelEdit,EM_SETLIMITTEXT,128,0); SendMessageW(nickEdit,EM_SETLIMITTEXT,128,0); SendMessageW(appEdit,EM_SETLIMITTEXT,512,0);
+        placeControls(); SetTimer(window,1,80,nullptr); return 0;
+    case WM_TIMER: {
+        static ULONGLONG lastClassic=0; auto now=GetTickCount64();
+        if (now-lastClassic>=500) { updateClassic(); lastClassic=now; }
+        InvalidateRect(window,nullptr,FALSE);
+        for (HWND h : {homeNav,profileNav,playButton,logButton,saveButton,newButton,deleteButton,detectButton}) if (IsWindowVisible(h)) InvalidateRect(h,nullptr,FALSE);
+        return 0;
+    }
     case WM_PAINT: paint(window); return 0;
     case WM_ERASEBKGND: return 1;
     case WM_DRAWITEM: drawButton(reinterpret_cast<const DRAWITEMSTRUCT*>(l)); return TRUE;
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORLISTBOX: SetTextColor(reinterpret_cast<HDC>(w),rgb(222,240,227)); SetBkColor(reinterpret_cast<HDC>(w),rgb(29,48,40)); return reinterpret_cast<LRESULT>(inputBrush);
     case WM_COMMAND:
+        if (LOWORD(w)==LIST && HIWORD(w)==LBN_SELCHANGE) {
+            auto index=SendMessageW(profileList,LB_GETCURSEL,0,0);
+            if (index!=LB_ERR && static_cast<size_t>(index)<profiles.entries.size()) {
+                auto next=profiles; next.selected=static_cast<size_t>(index);
+                if (next.selected!=profiles.selected) persist(next);
+                refillProfiles();
+                InvalidateRect(window,nullptr,FALSE);
+            }
+            return 0;
+        }
         if (HIWORD(w)==BN_CLICKED) { switch(LOWORD(w)) {
+        case HOME: switchPage(false); break;
+        case PROFILES: switchPage(true); break;
         case PLAY: launchGame(window); break;
         case LOG: openLog(window); break;
-        case CLASSIC:
-            updateClassic(); if (classicWindow && IsWindow(classicWindow)) {
-                classicVisible=!classicVisible;
-                ShowWindow(classicWindow,classicVisible?SW_RESTORE:SW_HIDE);
-                SetWindowTextW(classicButton,classicVisible?L"Скрыть старое окно":L"Старый интерфейс");
-                if (classicVisible) SetForegroundWindow(classicWindow);
-            } break;
+        case SAVE: saveEditedProfile(); break;
+        case DETECT: detectApp(); break;
+        case DELETE_PROFILE: deleteSelectedProfile(); break;
+        case NEW_PROFILE:
+            newProfile=true; SendMessageW(profileList,LB_SETCURSEL,static_cast<WPARAM>(-1),0);
+            SetWindowTextW(labelEdit,L""); SetWindowTextW(nickEdit,L"");
+            SetWindowTextW(appEdit,toWide(profiles.entries[profiles.selected].aumid).c_str()); SetFocus(labelEdit); break;
         } }
         return 0;
     case WM_DPICHANGED: {
@@ -249,7 +369,7 @@ LRESULT CALLBACK windowProc(HWND window,UINT msg,WPARAM w,LPARAM l) {
         if (classicWindow && IsWindow(classicWindow)) PostMessageW(classicWindow,WM_CLOSE,0,0);
         else ExitProcess(0);
         DestroyWindow(window); return 0;
-    case WM_DESTROY: disposeFonts(); PostQuitMessage(0); return 0;
+    case WM_DESTROY: disposeFonts(); if(inputBrush) { DeleteObject(inputBrush); inputBrush=nullptr; } PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(window,msg,w,l);
 }
@@ -262,6 +382,7 @@ DWORD WINAPI uiThread(void*) {
     HDC dc=GetDC(nullptr); if(dc) { dpi=GetDeviceCaps(dc,LOGPIXELSX); ReleaseDC(nullptr,dc); }
     HRESULT com=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED|COINIT_DISABLE_OLE1DDE);
     loadHero();
+    storeWritable=loadLauncherProfiles(profiles);
     HINSTANCE instance=GetModuleHandleW(nullptr);
     WNDCLASSEXW wc{}; wc.cbSize=sizeof(wc); wc.hInstance=instance; wc.lpfnWndProc=windowProc;
     wc.lpszClassName=L"GAYClientModernLauncherV1"; wc.hCursor=LoadCursorW(nullptr,IDC_ARROW); wc.hIcon=LoadIconW(nullptr,IDI_APPLICATION);
