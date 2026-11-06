@@ -12,35 +12,28 @@ Tessellator entry points. Its offsets are *not* proof they match the user's
 particular binary, and the repository has no license. No source was copied.
 https://github.com/WinsentShame/Zodiak/tree/d2fcb0ffd4f8ada69ca4d84a83d3f546b300d01d
 
-`hat_mesh.h` is our independent cone geometry prototype. The installed adapter
-now has opt-in experimental surface and wireframe paths, using candidate game
-functions and render timing. The path is restricted to the exact user-observed SHA-256, PE
-timestamp and image size; diagnostic prologues and loaded code are compared to
-the file. If validation or hook installation fails, the feature is unavailable.
+`hat_mesh.h` is an independent cone geometry prototype. The user confirmed an
+older wireframe build in game. After a subsequent surface/depth/trail update
+caused both effects to disappear for the user, this build restores the old
+wireframe draw sequence (with an optional vertical offset) and separates the
+experimental trail into its own batch. The failed surface and depth changes
+are disabled; actual head-bone attachment and correct occlusion are not done.
+Both options are opt-in, and the revised build still requires testing on Windows.
+
+The path is restricted to the exact user-observed SHA-256, PE timestamp and
+image size; diagnostic prologues and loaded code are compared to the file.
+If validation or hook installation fails, the feature is unavailable.
 Before drawing, it checks player identity, position, dimensions and tessellator
-state and restores the global shader color. This reduces risk but does **not**
-prove the private offsets, ABI, local-player chain, material state, or camera
-semantics. Windows runtime testing is essential; no guarantee of an effect,
-correct placement or stability. Other builds never use these hooks.
+state and restores the global shader color. This does not prove private ABI,
+local-player chain or camera semantics. Windows runtime testing is essential.
 
-The hat is off by default; enable `China Hat (test)` in the game menu and use
-third-person view. `Hat surface (test)` opts into the experimental filled cone;
-when off the previously tested wireframe remains. `Hat height` adjusts vertical
-placement; a very small vertical bob is added. Its position follows the local
-player's interpolated position and approximate collision-box height, not the
-actual animated head bone, so pitch/crouching/animations need testing. The
-independent `Trail (test)` draws a bounded, short-lived line from sampled world
-positions, not a particle trail. It is off by default; discontinuities reset it.
-
-The adapter attempts a depth test with depth writes off only when the same
-render thread has a captured D3D11 context and a bound depth view. It restores
-the previous state; the game's material may override it or no depth view may
-be bound, so correct occlusion is not guaranteed. The candidate filled topology
-and material are not confirmed on 1.1.5; the surface might be invisible, white,
-incorrect, or unstable. Before testing, save or use a disposable world. Both
-features turn off with Del (which also disables the overlay until restart). The
-adapter remains loaded until game exit. Private game-render hooks are installed
-only after the user enables one of the features; they remain inert when disabled.
+The hat is off by default; enable `China Hat (test)` and use third-person view.
+`Hat height` adjusts placement, which follows interpolated player position and
+approximate hitbox height, not the animated head bone. `Trail (test)` draws a
+bounded, short-lived line based on world positions. `submitted` in the menu
+means the code called the game renderer; it does not prove visible output.
+Del disables both features and the overlay; the adapter remains loaded until
+exit. Hooks are installed only after one of these features is enabled.
 
 `DIAG_RENDER.ps1` is optional, read-only research. It prints the game EXE hash
 (if Windows permits access), PE timestamp/size, and 16 machine-code bytes from

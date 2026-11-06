@@ -10,21 +10,24 @@ assert 'std::memcmp(fromFile,sig.bytes,16)!=0' in n
 assert 'state[0x125] || state[0x170] || pending' in n
 assert 'oldFlag' in n and 'saved,sizeof(saved)' in n
 assert 'actual!=actor' in n and 'type!=30' in n
-assert 'now-visible.at<=250' in n and 'now-local.at<=250' in n
+assert 'GetTickCount64()-player.at>250' in n and 'now-player.at>250' in n
 assert 'available{false}, enabled{false}' in n
 assert 'if (!ChinaHatAvailable()) return false;' in n and 'return installHooks();' in n
 assert n.index('installHooks()') < n.index('bool InitializeChinaHat(')
 assert 'China Hat (test)' in u and 'SetChinaHatEnabled(false)' in u
 assert 'Trail (test)' in u and 'SetTrailEnabled(false)' in u
-assert 'Hat height' in u and 'Hat surface (test)' in u
-assert 'CaptureVisualContext(context)' in u
-assert 'visualThread==GetCurrentThreadId()' in n
-assert 'D3D11_DEPTH_WRITE_MASK_ZERO' in n and 'OMSetDepthStencilState(previous,stencil)' in n
-assert 'if (!dsv) return;' in n
+assert 'Hat height' in u and 'Hat: submitted' in u and 'Trail: submitted' in u
+assert 'CaptureVisualContext' not in u and 'DepthScope' not in n
+assert 'OMSetDepthStencilState' not in n and 'tessBegin(t,2,' not in n
 assert 'trailGeneration' in n and 'trail.clear()' in n
-assert 'tessBegin(t,2,' in n and 'emitDoubleSidedSurface' in n
-assert 'trailEnabled{false}, solidHat{false}' in n
 assert 'tessBegin(t,4,segments*2)' in n
+hat=n[n.index('void renderHat('):n.index('void renderTrail(')]
+assert 'float white[4]={1,1,1,1}' in hat
+assert 'constexpr int segments=48, spokes=12' in hat
+assert 'tessBegin(t,4,2*(segments+spokes))' in hat and 'china_hat::emitWireframe' in hat
+assert hat.index('tessDraw(') < hat.index('tessEnd(')
+screen=n[n.index('void screenHook('):n.index('bool ChinaHatAvailable()')]
+assert screen.index('renderHat(visible)') < screen.index('renderTrail(local)')
 assert u.index('InitializeChinaHat(mhCreate') > u.index('mhApply())')
 assert 'GetModuleFileNameW' in n and 'Minecraft.Windows.exe' in n
 assert '0x28,0x83,0xb7,0x2a' in v

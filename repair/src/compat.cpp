@@ -248,15 +248,19 @@ static void patchedDrawGui(void* runtime) {
             bool hat = ChinaHatEnabled();
             if (guiCheckbox("China Hat (test)", &hat)) SetChinaHatEnabled(hat);
             if (hat && ChinaHatEnabled()) {
-                bool surface=ChinaHatSurface();
-                if (guiCheckbox("Hat surface (test)", &surface)) SetChinaHatSurface(surface);
                 if (guiSliderFloat) {
                     float height=ChinaHatHeight();
                     if (guiSliderFloat("Hat height", &height, -0.2f, 0.4f, "%.2f", 0)) SetChinaHatHeight(height);
                 }
+                const int status=ChinaHatStatus();
+                realText(status==1 ? "Hat: submitted" : status==2 ? "Hat: renderer not ready" : "Hat: waiting for player",nullptr);
             }
             bool trail=TrailEnabled();
             if (guiCheckbox("Trail (test)", &trail)) SetTrailEnabled(trail);
+            if (trail && TrailEnabled()) {
+                const int status=TrailStatus();
+                realText(status==1 ? "Trail: submitted" : status==2 ? "Trail: renderer not ready" : "Trail: move to create trail",nullptr);
+            }
         } else {
             realText("China Hat: unsupported game or unavailable", nullptr);
         }
@@ -365,7 +369,6 @@ static void draw(IDXGISwapChain* chain, UINT flags) {
         if (desc.Width >= 320 && desc.Height >= 200) {
             device->GetImmediateContext(&context);
             if (context) {
-                CaptureVisualContext(context);
                 frameDevice = device; frameContext = context;
                 frameWidth = desc.Width; frameHeight = desc.Height; seenInput = false; pointerInUse = false;
                 legacyPresent(chain, 0, flags);
