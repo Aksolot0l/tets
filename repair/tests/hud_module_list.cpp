@@ -10,5 +10,5 @@ int main() {
  labels(enabled,false,false,add); assert(out.size()==1 && out[0]=="No active modules"); out.clear();
  enabled[static_cast<std::size_t>(ag::ModuleId::Fps)]=true;
  enabled[static_cast<std::size_t>(ag::ModuleId::Session)]=true; // unsupported is not shown
- labels(enabled,true,true,add); assert((out==std::vector<std::string>{"FPS","China Hat","Trail"}));
+ labels(enabled,true,true,add,true); assert((out==std::vector<std::string>{"FPS","China Hat","Trail","Jump Rings"}));
 }

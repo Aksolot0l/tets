@@ -152,7 +152,7 @@ static PopTextWrapFn guiPopTextWrap = nullptr;
 static std::atomic<bool> hudThemeReady{false};
 static thread_local bool insideLegacyHud = false;
 static thread_local float legacyOpacity = 1.f;
-enum class VisualEditor { None, Hat, Trail, Options };
+enum class VisualEditor { None, Hat, Trail, Jump, Options };
 static std::atomic<VisualEditor> visualEditor{VisualEditor::None};
 static std::atomic<bool> hudHooksReady{false}, notificationHookReady{false};
 static bool hudEditorOpen = false, moduleHudEnabled = false;
@@ -372,6 +372,22 @@ static void drawTrailSettings() {
         }
     }
 }
+static void drawJumpSettings() {
+    bool enabled=JumpEnabled();
+    if (guiCheckbox("Jump rings (test)",&enabled)) SetJumpEnabled(enabled);
+    bool rainbow=JumpRainbowEnabled();
+    if (guiCheckbox("Rainbow##jump",&rainbow)) SetJumpRainbowEnabled(rainbow);
+    if (rainbow) visualSlider("Rainbow speed##jump",VisualParam::JumpRainbowSpeed,"%.2f");
+    else visualColor("Jump color",VisualParam::JumpRed,VisualParam::JumpGreen,VisualParam::JumpBlue);
+    visualSlider("Radius##jump",VisualParam::JumpRadius,"%.2f");
+    visualSlider("Lifetime (seconds)##jump",VisualParam::JumpSeconds,"%.1f");
+    visualSlider("Opacity##jump",VisualParam::JumpOpacity,"%.2f");
+    if (JumpEnabled()) {
+        const int status=JumpStatus();
+        realText(status==1 ? "Jump ring: submitted" : status==2 ? "Jump ring: renderer not ready" : "Jump ring: waiting for movement",nullptr);
+        realText("Movement estimate; not a ground flag.",nullptr);
+    }
+}
 static const char* depthCompareLabel(int value) {
     switch (value) { case 1:return "never"; case 2:return "less"; case 3:return "equal";
     case 4:return "less equal"; case 5:return "greater"; case 6:return "not equal";
@@ -540,10 +556,13 @@ static void drawVisualPanel() {
             sectionTitle("TRAIL");
             bool trace=TrailEnabled(); if (guiCheckbox("Trail",&trace)) SetTrailEnabled(trace);
             if (canVisualPreview() && guiButton("Settings##open_trail",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Trail;
+            sectionTitle("JUMP RINGS");
+            bool jump=JumpEnabled(); if (guiCheckbox("Jump rings (test)",&jump)) SetJumpEnabled(jump);
+            if (canVisualPreview() && guiButton("Settings##open_jump",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Jump;
             if (canVisualPreview() && guiButton("Options",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Options;
             if (!canVisualPreview()) {
                 realText("Preview unavailable; inline settings:",nullptr);
-                drawHatSettings(); drawTrailSettings(); drawVisualOptions();
+                drawHatSettings(); drawTrailSettings(); drawJumpSettings(); drawVisualOptions();
             }
             visualHint("Прозрачность и depth-test не изменяются этим оформлением.");
         }
@@ -719,15 +738,16 @@ static void drawVisualEditor() {
     guiSetNextPos(ImVec2(350.f,90.f),ImGuiCond_Always,ImVec2(0,0));
     if (guiSetNextSize) guiSetNextSize(ImVec2(310.f,430.f),ImGuiCond_FirstUseEver);
     VisualStyleScope style;
-    const char* title=current==VisualEditor::Hat?"China Hat settings":current==VisualEditor::Trail?"Trail settings":"Visual options";
+    const char* title=current==VisualEditor::Hat?"China Hat settings":current==VisualEditor::Trail?"Trail settings":current==VisualEditor::Jump?"Jump ring settings":"Visual options";
     if (guiBegin(title,nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
         if (guiButton && guiButton("Back to menu",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::None;
         if (current==VisualEditor::Hat) drawHatSettings();
         else if (current==VisualEditor::Trail) drawTrailSettings();
+        else if (current==VisualEditor::Jump) drawJumpSettings();
         else drawVisualOptions();
     }
     guiEnd();
-    if (visualEditor==current && current!=VisualEditor::Options) drawEffectPreview(current);
+    if (visualEditor==current && current!=VisualEditor::Options && current!=VisualEditor::Jump) drawEffectPreview(current);
 }
 
 // Restyle only actual legacy HUD/notification windows, preserving their real
@@ -771,7 +791,7 @@ static void drawModuleHud(void* runtime, bool preview) {
                 guiSameLine(0.f,6.f);
             }
             realText(label,nullptr);
-        });
+        },JumpEnabled());
     }
     guiEnd(); if (vars) guiPopVar(2); guiPopColor(3);
 }
@@ -981,6 +1001,7 @@ static void patchedDrawGui(void* runtime) {
         SetMenuMouseOpen(false);
         SetChinaHatEnabled(false);
         SetTrailEnabled(false);
+        SetJumpEnabled(false);
         SetPlayerSkinPreviewActive(false);
         SetPlayerModelPreviewActive(false);
         SetPlayerPreviewHatActive(false);
@@ -993,8 +1014,8 @@ static void patchedDrawGui(void* runtime) {
     SetMenuMouseOpen(menuOpen);
     if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }
     const bool editingVisual=menuOpen && visualEditor!=VisualEditor::None && canVisualPreview();
-    SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options);
-    SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && previewGameModelTest);
+    SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump);
+    SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && previewGameModelTest);
     SetPlayerPreviewHatActive(editingVisual && visualEditor==VisualEditor::Hat && previewGameModelTest);
     if (!menuOpen || (!hudEditorOpen && !editingVisual)) {
         if (menuOpen) { VisualStyleScope style; realDrawGui(runtime); }

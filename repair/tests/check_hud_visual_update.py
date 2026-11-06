@@ -76,7 +76,7 @@ for symbol in ('_ZN10ImDrawList8AddImageEyRK6ImVec2S2_S2_S2_j','_ZN10ImDrawList1
     assert symbol in u and symbol.encode() in exports
 assert 'visual_player_skin::acquire(frameDevice)' in u and 'previewFrameView=skin.view' in u
 assert u.index('release(previewFrameView);',u.index('legacyPresent(chain'))>u.index('legacyPresent(chain')
-assert 'SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options)' in u
+assert 'SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump)' in u
 assert 'visual_player_skin::begin(local,captureContext)' in n and 'visual_gpu_depth::inPlayerCapture=capture' in n
 assert n.index('visual_player_skin::begin(local,captureContext)')<n.index('originalPlayer(self,entity,pos,renderValue,partial)')
 assert 'scopeGeneration==generation' in skin and 'ctx!=scopeContext' in skin
@@ -87,7 +87,7 @@ print('Read-only skin candidate preview: static OK; Windows test required')
 replay=(r/'src/visual_player_replay.h').read_text()
 assert 'static bool previewGameModelTest=false' in u
 assert 'Game model replay (test)' in u and 'Trail preview not available yet.' in u
-assert 'SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && previewGameModelTest)' in u
+assert 'SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && previewGameModelTest)' in u
 assert 'visual_player_replay::acquire(frameDevice)' in u and 'previewFrameView=model' in u
 assert 'scope.draws>=128' in replay and 'srvBound(ctx,scope.srv)' in replay and 'outputBound(ctx,scope.rtv,scope.dsv)' in replay
 for guard in ('SOGetTargets','GetPredication','OMGetRenderTargetsAndUnorderedAccessViews','d.StencilEnable','RSGetViewports'):

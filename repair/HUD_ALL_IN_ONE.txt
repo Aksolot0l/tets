@@ -10,9 +10,10 @@ SDK и Dear ImGui сюда не включены. Исходников закр�
 старый штатный HUD нельзя восстановить полностью по этому файлу.
 Мировой проход с глубиной, настоящая модель и копия шляпы в GPU-preview
 подтверждены пользователем. Автоматическое переключение с первого лица не
-сработало, его перехват удалён; новые панели HUD ещё требуют проверки в игре. Ошибка перекрытия
-шляпы дальними блоками остаётся. Right Shift и мышь подтверждены пользователем;
-новый дизайн HUD ещё не проверен в Minecraft.
+сработало, его перехват удалён. Ошибка перекрытия шляпы дальними блоками
+остаётся. Right Shift и мышь подтверждены пользователем; текущий HUD в игре
+выглядит как отдельные окна и не соответствует желаемому референсу.
+Jump Rings — экспериментальный эффект; в игре ещё не проверен.
 
 СОДЕРЖАНИЕ:
 1. Описание модулей, промпт и сборка
@@ -39,6 +40,9 @@ SDK и Dear ImGui сюда не включены. Исходников закр�
    - repair/src/visual_color.h
    - repair/src/visual_ribbon.h
    - repair/src/visual_trail.h
+   - repair/src/visual_jump.h
+   - repair/tests/visual_jump.cpp
+   - repair/tests/check_visual_jump.py
    - repair/src/hat_animation.h
    - repair/src/china_hat_lines.h
    - repair/src/china_hat_player.h
@@ -390,7 +394,7 @@ static PopTextWrapFn guiPopTextWrap = nullptr;
 static std::atomic<bool> hudThemeReady{false};
 static thread_local bool insideLegacyHud = false;
 static thread_local float legacyOpacity = 1.f;
-enum class VisualEditor { None, Hat, Trail, Options };
+enum class VisualEditor { None, Hat, Trail, Jump, Options };
 static std::atomic<VisualEditor> visualEditor{VisualEditor::None};
 static std::atomic<bool> hudHooksReady{false}, notificationHookReady{false};
 static bool hudEditorOpen = false, moduleHudEnabled = false;
@@ -610,6 +614,22 @@ static void drawTrailSettings() {
         }
     }
 }
+static void drawJumpSettings() {
+    bool enabled=JumpEnabled();
+    if (guiCheckbox("Jump rings (test)",&enabled)) SetJumpEnabled(enabled);
+    bool rainbow=JumpRainbowEnabled();
+    if (guiCheckbox("Rainbow##jump",&rainbow)) SetJumpRainbowEnabled(rainbow);
+    if (rainbow) visualSlider("Rainbow speed##jump",VisualParam::JumpRainbowSpeed,"%.2f");
+    else visualColor("Jump color",VisualParam::JumpRed,VisualParam::JumpGreen,VisualParam::JumpBlue);
+    visualSlider("Radius##jump",VisualParam::JumpRadius,"%.2f");
+    visualSlider("Lifetime (seconds)##jump",VisualParam::JumpSeconds,"%.1f");
+    visualSlider("Opacity##jump",VisualParam::JumpOpacity,"%.2f");
+    if (JumpEnabled()) {
+        const int status=JumpStatus();
+        realText(status==1 ? "Jump ring: submitted" : status==2 ? "Jump ring: renderer not ready" : "Jump ring: waiting for movement",nullptr);
+        realText("Movement estimate; not a ground flag.",nullptr);
+    }
+}
 static const char* depthCompareLabel(int value) {
     switch (value) { case 1:return "never"; case 2:return "less"; case 3:return "equal";
     case 4:return "less equal"; case 5:return "greater"; case 6:return "not equal";
@@ -778,10 +798,13 @@ static void drawVisualPanel() {
             sectionTitle("TRAIL");
             bool trace=TrailEnabled(); if (guiCheckbox("Trail",&trace)) SetTrailEnabled(trace);
             if (canVisualPreview() && guiButton("Settings##open_trail",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Trail;
+            sectionTitle("JUMP RINGS");
+            bool jump=JumpEnabled(); if (guiCheckbox("Jump rings (test)",&jump)) SetJumpEnabled(jump);
+            if (canVisualPreview() && guiButton("Settings##open_jump",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Jump;
             if (canVisualPreview() && guiButton("Options",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Options;
             if (!canVisualPreview()) {
                 realText("Preview unavailable; inline settings:",nullptr);
-                drawHatSettings(); drawTrailSettings(); drawVisualOptions();
+                drawHatSettings(); drawTrailSettings(); drawJumpSettings(); drawVisualOptions();
             }
             visualHint("Прозрачность и depth-test не изменяются этим оформлением.");
         }
@@ -957,15 +980,16 @@ static void drawVisualEditor() {
     guiSetNextPos(ImVec2(350.f,90.f),ImGuiCond_Always,ImVec2(0,0));
     if (guiSetNextSize) guiSetNextSize(ImVec2(310.f,430.f),ImGuiCond_FirstUseEver);
     VisualStyleScope style;
-    const char* title=current==VisualEditor::Hat?"China Hat settings":current==VisualEditor::Trail?"Trail settings":"Visual options";
+    const char* title=current==VisualEditor::Hat?"China Hat settings":current==VisualEditor::Trail?"Trail settings":current==VisualEditor::Jump?"Jump ring settings":"Visual options";
     if (guiBegin(title,nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
         if (guiButton && guiButton("Back to menu",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::None;
         if (current==VisualEditor::Hat) drawHatSettings();
         else if (current==VisualEditor::Trail) drawTrailSettings();
+        else if (current==VisualEditor::Jump) drawJumpSettings();
         else drawVisualOptions();
     }
     guiEnd();
-    if (visualEditor==current && current!=VisualEditor::Options) drawEffectPreview(current);
+    if (visualEditor==current && current!=VisualEditor::Options && current!=VisualEditor::Jump) drawEffectPreview(current);
 }
 
 // Restyle only actual legacy HUD/notification windows, preserving their real
@@ -1009,7 +1033,7 @@ static void drawModuleHud(void* runtime, bool preview) {
                 guiSameLine(0.f,6.f);
             }
             realText(label,nullptr);
-        });
+        },JumpEnabled());
     }
     guiEnd(); if (vars) guiPopVar(2); guiPopColor(3);
 }
@@ -1219,6 +1243,7 @@ static void patchedDrawGui(void* runtime) {
         SetMenuMouseOpen(false);
         SetChinaHatEnabled(false);
         SetTrailEnabled(false);
+        SetJumpEnabled(false);
         SetPlayerSkinPreviewActive(false);
         SetPlayerModelPreviewActive(false);
         SetPlayerPreviewHatActive(false);
@@ -1231,8 +1256,8 @@ static void patchedDrawGui(void* runtime) {
     SetMenuMouseOpen(menuOpen);
     if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }
     const bool editingVisual=menuOpen && visualEditor!=VisualEditor::None && canVisualPreview();
-    SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options);
-    SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && previewGameModelTest);
+    SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump);
+    SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && previewGameModelTest);
     SetPlayerPreviewHatActive(editingVisual && visualEditor==VisualEditor::Hat && previewGameModelTest);
     if (!menuOpen || (!hudEditorOpen && !editingVisual)) {
         if (menuOpen) { VisualStyleScope style; realDrawGui(runtime); }
@@ -1567,7 +1592,6 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID) {
     }
     return TRUE;
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/compat.cpp
 ================================================================================
@@ -1587,15 +1611,15 @@ inline constexpr Entry entries[] = {{ag::ModuleId::Fps,"FPS"},{ag::ModuleId::Cps
  {ag::ModuleId::Notifications,"Notifications"},{ag::ModuleId::ActiveModules,"Active Modules"},
  {ag::ModuleId::Hotkeys,"Hotkeys"},{ag::ModuleId::Coordinates,"Coordinates"}};
 inline bool editing(bool menuOpen,bool editorOpen) { return menuOpen && editorOpen; }
-template<class Emit> void labels(const std::array<bool,ag::kModuleCount>& enabled, bool hat, bool trail, Emit emit) {
+template<class Emit> void labels(const std::array<bool,ag::kModuleCount>& enabled, bool hat, bool trail, Emit emit, bool jump=false) {
  bool any=false;
  for (const auto& e:entries) if (ag::ModuleAvailable(e.id) && enabled[static_cast<std::size_t>(e.id)]) { emit(e.name); any=true; }
  if (hat) { emit("China Hat"); any=true; }
  if (trail) { emit("Trail"); any=true; }
+ if (jump) { emit("Jump Rings"); any=true; }
  if (!any) emit("No active modules");
 }
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/hud_module_list.h
 ================================================================================
@@ -1779,7 +1803,6 @@ struct RowSpec { float height, gap; float labelWidth; bool wrapped; };
 inline RowSpec row() { return {22.f, 4.f, 104.f, true}; }
 
 } // namespace hud_visual
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/hud_visual_kit.h
 ================================================================================
@@ -1872,7 +1895,6 @@ int main(){
  assert(previewX(600.f)>=editorMetrics.panelLeft+compactPanelWidth(600.f)+editorMetrics.previewGap);
  assert(panelHeight(2,320.f,200.f)+panelTop(320.f)<=200.f);
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/hud_visual_kit.cpp
 ================================================================================
@@ -1969,7 +1991,6 @@ assert 'UPDATE: HUD redesign — visual layer' in doc
 assert 'hud_visual_kit.h' in doc
 
 print('HUD visual-only checks OK; Windows/Minecraft verification required')
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_hud_visual_style.py
 ================================================================================
@@ -2162,7 +2183,6 @@ inline float fontSizeHint()    { return 9.f; }
 inline float fontSizePill()    { return 8.f; }
 
 } // namespace hud_theme
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/hud_theme.h
 ================================================================================
@@ -2267,7 +2287,6 @@ struct Settings {
 };
 
 } // namespace ag
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/settings.h
 ================================================================================
@@ -2285,6 +2304,7 @@ struct Settings {
 #include "china_hat_lines.h"
 #include "china_hat_hash.h"
 #include "visual_trail.h"
+#include "visual_jump.h"
 #include "china_hat_player.h"
 #include "visual_hooks.h"
 #include "visual_color.h"
@@ -2322,6 +2342,7 @@ constexpr std::uint32_t originRva=0x19436e8, tessRva=0x1925550, contextRva=0x191
 std::atomic<bool> available{false}, enabled{false};
 // Modules remain off until the user explicitly enables them. Defaults configure
 // the requested filled/rainbow appearance, with a wireframe fallback in Visuals.
+std::atomic<bool> jumpEnabled{false}, jumpRainbow{false};
 std::atomic<bool> trailEnabled{false}, materialTint{true}, hatFill{true}, trailFill{true};
 std::atomic<bool> hatRainbow{true}, trailRainbow{true}, vertexGradient{false};
 // Default to fail-closed world rendering. Legacy screen rendering is a manual
@@ -2367,12 +2388,17 @@ void sampleOutputMerger(std::atomic<int>& target) {
  target.store(bits,std::memory_order_relaxed);
 }
 std::atomic<unsigned> trailGeneration{0};
+std::atomic<unsigned> jumpGeneration{0};
+thread_local visual_jump::History jumps;
+thread_local unsigned seenJumpGeneration=0;
+std::atomic<int> jumpStatus{0};
+std::atomic<ULONGLONG> lastJumpSubmit{0};
 thread_local visual_trail::History trail;
 thread_local unsigned seenTrailGeneration=0;
 // 0 waiting for a player, 1 submitted to GPU, 2 game renderer busy/unavailable.
 std::atomic<int> hatStatus{0}, trailStatus{0}, hatFillStatus{0}, trailFillStatus{0};
 std::atomic<ULONGLONG> lastHatSubmit{0}, lastTrailSubmit{0};
-bool anyVisual() { return enabled.load(std::memory_order_acquire) || trailEnabled.load(std::memory_order_acquire); }
+bool anyVisual() { return enabled.load(std::memory_order_acquire) || trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire); }
 // 0 = not attempted, 1 = installing, 2 = installed, 3 = failed.
 std::atomic<int> hookState{0};
 HatCreateHook createHook=nullptr; HatToggleHook enableHook=nullptr, disableHook=nullptr, removeHook=nullptr;
@@ -2588,6 +2614,7 @@ std::intptr_t playerHook(void* self,void* entity,void* pos,float renderValue,flo
 }
 void renderHat(const PlayerFrame& player);
 void renderTrail(const PlayerFrame& player);
+void renderJump(const PlayerFrame& player);
 ID3D11DeviceContext* sameThreadContext() {
  ID3D11DeviceContext* ctx=nullptr;
  AcquireSRWLockShared(&contextLock);
@@ -2630,7 +2657,7 @@ std::intptr_t entitiesDiagnosticHook(void* self,float partial) {
   occlusionStatus.store(!worldReady || !gpuReady ? 3 : 2,std::memory_order_relaxed);
  } else {
   PlayerFrame visible=frame; frame.valid=false; PlayerFrame local=visible;
-  if (trailEnabled.load(std::memory_order_acquire) && !local.valid) {
+  if ((trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire)) && !local.valid) {
    std::uintptr_t actor=0;
    if (localPlayer(actor)) { rememberPlayer(reinterpret_cast<void*>(actor),partial); local=frame; frame.valid=false; }
   }
@@ -2644,6 +2671,7 @@ std::intptr_t entitiesDiagnosticHook(void* self,float partial) {
    renderHat(visible);
   }
   renderTrail(local);
+  renderJump(local);
   visual_gpu_depth::expectedContext=nullptr; visual_gpu_depth::expectedDepth=nullptr;
   const bool blocked=visual_gpu_depth::rejected.load(std::memory_order_relaxed)!=rejected;
   const bool drew=visual_gpu_depth::submitted.load(std::memory_order_relaxed)!=submitted;
@@ -2824,6 +2852,44 @@ void renderTrail(const PlayerFrame& player) {
  } else trailFillStatus.store(0,std::memory_order_relaxed);
  std::memcpy(reinterpret_cast<void*>(color),saved,sizeof(saved)); *reinterpret_cast<std::uint8_t*>(flag)=oldFlag;
 }
+void renderJump(const PlayerFrame& player) {
+ const unsigned gen=jumpGeneration.load(std::memory_order_acquire);
+ if (gen!=seenJumpGeneration) { jumps.clear(); seenJumpGeneration=gen; }
+ if (!jumpEnabled.load(std::memory_order_acquire)) { jumps.clear(); jumpStatus.store(0,std::memory_order_relaxed); return; }
+ const ULONGLONG now=GetTickCount64();
+ std::uintptr_t actor=0;
+ if (!player.valid || now<player.at || now-player.at>250 || !localPlayer(actor) || actor!=player.entity) {
+  jumps.clear(); jumpStatus.store(0,std::memory_order_relaxed); return;
+ }
+ const auto ttl=static_cast<std::uint64_t>(param(VisualParam::JumpSeconds)*1000.f);
+ jumps.update(actor,{player.world.x,player.world.y-1.62f+.06f,player.world.z},now,ttl);
+ if (!jumps.size()) { jumpStatus.store(0,std::memory_order_relaxed); return; }
+ jumpStatus.store(2,std::memory_order_relaxed);
+ float origin[3]{},saved[4]{}; std::uint8_t oldFlag=0;
+ auto tess=base+tessRva,color=base+shaderColorRva,flag=base+shaderFlagRva;
+ if (!read(base+originRva,origin,sizeof(origin)) || !read(color,saved,sizeof(saved)) || !fetch(flag,oldFlag) ||
+     !writable(color,sizeof(saved)) || !writable(flag,1)) return;
+ for(float v:origin) if(!std::isfinite(v)) return;
+ auto* t=reinterpret_cast<void*>(tess);
+ for(std::size_t i=0;i<jumps.size();++i) {
+  const auto& ring=jumps[i]; const float p=visual_jump::progress(now,ring.start,ttl);
+  china_hat::Point c{ring.center.x-origin[0],ring.center.y-origin[1],ring.center.z-origin[2]};
+  if(std::fabs(c.x)>32 || std::fabs(c.y)>32 || std::fabs(c.z)>32 || !tessIdle(tess)) continue;
+  const float opacity=param(VisualParam::JumpOpacity)*visual_jump::alpha(p);
+  auto tint=visual_color::animated(true,jumpRainbow.load(std::memory_order_acquire),
+      {{param(VisualParam::JumpRed),param(VisualParam::JumpGreen),param(VisualParam::JumpBlue)}},param(VisualParam::JumpRainbowSpeed),now);
+  tint[3]=opacity;
+  std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
+  tessBegin(t,2,48*12);
+  visual_jump::ring(c,visual_jump::radius(p,param(VisualParam::JumpRadius)),.075f,[&](china_hat::Point v) {
+   tessColor(t,255,255,255,255); tessVertex(t,v.x,v.y,v.z);
+  });
+  submitVisual(t,opacity);
+  alignas(16) std::uint8_t scratch[0x200]{}; tessEnd(t,scratch,0,0);
+  lastJumpSubmit.store(now,std::memory_order_relaxed); jumpStatus.store(1,std::memory_order_relaxed);
+ }
+ std::memcpy(reinterpret_cast<void*>(color),saved,sizeof(saved)); *reinterpret_cast<std::uint8_t*>(flag)=oldFlag;
+}
 void screenHook(void* self,void* ctx) {
  if (inScreen) { originalScreen(self,ctx); return; }
  inScreen=true;
@@ -2835,11 +2901,12 @@ void screenHook(void* self,void* ctx) {
  // Submit the verified hat before collecting/drawing the experimental trail.
  renderHat(visible);
  PlayerFrame local=visible;
- if (trailEnabled.load(std::memory_order_acquire) && !local.valid) {
+ if ((trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire)) && !local.valid) {
   std::uintptr_t actor=0;
   if (localPlayer(actor)) { rememberPlayer(reinterpret_cast<void*>(actor),1.0f); local=frame; frame.valid=false; }
  }
  renderTrail(local);
+ renderJump(local);
  inScreen=false;
 }
 }
@@ -2928,7 +2995,7 @@ bool enableVisual() {
  if (!ChinaHatAvailable()) return false;
  try { return installHooks(); }
  catch (...) {
-  enabled.store(false,std::memory_order_release); trailEnabled.store(false,std::memory_order_release);
+  enabled.store(false,std::memory_order_release); trailEnabled.store(false,std::memory_order_release); jumpEnabled.store(false,std::memory_order_release);
   available.store(false,std::memory_order_release); hookState.store(3,std::memory_order_release);
   log("failed to enable; overlay remains available"); return false;
  }
@@ -2956,6 +3023,18 @@ bool TrailFillEnabled() { return trailFill.load(std::memory_order_acquire); }
 void SetTrailFillEnabled(bool value) { trailFill.store(value,std::memory_order_release); trailFillStatus.store(0,std::memory_order_relaxed); }
 bool VisualTintEnabled() { return materialTint.load(std::memory_order_acquire); }
 void SetVisualTintEnabled(bool value) { materialTint.store(value,std::memory_order_release); }
+bool JumpEnabled() { return jumpEnabled.load(std::memory_order_acquire); }
+void SetJumpEnabled(bool value) {
+ if (!value) { jumpEnabled.store(false,std::memory_order_release); jumpGeneration.fetch_add(1,std::memory_order_acq_rel); jumpStatus.store(0,std::memory_order_relaxed); return; }
+ jumpStatus.store(0,std::memory_order_relaxed);
+ if (enableVisual()) jumpEnabled.store(true,std::memory_order_release);
+}
+bool JumpRainbowEnabled() { return jumpRainbow.load(std::memory_order_acquire); }
+void SetJumpRainbowEnabled(bool value) { jumpRainbow.store(value,std::memory_order_release); }
+int JumpStatus() {
+ int status=jumpStatus.load(std::memory_order_relaxed); auto then=lastJumpSubmit.load(std::memory_order_relaxed), now=GetTickCount64();
+ return status==1 && (!then || now<then || now-then>1000) ? 0 : status;
+}
 bool TrailEnabled() { return trailEnabled.load(std::memory_order_acquire); }
 void SetTrailEnabled(bool value) {
  if (!value) { trailEnabled.store(false,std::memory_order_release); trailGeneration.fetch_add(1,std::memory_order_acq_rel); trailStatus.store(0,std::memory_order_relaxed); return; }
@@ -2996,7 +3075,6 @@ bool InitializeChinaHat(HatCreateHook create,HatToggleHook enable,HatToggleHook 
  available.store(true,std::memory_order_release);
  log("validated; hooks and drawing stay off until enabled in menu"); return true;
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/china_hat_native.cpp
 ================================================================================
@@ -3044,6 +3122,11 @@ bool TrailFillEnabled();
 void SetTrailFillEnabled(bool enabled);
 bool VisualTintEnabled();
 void SetVisualTintEnabled(bool enabled);
+bool JumpEnabled();
+void SetJumpEnabled(bool enabled);
+bool JumpRainbowEnabled();
+void SetJumpRainbowEnabled(bool enabled);
+int JumpStatus();
 bool TrailEnabled();
 void SetTrailEnabled(bool enabled);
 float ChinaHatHeight();
@@ -3061,7 +3144,6 @@ bool VertexGradientEnabled();
 void SetVertexGradientEnabled(bool enabled);
 int HatFillStatus();
 int TrailFillStatus();
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/china_hat_native.h
 ================================================================================
@@ -3079,7 +3161,8 @@ int TrailFillStatus();
 enum class VisualParam : std::size_t {
  HatRadius, HatConeHeight, HatOffset, HatBobAmplitude, HatBobSpeed, HatRainbowSpeed,
  HatRed, HatGreen, HatBlue, TrailHeight, TrailSeconds, TrailRainbowSpeed,
- TrailRed, TrailGreen, TrailBlue, HatOpacity, TrailOpacity, Count
+ TrailRed, TrailGreen, TrailBlue, HatOpacity, TrailOpacity,
+ JumpRadius, JumpSeconds, JumpOpacity, JumpRed, JumpGreen, JumpBlue, JumpRainbowSpeed, Count
 };
 struct VisualParamSpec { float value, low, high; };
 constexpr VisualParamSpec visualParamSpecs[] = {
@@ -3088,7 +3171,9 @@ constexpr VisualParamSpec visualParamSpecs[] = {
  {.20f,0.f,1.f},{1.f,0.f,1.f},{.42f,0.f,1.f},
  {.80f,.30f,1.00f},{3.f,1.f,6.f},{.15f,.03f,.8f},
  {.08f,0.f,1.f},{.86f,0.f,1.f},{1.f,0.f,1.f},
- {1.f,0.f,1.f},{1.f,0.f,1.f}
+ {1.f,0.f,1.f},{1.f,0.f,1.f},
+ {1.4f,.4f,3.f},{1.f,.3f,3.f},{.85f,0.f,1.f},
+ {.20f,0.f,1.f},{1.f,0.f,1.f},{.42f,0.f,1.f},{.15f,.03f,.8f}
 };
 static_assert(sizeof(visualParamSpecs)/sizeof(visualParamSpecs[0])==static_cast<std::size_t>(VisualParam::Count),"visual parameters mismatch");
 inline float sanitizeVisualParam(VisualParam param,float value) {
@@ -3097,7 +3182,6 @@ inline float sanitizeVisualParam(VisualParam param,float value) {
  const auto spec=visualParamSpecs[i];
  return std::isfinite(value) ? std::clamp(value,spec.low,spec.high) : spec.value;
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_settings.h
 ================================================================================
@@ -3281,7 +3365,6 @@ inline bool matches(ID3D11DeviceContext* ctx) {
  return true;
 }
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_gpu_depth.h
 ================================================================================
@@ -3303,7 +3386,6 @@ inline bool playerHat(bool strict,bool selected,bool inEntities,bool local,bool 
 }
 inline bool entitiesHat(bool selected) { return !selected; }
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_depth_policy.h
 ================================================================================
@@ -3407,7 +3489,6 @@ inline Snapshot acquire(ID3D11Device* expected) {
 }
 inline void next() { AcquireSRWLockExclusive(&lock); if (count) selected=(selected+1)%count; ReleaseSRWLockExclusive(&lock); }
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_player_skin.h
 ================================================================================
@@ -3567,7 +3648,6 @@ inline void endDraw(ID3D11DeviceContext* ctx) {
  release(saved.dsv); saved={}; ++scope.draws;
 }
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_player_replay.h
 ================================================================================
@@ -3587,7 +3667,6 @@ inline int resolve(bool requested,bool livePlayer,bool optionsValid,int original
  return overrideFront(requested,livePlayer,optionsValid,original)?2:original;
 }
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_preview_camera.h
 ================================================================================
@@ -3612,7 +3691,6 @@ inline bool safeDraw(bool contextOk,bool depthOk,bool stencil,bool outputUav,boo
  return contextOk && depthOk && !stencil && !outputUav && !streamOutput && !predication && viewportCount==1;
 }
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_model_capture_policy.h
 ================================================================================
@@ -3631,7 +3709,6 @@ inline bool dimensions(std::uint32_t width,std::uint32_t height,std::uint32_t sa
 }
 inline float vScale(std::uint32_t width,std::uint32_t height) { return height ? static_cast<float>(width)/static_cast<float>(height) : 1.f; }
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_skin_policy.h
 ================================================================================
@@ -3681,7 +3758,6 @@ inline Point2 trailPoint(float t,std::uint64_t now,float lifetime) {
 }
 inline float trailHeight(float normalizedHeight) { return std::clamp(normalizedHeight,.3f,1.f)*80.f; }
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_avatar_preview.h
 ================================================================================
@@ -3710,7 +3786,6 @@ inline china_hat::Color trail(std::size_t index, std::size_t count, float timePh
  return china_hat::rainbow(timePhase + position*.8f,alpha);
 }
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_gradient.h
 ================================================================================
@@ -3748,7 +3823,6 @@ inline std::array<float,4> animated(bool enabled,bool rainbow,std::array<float,3
  }
 }
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_color.h
 ================================================================================
@@ -3774,7 +3848,6 @@ bool segment(const china_hat::Vertex& a,const china_hat::Vertex& b,float height,
  return true;
 }
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_ribbon.h
 ================================================================================
@@ -3825,7 +3898,6 @@ private:
  std::uint64_t lastSeen_=0;
 };
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_trail.h
 ================================================================================
@@ -3845,7 +3917,6 @@ inline float bob(std::uint64_t now,float amplitude=.07f,float speed=.3125f) {
  return amplitude*(1.0f+static_cast<float>(std::sin(tau*phase)));
 }
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/hat_animation.h
 ================================================================================
@@ -3876,7 +3947,6 @@ template<class Emit> bool emitWireframe(const Mesh& mesh, std::size_t spokes, Em
  return true;
 }
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/china_hat_lines.h
 ================================================================================
@@ -3905,7 +3975,6 @@ bool fromClient(std::uintptr_t client,std::uint64_t tick,std::uint64_t now,Read 
  player=first; return true;
 }
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/china_hat_player.h
 ================================================================================
@@ -3938,7 +4007,6 @@ inline bool identity(const std::uint8_t* hash, std::uint32_t timestamp, std::siz
  return hash && timestamp == kTimestamp && imageSize == kImageSize && std::memcmp(hash,kHash,32)==0;
 }
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/china_hat_validation.h
 ================================================================================
@@ -3982,7 +4050,6 @@ bool hashHatExecutable(Api& api, const std::uint8_t* bytes, std::size_t size, st
     }
     return api.finishHash(hash,result,32);
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/china_hat_hash.h
 ================================================================================
@@ -4016,7 +4083,6 @@ bool install(Hook* hooks,std::size_t count,Create create,Enable enable,Disable d
  return success;
 }
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_hooks.h
 ================================================================================
@@ -4098,7 +4164,6 @@ inline bool build(Mesh& out, Point head, float radius, float height,
     return true;
 }
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/research/china_hat/hat_mesh.h
 ================================================================================
@@ -4124,7 +4189,6 @@ inline bool uwp_client_pointer(float pointerX, float pointerY, float left, float
                                float width, float height, float& x, float& y, float& w, float& h) {
     return client_pointer(pointerX - left, pointerY - top, width, height, x, y, w, h);
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/pointer_mapping.h
 ================================================================================
@@ -4143,7 +4207,6 @@ void TakeUwpWheel(int& horizontal, int& vertical);
 
 // Stops sampling and ignores wheel events; handler stays registered until process exit.
 void DisableUwpExtraInput();
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/uwp_extra.h
 ================================================================================
@@ -4157,7 +4220,6 @@ void DisableUwpExtraInput();
 bool InitializeMenuMouse(HatCreateHook, HatToggleHook, HatToggleHook, HatToggleHook);
 void SetMenuMouseOpen(bool);
 int MenuMouseStatus();
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/menu_mouse_native.h
 ================================================================================
@@ -4297,7 +4359,6 @@ bool InitializeMenuMouse(HatCreateHook create,HatToggleHook enable,HatToggleHook
  if (!visual_hooks::install(hooks,2,create,enable,disable,remove)) return false;
  ready.store(true,std::memory_order_release); return true;
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/menu_mouse_native.cpp
 ================================================================================
@@ -4353,7 +4414,6 @@ inline bool allowMouse(bool menu, unsigned action, bool pressed, unsigned oldHel
  return !menu || (!pressed && (oldHeld & buttonBit(action)) != 0);
 }
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/menu_mouse_policy.h
 ================================================================================
@@ -4401,7 +4461,6 @@ int main() {
  CursorPolicy timeout; timeout.step(true,true,0,1); timeout.step(false,true,0,2);
  timeout.step(false,true,0,5003); assert(!timeout.closing);
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/menu_mouse_policy.cpp
 ================================================================================
@@ -4435,7 +4494,6 @@ for label,entry in zip(labels,entries):
  expected=re.search(r'^'+label+r': ([0-9a-f]{32})$',observed,re.M).group(1)
  assert bytes(int(x,16) for x in re.findall(r'0x[0-9a-f]{2}',entry)).hex()==expected
 print('Recorded input prologues: OK')
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_menu_mouse.py
 ================================================================================
@@ -4612,7 +4670,6 @@ void TakeUwpWheel(int& horizontal, int& vertical) {
     horizontal = wheelX.exchange(0, std::memory_order_relaxed);
     vertical = wheelY.exchange(0, std::memory_order_relaxed);
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/uwp_extra.cpp
 ================================================================================
@@ -4642,7 +4699,6 @@ struct PageScrollRepeat {
         return 0.0f;
     }
 };
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/page_scroll.h
 ================================================================================
@@ -4667,7 +4723,6 @@ struct WheelBridge {
 };
 constexpr std::uint32_t kWheelMagic = 0x47574831;
 static_assert(sizeof(WheelBridge) == 16, "wheel bridge ABI");
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/wheel_bridge.h
 ================================================================================
@@ -4697,7 +4752,6 @@ struct WheelCounter {
         lastX = currentX; lastY = currentY;
     }
 };
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/wheel_counter.h
 ================================================================================
@@ -4777,7 +4831,6 @@ template<class Read> bool readPosition115(std::uint64_t base, Read read, Positio
     out = candidate;
     return true;
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/coordinates_115.h
 ================================================================================
@@ -4806,7 +4859,6 @@ inline bool matches(const unsigned char* image, std::size_t size) {
 }
 inline void apply(unsigned char* image) { std::memset(image + branchRva, 0x90, 6); }
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/mouse_diagnostic_patch.h
 ================================================================================
@@ -4826,7 +4878,6 @@ public:
         return pressed;
     }
 };
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/disable_hotkey.h
 ================================================================================
@@ -4851,7 +4902,6 @@ int main() {
  assert(hud_theme::rounding(std::numeric_limits<float>::quiet_NaN())==8);
  assert(hud_theme::border(0).a==0); assert(hud_theme::background(std::numeric_limits<float>::quiet_NaN()).a==.72f);
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/hud_theme.cpp
 ================================================================================
@@ -4871,9 +4921,8 @@ int main() {
  labels(enabled,false,false,add); assert(out.size()==1 && out[0]=="No active modules"); out.clear();
  enabled[static_cast<std::size_t>(ag::ModuleId::Fps)]=true;
  enabled[static_cast<std::size_t>(ag::ModuleId::Session)]=true; // unsupported is not shown
- labels(enabled,true,true,add); assert((out==std::vector<std::string>{"FPS","China Hat","Trail"}));
+ labels(enabled,true,true,add,true); assert((out==std::vector<std::string>{"FPS","China Hat","Trail","Jump Rings"}));
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/hud_module_list.cpp
 ================================================================================
@@ -4916,7 +4965,6 @@ int main() {
  assert(trailPoint(.5f,0,3).y!=trailPoint(.5f,1000,3).y);
  assert(trailHeight(.8f)>trailHeight(.3f));
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_avatar_preview.cpp
 ================================================================================
@@ -4944,7 +4992,6 @@ int main() {
  assert(first!=second && first==animated(true,true,custom,.5f,2000));
  for (std::uint64_t t=0;t<10000;t+=83) for (float x:animated(true,true,custom,.15f,t)) assert(std::isfinite(x) && x>=0.f && x<=1.f);
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_color.cpp
 ================================================================================
@@ -4971,7 +5018,6 @@ int main() {
  assert(visual_ribbon::segment(x,y,1.f,[&](auto v){output.push_back(v);}));
  assert(output[0].color.r==a.r && output[1].color.b==b.b && output[2].color.b==b.b);
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_gradient.cpp
 ================================================================================
@@ -5089,7 +5135,6 @@ int main() {
  table[drawSlots[1]]=table[drawSlots[0]]; created=0; enabled=0;
  assert(!matches(fakeCtx) && !install(fakeCtx,create,enable,disable,remove) && created==0 && enabled==0);
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_gpu_depth.cpp
 ================================================================================
@@ -5133,7 +5178,6 @@ struct ID3D11DeviceContext {
  virtual void OMSetBlendState(ID3D11BlendState*,const FLOAT*,UINT)=0;
 };
 struct ID3D11Buffer {};
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_gpu_mock_types.h
 ================================================================================
@@ -5172,7 +5216,6 @@ int main() {
  }
  assert(!playerHat(true,true,true,true,false,false) && !entitiesHat(true) && !overlayDraw(true));
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_depth_policy.cpp
 ================================================================================
@@ -5230,7 +5273,6 @@ int main() {
  observe(&ctx); assert(count==0); end(); begin(44,&ctx); observe(&ctx); assert(count==2); end(); setRequested(false);
  assert(v1.refs==1 && v2.refs==1 && t1.refs==1 && t2.refs==1);
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_player_skin.cpp
 ================================================================================
@@ -5322,7 +5364,6 @@ int main() {
  }
  assert(liveObjects==0);
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_player_replay.cpp
 ================================================================================
@@ -5343,7 +5384,6 @@ int main() {
  assert(resolve(true,true,true,0)==2 && resolve(false,true,true,0)==0);
  assert(resolve(true,true,true,1)==2 && resolve(false,true,true,1)==1);
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_preview_camera.cpp
 ================================================================================
@@ -5407,7 +5447,6 @@ struct ID3D11DeviceContext {
  virtual void RSSetViewports(UINT,const D3D11_VIEWPORT*)=0;
  virtual void RSSetScissorRects(UINT,const D3D11_RECT*)=0;
 };
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_replay_mock_types.h
 ================================================================================
@@ -5435,7 +5474,6 @@ int main() {
  in.width=std::numeric_limits<float>::quiet_NaN(); assert(!viewport(in,256,out));
  in.width=0; assert(!viewport(in,256,out));
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_model_capture_policy.cpp
 ================================================================================
@@ -5463,7 +5501,6 @@ struct ID3D11Texture2D: ID3D11Resource { virtual void GetDesc(D3D11_TEXTURE2D_DE
 struct ID3D11ShaderResourceView { virtual ULONG AddRef()=0; virtual ULONG Release()=0; virtual void GetDesc(D3D11_SHADER_RESOURCE_VIEW_DESC*)=0; virtual void GetResource(ID3D11Resource**)=0; };
 struct ID3D11Device { virtual ULONG AddRef()=0; virtual ULONG Release()=0; };
 struct ID3D11DeviceContext { virtual void GetDevice(ID3D11Device**)=0; virtual void PSGetShaderResources(UINT,UINT,ID3D11ShaderResourceView**)=0; };
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_skin_mock_types.h
 ================================================================================
@@ -5483,7 +5520,6 @@ int main() {
  assert(!dimensions(64,48,1,1) && !dimensions(64,64,4,1) && !dimensions(64,64,1,6));
  assert(vScale(64,64)==1.f && vScale(64,32)==2.f && vScale(0,0)==1.f);
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_skin_policy.cpp
 ================================================================================
@@ -5523,7 +5559,6 @@ int main() {
    [&](auto a){return gpu.enable(a);},[&](auto a){return gpu.disable(a);},[&](auto a){return gpu.remove(a);}));
  assert(gpu.created==127 && gpu.enabled==31 && gpu.disabled==31 && gpu.removed==127 && gpu.active==0);
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_hooks.cpp
 ================================================================================
@@ -5609,7 +5644,7 @@ for symbol in ('_ZN10ImDrawList8AddImageEyRK6ImVec2S2_S2_S2_j','_ZN10ImDrawList1
     assert symbol in u and symbol.encode() in exports
 assert 'visual_player_skin::acquire(frameDevice)' in u and 'previewFrameView=skin.view' in u
 assert u.index('release(previewFrameView);',u.index('legacyPresent(chain'))>u.index('legacyPresent(chain')
-assert 'SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options)' in u
+assert 'SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump)' in u
 assert 'visual_player_skin::begin(local,captureContext)' in n and 'visual_gpu_depth::inPlayerCapture=capture' in n
 assert n.index('visual_player_skin::begin(local,captureContext)')<n.index('originalPlayer(self,entity,pos,renderValue,partial)')
 assert 'scopeGeneration==generation' in skin and 'ctx!=scopeContext' in skin
@@ -5620,7 +5655,7 @@ print('Read-only skin candidate preview: static OK; Windows test required')
 replay=(r/'src/visual_player_replay.h').read_text()
 assert 'static bool previewGameModelTest=false' in u
 assert 'Game model replay (test)' in u and 'Trail preview not available yet.' in u
-assert 'SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && previewGameModelTest)' in u
+assert 'SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && previewGameModelTest)' in u
 assert 'visual_player_replay::acquire(frameDevice)' in u and 'previewFrameView=model' in u
 assert 'scope.draws>=128' in replay and 'srvBound(ctx,scope.srv)' in replay and 'outputBound(ctx,scope.rtv,scope.dsv)' in replay
 for guard in ('SOGetTargets','GetPredication','OMGetRenderTargetsAndUnorderedAccessViews','d.StencilEnable','RSGetViewports'):
@@ -5643,7 +5678,6 @@ assert 'inHatCapture && replayable' in gpu and 'submitted.fetch_add(1,std::memor
 assert 'struct EntityScope { ~EntityScope() { visual_player_replay::end();' in n
 for palette in ('Aogiri Green','Emerald','Graphite'): assert palette in theme
 print('Manual camera, hat replay and HUD palette wiring: static OK; Windows test required')
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_hud_visual_update.py
 ================================================================================
@@ -5753,7 +5787,130 @@ assert 'using PlayerRender = std::intptr_t (*)(void*,void*,void*,float,float);' 
 assert 'playerHook(void* self,void* entity,void* pos,float renderValue,float partial)' in n
 assert 'originalPlayer(self,entity,pos,renderValue,partial)' in n
 print('Player renderer float argument forwarding: static OK; Windows test required')
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_china_hat.py
+================================================================================
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/visual_jump.h
+================================================================================
+#pragma once
+#include "../research/china_hat/hat_mesh.h"
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+
+// Movement-only approximation: no unverified game-memory on-ground flag.
+// Bounded, world-space rings; all state belongs to one render thread.
+namespace visual_jump {
+struct Ring { china_hat::Point center{}; std::uint64_t start=0; };
+class History {
+public:
+ static constexpr std::size_t capacity=8;
+ void clear() { *this=History{}; }
+ void update(std::uintptr_t actor,china_hat::Point p,std::uint64_t now,std::uint64_t ttl) {
+  if (!actor || !std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) { clear(); return; }
+  if (actor_!=actor || (seen_ && (now<last_ || now-last_>500))) {
+   clear(); actor_=actor; prev_=p; anchor_=p; stableSince_=last_=now; seen_=true; return;
+  }
+  float dx=p.x-prev_.x, dy=p.y-prev_.y, dz=p.z-prev_.z;
+  if (dx*dx+dy*dy+dz*dz>16.f) { clear(); actor_=actor; prev_=anchor_=p; stableSince_=last_=now; seen_=true; return; }
+  expire(now,ttl);
+  // Arm only after roughly level movement. Detect cumulative upward movement,
+  // because interpolation can make the per-frame delta arbitrarily small.
+  if (std::fabs(p.y-anchor_.y)<.025f) {
+   if (!armed_ && now-stableSince_>=100) armed_=true;
+   if (armed_) { anchor_.x=p.x; anchor_.z=p.z; }
+  } else if (armed_ && p.y-anchor_.y>.08f) {
+   if (count_==capacity) { for (std::size_t i=1;i<count_;++i) rings_[i-1]=rings_[i]; --count_; }
+   rings_[count_++]={anchor_,now}; armed_=false; anchor_=p; stableSince_=now;
+  } else if (!armed_ || p.y<anchor_.y-.025f) {
+   armed_=false; anchor_=p; stableSince_=now;
+  }
+  prev_=p; last_=now;
+ }
+ void expire(std::uint64_t now,std::uint64_t ttl) {
+  std::size_t n=0; while(n<count_ && (now<rings_[n].start || now-rings_[n].start>=ttl)) ++n;
+  if(n) { for(std::size_t i=n;i<count_;++i) rings_[i-n]=rings_[i]; count_-=n; }
+ }
+ std::size_t size() const { return count_; }
+ const Ring& operator[](std::size_t i) const { return rings_[i]; }
+private:
+ std::array<Ring,capacity> rings_{}; std::size_t count_=0; std::uintptr_t actor_=0;
+ china_hat::Point prev_{},anchor_{}; std::uint64_t stableSince_=0,last_=0;
+ bool seen_=false,armed_=false;
+};
+inline float progress(std::uint64_t now,std::uint64_t start,std::uint64_t ttl) {
+ if (!ttl || now<start) return 1.f;
+ return std::clamp(static_cast<float>(now-start)/static_cast<float>(ttl),0.f,1.f);
+}
+inline float radius(float p,float maxRadius) { p=std::clamp(p,0.f,1.f); return .20f+(maxRadius-.20f)*(1.f-(1.f-p)*(1.f-p)); }
+inline float alpha(float p) { p=std::clamp(p,0.f,1.f); return (1.f-p)*(1.f-p); }
+// Annulus triangle list, double-sided. Vertices are in world-relative space.
+template<class Emit> void ring(china_hat::Point c,float r,float width,Emit emit) {
+ constexpr int steps=48; constexpr float tau=6.283185307179586f;
+ const float inner=std::max(0.f,r-width);
+ for(int i=0;i<steps;++i) {
+  const float a=tau*i/steps,b=tau*(i+1)/steps;
+  china_hat::Point o1{c.x+std::cos(a)*r,c.y,c.z+std::sin(a)*r};
+  china_hat::Point o2{c.x+std::cos(b)*r,c.y,c.z+std::sin(b)*r};
+  china_hat::Point i1{c.x+std::cos(a)*inner,c.y,c.z+std::sin(a)*inner};
+  china_hat::Point i2{c.x+std::cos(b)*inner,c.y,c.z+std::sin(b)*inner};
+  emit(o1);emit(i1);emit(o2); emit(o2);emit(i1);emit(i2);
+  emit(o2);emit(i1);emit(o1); emit(i2);emit(i1);emit(o2);
+ }
+}
+}
+================================================================================
+КОНЕЦ ФАЙЛА: repair/src/visual_jump.h
+================================================================================
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/visual_jump.cpp
+================================================================================
+#include "../src/visual_jump.h"
+#include <cassert>
+#include <cmath>
+#include <limits>
+int main() {
+ using namespace visual_jump;
+ History h; china_hat::Point p{1,64,2};
+ h.update(1,p,100,1000); h.update(1,p,220,1000);
+ p.x=1.2f; p.y+=.04f; h.update(1,p,240,1000); assert(h.size()==0);
+ p.y+=.06f; h.update(1,p,260,1000); assert(h.size()==1);
+ assert(std::fabs(h[0].center.y-64.f)<.001f && h[0].center.x==1.f);
+ p.y+=.4f; h.update(1,p,300,1000); assert(h.size()==1);
+ p.y=64; h.update(1,p,400,1000); h.update(1,p,520,1000);
+ p.y=64.12f; h.update(1,p,540,1000); assert(h.size()==2);
+ h.expire(1260,1000); assert(h.size()==1); h.expire(1540,1000); assert(h.size()==0);
+ h.update(2,p,1550,1000); assert(h.size()==0);
+ p.y=std::numeric_limits<float>::quiet_NaN(); h.update(2,p,1600,1000); assert(h.size()==0);
+ p={0,64,0}; h.update(1,p,100,1000); h.update(1,p,220,1000); p.x=30; p.y=70; h.update(1,p,240,1000); assert(h.size()==0);
+ assert(progress(50,100,1000)==1.f && progress(100,100,0)==1.f);
+ assert(std::fabs(radius(0,1.4f)-.2f)<.0001f && std::fabs(radius(1,1.4f)-1.4f)<.0001f);
+ assert(alpha(0)==1.f && alpha(1)==0.f);
+ int vertices=0; ring({0,0,0},1,.075f,[&](china_hat::Point v){ assert(std::isfinite(v.x) && v.y==0 && std::isfinite(v.z)); ++vertices; }); assert(vertices==48*12);
+}
+================================================================================
+КОНЕЦ ФАЙЛА: repair/tests/visual_jump.cpp
+================================================================================
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/check_visual_jump.py
+================================================================================
+from pathlib import Path
+r=Path(__file__).resolve().parents[1]
+n=(r/'src/china_hat_native.cpp').read_text(); u=(r/'src/compat.cpp').read_text()
+assert 'jumpEnabled{false}' in n
+assert '|| jumpEnabled.load(std::memory_order_acquire)' in n
+assert n.count('renderJump(local);')==2
+assert 'visual_jump::ring(' in n and 'submitVisual(t,opacity)' in n
+assert 'jumpGeneration.fetch_add' in n and 'jumps.clear()' in n
+assert 'localPlayer(actor)' in n and 'actor!=player.entity' in n
+assert 'Jump rings (test)' in u and 'drawJumpSettings()' in u and 'SetJumpEnabled(false)' in u
+print('Jump ring wiring OK; requires Windows/Minecraft verification')
+================================================================================
+КОНЕЦ ФАЙЛА: repair/tests/check_visual_jump.py
 ================================================================================
