@@ -10,6 +10,7 @@
 #include "visual_trail.h"
 #include "china_hat_player.h"
 #include "visual_hooks.h"
+#include "visual_color.h"
 #include <bcrypt.h>
 #include <atomic>
 #include <cstdint>
@@ -31,7 +32,7 @@ constexpr std::uint32_t playerRva=0x581910, screenRva=0x3528c0, clientTickRva=0x
 constexpr std::uint32_t originRva=0x19436e8, tessRva=0x1925550, contextRva=0x1913b40,
  shaderColorRva=0x192ae08, shaderFlagRva=0x192ae18;
 std::atomic<bool> available{false}, enabled{false};
-std::atomic<bool> trailEnabled{false};
+std::atomic<bool> trailEnabled{false}, materialTint{false};
 std::atomic<float> heightOffset{0.0f};
 std::atomic<unsigned> trailGeneration{0};
 thread_local visual_trail::History trail;
@@ -204,8 +205,8 @@ std::intptr_t playerHook(void* self,void* entity,void* pos,void* extra,float par
  return result;
 }
 // Keep the previously user-verified wireframe draw path isolated from the
-// experimental trail. In particular do not change depth, tint, topology or
-// tessellator sequencing for the hat when the trail is disabled.
+// experimental trail. Preserve the tested depth, topology and draw sequence.
+// The separate opt-in material tint may be ignored by the game's material.
 void renderHat(const PlayerFrame& player) {
  if (!enabled.load(std::memory_order_acquire)) return;
  if (!player.valid || GetTickCount64()-player.at>250) { hatStatus.store(0,std::memory_order_relaxed); return; }
@@ -224,7 +225,8 @@ void renderHat(const PlayerFrame& player) {
  if (std::fabs(head.x)>16 || std::fabs(head.y)>16 || std::fabs(head.z)>16) return;
  china_hat::Mesh mesh{};
  if (!china_hat::build(mesh,head,.58f,.34f,48,static_cast<float>(GetTickCount64()%8000)/8000.0f,255)) return;
- float white[4]={1,1,1,1}; std::memcpy(reinterpret_cast<void*>(color),white,sizeof(white)); *reinterpret_cast<std::uint8_t*>(flag)=1;
+ auto tint=visual_color::material(materialTint.load(std::memory_order_acquire),visual_color::Effect::Hat);
+ std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
  auto* t=reinterpret_cast<void*>(tess);
  // The documented 1.1.5 renderer uses topology 4 for line segments. The first
  // experimental version is a wireframe hat, not a filled/textured cone.
@@ -273,7 +275,8 @@ void renderTrail(const PlayerFrame& player) {
   if (i && valid[i] && valid[i-1]) ++segments;
  }
  if (!segments) return;
- float white[4]={1,1,1,1}; std::memcpy(reinterpret_cast<void*>(color),white,sizeof(white)); *reinterpret_cast<std::uint8_t*>(flag)=1;
+ auto tint=visual_color::material(materialTint.load(std::memory_order_acquire),visual_color::Effect::Trail);
+ std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
  auto* t=reinterpret_cast<void*>(tess);
  tessBegin(t,4,segments*2);
  auto vertex=[&](const china_hat::Vertex& v) { tessColor(t,v.color.r,v.color.g,v.color.b,v.color.a); tessVertex(t,v.position.x,v.position.y,v.position.z); };
@@ -346,6 +349,8 @@ void SetChinaHatEnabled(bool value) {
  hatStatus.store(0,std::memory_order_relaxed);
  if (enableVisual()) enabled.store(true,std::memory_order_release);
 }
+bool VisualTintEnabled() { return materialTint.load(std::memory_order_acquire); }
+void SetVisualTintEnabled(bool value) { materialTint.store(value,std::memory_order_release); }
 bool TrailEnabled() { return trailEnabled.load(std::memory_order_acquire); }
 void SetTrailEnabled(bool value) {
  if (!value) { trailEnabled.store(false,std::memory_order_release); trailGeneration.fetch_add(1,std::memory_order_acq_rel); trailStatus.store(0,std::memory_order_relaxed); return; }

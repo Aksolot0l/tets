@@ -41,6 +41,12 @@ bounded, short-lived line based on world positions. `submitted` in the menu
 means the code called the game renderer; it does not prove visible output.
 Del disables both features and the overlay; the adapter remains loaded until
 exit. Hooks are installed only after one of these features is enabled.
+The user confirmed that the local-player identification, hat, and simple
+trail work, but they appear white. `Color tint (test)` is a separate opt-in
+material-uniform experiment (green hat, cyan trail); the previous white uniform
+is used unchanged when off, and the saved shader color/flag are restored.
+The game material might ignore this uniform, so color output is unverified.
+No new depth state, filled geometry or trail geometry has been introduced.
 
 `DIAG_RENDER.ps1` is optional, read-only research. It prints the game EXE hash
 (if Windows permits access), PE timestamp/size, and 16 machine-code bytes from

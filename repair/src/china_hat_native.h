@@ -12,6 +12,8 @@ bool ChinaHatEnabled();
 void SetChinaHatEnabled(bool enabled);
 
 // Visuals are independent switches and use the same validated game hooks.
+bool VisualTintEnabled();
+void SetVisualTintEnabled(bool enabled);
 bool TrailEnabled();
 void SetTrailEnabled(bool enabled);
 float ChinaHatHeight();

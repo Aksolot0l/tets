@@ -29,7 +29,11 @@ assert 'OMSetDepthStencilState' not in n and 'tessBegin(t,2,' not in n
 assert 'trailGeneration' in n and 'trail.clear()' in n
 assert 'tessBegin(t,4,segments*2)' in n
 hat=n[n.index('void renderHat('):n.index('void renderTrail(')]
-assert 'float white[4]={1,1,1,1}' in hat
+assert 'visual_color::material(materialTint.load' in hat and 'visual_color::Effect::Hat' in hat
+assert 'Color tint (test)' in u and 'materialTint{false}' in n
+trail=n[n.index('void renderTrail('):n.index('void screenHook(')]
+assert 'visual_color::Effect::Trail' in trail
+assert 'saved,sizeof(saved)' in hat and 'saved,sizeof(saved)' in trail
 assert 'constexpr int segments=48, spokes=12' in hat
 assert 'tessBegin(t,4,2*(segments+spokes))' in hat and 'china_hat::emitWireframe' in hat
 assert hat.index('tessDraw(') < hat.index('tessEnd(')

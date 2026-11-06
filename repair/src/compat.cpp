@@ -255,6 +255,8 @@ static void patchedDrawGui(void* runtime) {
                 const int status=ChinaHatStatus();
                 realText(status==1 ? "Hat: submitted" : status==2 ? "Hat: renderer not ready" : "Hat: waiting for player",nullptr);
             }
+            bool tint=VisualTintEnabled();
+            if (guiCheckbox("Color tint (test)", &tint)) SetVisualTintEnabled(tint);
             bool trail=TrailEnabled();
             if (guiCheckbox("Trail (test)", &trail)) SetTrailEnabled(trail);
             if (trail && TrailEnabled()) {
