@@ -209,3 +209,46 @@ shaderColor/flag globals + guarded submitVisual draw in the world entity pass
 This remains unverified in game: occlusion-verified pixels prove visibility,
 not orientation, grip or colour fidelity. One final user check in both views
 is still required before calling the replacement working.
+
+Iteration, 2026-11-07 (offline analysis + one user report; no new runtime
+proof beyond the reported flags). First in-game test of the rebuilt adapter
+(DLL 256b6fb8, world-pass design): first person shows F:1 V:1 C:1 with
+R X D O P all zero; third person all zeros. F and V prove the held-item hook
+matched the local player's diamond sword and the cached 0x59f200 call fired;
+C proves the cached call was recognised. R:0 means no rotation source ever
+produced a validated reading, so nothing was drawn and nothing was suppressed
+(the vanilla sword stayed visible, as designed).
+
+Re-verification of the published table for this exact build (commit 747541c)
+against the implemented chains, using its XML offset lists (CE lists hops in
+reverse order; the final field offset comes first):
+- XVel/YVel/ZVel: [[[exe+1921DF8]+18]+60]+AC/+B0/+B4 - the player sits
+  behind the SAME +0x60 slot this adapter already proves on the
+  tick-observed ClientInstance, and the velocity offsets match the adapter's
+  proven player layout. This confirms the chain decoding.
+- XRotation: [[[exe+1921DF8]+18]+58]+B8; YRotation:
+  [[[exe+1921888]+10]+58]+BC - implemented verbatim as sources A/B.
+- The table's JetPack Lua applies math.sin/math.cos directly to XRotation and
+  YRotation, proving RADIANS, pitch positive = up, and horizontal look
+  direction (-sin(yaw), -cos(yaw)) - exactly the katana_pose formulas.
+- The table is silent about yaw wrapping (its math is periodic), so the old
+  +-3.35 radian bound was an assumption: an unwrapped yaw (accumulating past
+  pi while turning) would fail validation forever.
+
+Changes in DLL d69f8843, all still read-only and validated:
+- New rotation source P: the player object itself (ClientInstance+0x60,
+  double-read like hat_player), angles at +0xB8/+0xBC - the table's velocity
+  block ends exactly where these offsets begin. Does not depend on the
+  published globals, which may be dead in a singleplayer world (the table is
+  a multiplayer cheat).
+- Any finite yaw (|v|<=100000) is accepted and wrapped into [-pi,pi]; pitch
+  stays strictly bounded (it cannot wrap physically). Wrapped flag reported.
+- Source H: the +0x58 hop from the tick-observed ClientInstance (the chains
+  suggest their intermediate is this instance; if not, H simply stays dead).
+- Live diagnostics in the menu: Rot P/A/B/H + yaw/pitch, the raw pointer
+  trail (CI/PL/H58/iA/iB), raw angle slots on every candidate plus Head+
+  (+0x160), and third-person identity counters (cached calls inside/outside
+  the local player pass, their +0x90 texture, the learned fingerprint).
+  The third-person all-zero report is consistent with the cached-branch
+  fingerprint not matching yet; the counters will show whether the calls
+  happen in scope and what texture they carry.

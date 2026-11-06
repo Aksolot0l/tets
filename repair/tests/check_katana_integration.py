@@ -43,6 +43,15 @@ assert 'local!=reinterpret_cast<std::uintptr_t>(actor)' in n
 assert 'readRotation(base,clientInstance.load' in n
 assert 'chainGlobalA=0x1921DF8' in rotation and 'chainGlobalB=0x1921888' in rotation
 assert 'yawOffset=0xB8' in rotation and 'pitchOffset=0xBC' in rotation
+# The adapter-proven player slot is a rotation source that works without the
+# published globals, unwrapped yaws are normalised, and the raw trail is
+# exposed for diagnostics.
+assert 'playerSlot=0x60' in rotation and 'rotationSlot=0x58' in rotation
+assert 'wrapYaw' in rotation and 'maxUnwrappedYaw' in rotation
+assert 'struct Diagnostics' in rotation and 'void snapshot(' in rotation
+assert 'KatanaDebugSnapshot' in n and 'KatanaDebugSnapshot' in open(r/'src/china_hat_native.h').read()
+assert 'drawKatanaDiagnostics();' in ui
+assert 'katanaTpCallsInPass' in n and 'katanaTpLastTexture' in n
 assert 'katanaYawVotes.sample' in n and 'YawSignVote' in rotation
 assert 'horizontalForward' in pose and 'gripPivot' in pose
 

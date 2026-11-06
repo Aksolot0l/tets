@@ -65,6 +65,11 @@ std::atomic<ULONGLONG> lastFpSwordSeen{0}, lastTpSwordSeen{0};
 // Texture fingerprint learned from a first-person verified diamond sword draw;
 // used to recognise the same item on the third-person cached path.
 std::atomic<std::uintptr_t> katanaSwordTexture{0};
+// Third-person identity diagnostics: how many cached item draws happened
+// inside/outside the local player's renderer scope, and the item-context
+// texture they carried. Display only; nothing renders from these.
+std::atomic<int> katanaTpCallsInPass{0}, katanaTpCallsOutOfPass{0};
+std::atomic<std::uintptr_t> katanaTpLastTexture{0};
 std::atomic<int> katanaYawSign{1};
 std::atomic<int> katanaHookState{0}, katanaHookFailure{8};
 using HeldRender=std::uintptr_t (*)(void*,void*,void*,std::uintptr_t,float,std::uint8_t,std::uint8_t);
@@ -842,6 +847,10 @@ std::uintptr_t heldDrawHook(void* renderer,void* context,std::uint8_t mode) {
  // or by the texture fingerprint learned from a verified first-person draw.
  bool thirdCall=false;
  if (rva==0x56cd8e && katanaLocalPlayerPass) {
+  katanaTpCallsInPass.fetch_add(1,std::memory_order_relaxed);
+  std::uintptr_t seenTexture=0;
+  if (fetch(reinterpret_cast<std::uintptr_t>(context)+0x90,seenTexture))
+   katanaTpLastTexture.store(seenTexture,std::memory_order_relaxed);
   thirdCall=katanaThirdSwordSeen;
   if (!thirdCall) {
    const auto texture=katanaSwordTexture.load(std::memory_order_relaxed);
@@ -853,6 +862,10 @@ std::uintptr_t heldDrawHook(void* renderer,void* context,std::uint8_t mode) {
    lastTpSwordSeen.store(GetTickCount64(),std::memory_order_relaxed);
    katanaEvents.fetch_or(katana_evidence::thirdCached,std::memory_order_relaxed);
   }
+ } else if (rva==0x56cd8e) {
+  // The same call site outside the local player's scope: other actors, or a
+  // scope the observer missed. Counted for diagnostics only.
+  katanaTpCallsOutOfPass.fetch_add(1,std::memory_order_relaxed);
  }
  if (!firstCall && !thirdCall)
   return originalHeldDraw(renderer,context,mode);
@@ -1133,6 +1146,35 @@ bool enableVisual() {
 }
 bool KatanaEnabled() { return katanaEnabled.load(std::memory_order_acquire); }
 std::uint32_t KatanaEvidence() { return katanaEvents.load(std::memory_order_relaxed); }
+// One read-only diagnostics snapshot for the katana menu page: the live
+// rotation reading plus the raw pointer/angle trail and the third-person
+// identity counters. Computed on demand; nothing here renders or hooks.
+KatanaDiagnostics KatanaDebugSnapshot() {
+ KatanaDiagnostics d{};
+ const auto instance=clientInstance.load(std::memory_order_acquire);
+ auto memory=[](std::uintptr_t address,void* out,std::size_t n) { return read(address,out,n); };
+ katana_rotation::Diagnostics raw;
+ katana_rotation::snapshot(base,instance,memory,raw);
+ katana_rotation::Reading r;
+ d.valid=katana_rotation::readRotation(base,instance,memory,r);
+ d.yaw=r.yaw; d.pitchUp=r.pitchUp; d.sources=r.sources; d.agree=r.agree; d.wrapped=r.wrapped;
+ d.clientInstance=raw.clientInstance; d.player=raw.player; d.rotationHolder=raw.rotationHolder;
+ d.rootA=raw.rootA; d.interA=raw.interA; d.holderA=raw.holderA;
+ d.rootB=raw.rootB; d.interB=raw.interB; d.holderB=raw.holderB;
+ for (int i=0;i<2;++i) {
+  d.playerAngles[i]=raw.playerAngles[i]; d.holderAngles[i]=raw.holderAngles[i];
+  d.holderAAngles[i]=raw.holderAAngles[i]; d.holderBAngles[i]=raw.holderBAngles[i];
+ }
+ d.playerHead=raw.playerHead;
+ d.playerAnglesRead=raw.playerAnglesRead; d.holderAnglesRead=raw.holderAnglesRead;
+ d.holderAAnglesRead=raw.holderAAnglesRead; d.holderBAnglesRead=raw.holderBAnglesRead;
+ d.playerHeadRead=raw.playerHeadRead;
+ d.tpCallsInPass=katanaTpCallsInPass.load(std::memory_order_relaxed);
+ d.tpCallsOutOfPass=katanaTpCallsOutOfPass.load(std::memory_order_relaxed);
+ d.tpLastTexture=katanaTpLastTexture.load(std::memory_order_relaxed);
+ d.learnedTexture=katanaSwordTexture.load(std::memory_order_relaxed);
+ return d;
+}
 int KatanaStatus() {
  const int status=katanaStatus.load(std::memory_order_relaxed);
  const auto now=GetTickCount64(), then=lastKatanaSubmit.load(std::memory_order_relaxed);

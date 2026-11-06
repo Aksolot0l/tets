@@ -402,6 +402,36 @@ static void drawAccessorySettings() {
         realText(status==1 ? "Crown: submitted" : status==2 ? "Crown: renderer not ready" : "Crown: waiting for player",nullptr);
     }
 }
+// Read-only diagnostics for the katana test: which rotation source works, the
+// raw pointer trail behind the published chains, and the third-person
+// identity counters. One screenshot of these lines is enough to explain a
+// dead chain without another guess build.
+static void drawKatanaDiagnostics() {
+    const auto d=KatanaDebugSnapshot();
+    auto pair=[](bool ok,const float* v,char* out,std::size_t n) {
+        if (ok) std::snprintf(out,n,"%+.1f/%+.1f",v[0],v[1]);
+        else std::snprintf(out,n,"--");
+    };
+    char a[32],b[32],c[32],e[32];
+    pair(d.playerAnglesRead,d.playerAngles,a,sizeof(a));
+    pair(d.holderAnglesRead,d.holderAngles,b,sizeof(b));
+    pair(d.holderAAnglesRead,d.holderAAngles,c,sizeof(c));
+    pair(d.holderBAnglesRead,d.holderBAngles,e,sizeof(e));
+    char line[192]{};
+    std::snprintf(line,sizeof(line),"Rot P:%u A:%u B:%u H:%u%s yaw:%+.2f pitch:%+.2f%s",
+        unsigned(!!(d.sources&1u)),unsigned(!!(d.sources&2u)),unsigned(!!(d.sources&4u)),unsigned(!!(d.sources&8u)),
+        d.wrapped?" (wrapped)":"",d.yaw,d.pitchUp,d.valid?"":" (none)");
+    realText(line,nullptr);
+    std::snprintf(line,sizeof(line),"CI:%llX PL:%llX H58:%llX iA:%llX iB:%llX",
+        d.clientInstance,d.player,d.rotationHolder,d.interA,d.interB);
+    realText(line,nullptr);
+    std::snprintf(line,sizeof(line),"Ang PL:%s H58:%s A:%s B:%s Head+:%s",
+        a,b,c,e,d.playerHeadRead?"yes":"--");
+    realText(line,nullptr);
+    std::snprintf(line,sizeof(line),"TP in:%d out:%d tex:%llX learned:%llX",
+        d.tpCallsInPass,d.tpCallsOutOfPass,d.tpLastTexture,d.learnedTexture);
+    realText(line,nullptr);
+}
 static void drawKatanaSettings() {
     bool enabled=KatanaEnabled();
     if (guiCheckbox("Diamond sword: katana (test)",&enabled)) SetKatanaEnabled(enabled);
@@ -429,6 +459,7 @@ static void drawKatanaSettings() {
         std::snprintf(line,sizeof(line),"F:%u V:%u S:%u C:%u",unsigned(!!(e&1)),unsigned(!!(e&2)),unsigned(!!(e&16)),unsigned(!!(e&32))|unsigned(!!(e&64))); realText(line,nullptr);
         std::snprintf(line,sizeof(line),"R:%u X:%u D:%u O:%u P:%u",unsigned(!!(e&256)),unsigned(!!(e&512)),unsigned(!!(e&128)),unsigned(!!(e&2048)),unsigned(!!(e&4096))|unsigned(!!(e&8192))); realText(line,nullptr);
         realText("O=verified pixels; P=original suppressed",nullptr);
+        drawKatanaDiagnostics();
     }
 }
 static const char* depthCompareLabel(int value) {
@@ -618,6 +649,7 @@ static void drawVisualPanel() {
                 std::snprintf(line,sizeof(line),"Seen F:%u V:%u S:%u C:%u",unsigned(!!(e&1)),unsigned(!!(e&2)),unsigned(!!(e&16)),unsigned(!!(e&32))|unsigned(!!(e&64))); realText(line,nullptr);
                 std::snprintf(line,sizeof(line),"R:%u X:%u D:%u O:%u P:%u",unsigned(!!(e&256)),unsigned(!!(e&512)),unsigned(!!(e&128)),unsigned(!!(e&2048)),unsigned(!!(e&4096))|unsigned(!!(e&8192))); realText(line,nullptr);
                 realText("O=verified pixels; P=original suppressed",nullptr);
+                drawKatanaDiagnostics();
             } else {
                 const int ks=KatanaStatus();
                 if (ks>=3) realText(ks==3?"Katana: game hooks unavailable":ks==4?"Katana: GPU hooks unavailable":
