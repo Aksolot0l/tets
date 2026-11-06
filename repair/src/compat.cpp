@@ -16,6 +16,8 @@
 #include "wheel_bridge.h"
 #include "wheel_counter.h"
 #include "coordinates_115.h"
+#include "mouse_diagnostic_patch.h"
+#include "disable_hotkey.h"
 #include <atomic>
 #include <array>
 #include <cstring>
@@ -69,6 +71,9 @@ static AddWheelFn addWheel = nullptr;
 static WatchedKeysFn realWatchedKeys = nullptr;
 static KeyDownFn keyDown = nullptr;
 static bool pageKeysReady = false;
+static BridgeActiveFn bridgeActive = nullptr;
+static std::atomic<bool> overlayDisabled{false};
+static DisableHotkey disableHotkey;
 static PageScrollRepeat pageScroll;
 static TextFn realText = nullptr;
 static DrawGuiFn realDrawGui = nullptr;
@@ -93,6 +98,44 @@ static void log(const char* text) { OutputDebugStringA("GAYClient repair: "); Ou
 
 template<typename T> static T symbol(const char* name) { return reinterpret_cast<T>(GetProcAddress(core, name)); }
 template<class T> static void release(T*& p) { if (p) { p->Release(); p = nullptr; } }
+
+// Runs before our Present/ImGui detours are enabled, so no thread can be
+// executing drawMarker through this adapter during the code change.
+static bool suppressMouseDiagnostic() {
+    auto* image = reinterpret_cast<unsigned char*>(core);
+    IMAGE_DOS_HEADER dos{}; IMAGE_NT_HEADERS64 nt{};
+    SIZE_T count = 0;
+    if (!ReadProcessMemory(GetCurrentProcess(), image, &dos, sizeof(dos), &count) || count != sizeof(dos) ||
+        dos.e_magic != IMAGE_DOS_SIGNATURE || dos.e_lfanew <= 0 || dos.e_lfanew > 0x10000 ||
+        !ReadProcessMemory(GetCurrentProcess(), image + dos.e_lfanew, &nt, sizeof(nt), &count) || count != sizeof(nt) ||
+        nt.Signature != IMAGE_NT_SIGNATURE || nt.FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64 ||
+        nt.OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC || nt.OptionalHeader.SizeOfImage != 0x2af000 ||
+        reinterpret_cast<unsigned char*>(legacyPresent) != image + 0x1bf0 ||
+        !mouse_diagnostic_patch::matches(image, nt.OptionalHeader.SizeOfImage)) return false;
+    auto* branch = image + mouse_diagnostic_patch::branchRva;
+    DWORD oldProtect = 0;
+    if (!VirtualProtect(branch, 6, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
+    mouse_diagnostic_patch::apply(image);
+    bool flushed = FlushInstructionCache(GetCurrentProcess(), branch, 6) != 0;
+    if (!flushed) {
+        // No hooks are active yet. Revert if the CPU cache could not be synced.
+        std::memcpy(branch, mouse_diagnostic_patch::code + (mouse_diagnostic_patch::branchRva - mouse_diagnostic_patch::codeRva), 6);
+        FlushInstructionCache(GetCurrentProcess(), branch, 6);
+    }
+    DWORD ignored = 0;
+    if (!VirtualProtect(branch, 6, oldProtect, &ignored)) log("mouse diagnostic page protection restore failed");
+    return flushed;
+}
+
+static bool gameIsForeground() {
+    HWND fg = GetForegroundWindow();
+    if (!fg) return false;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(fg, &pid);
+    if (pid == GetCurrentProcessId()) return true;
+    HWND game = findGameWindow ? findGameWindow(true) : nullptr;
+    return game && (game == fg || IsChild(fg, game) || IsChild(game, fg));
+}
 
 // Receives an anonymous read-only mapping handle duplicated by our launcher.
 // It contains wheel counters only; there is no keyboard or cursor recording.
@@ -175,6 +218,17 @@ static void patchedText(const char* text, const char* textEnd) {
     realText(text, textEnd);
 }
 static void patchedDrawGui(void* runtime) {
+    // The old loop never calls RequestUnload for Delete. This is an explicit
+    // one-way overlay stop, NOT a DLL unload: callbacks and hooks remain pinned.
+    bool down = pageKeysReady && keyDown && keyDown(VK_DELETE);
+    bool editing = getIO && getIO().WantTextInput;
+    if (disableHotkey.update(down, down && gameIsForeground(), editing)) {
+        overlayDisabled.store(true, std::memory_order_release);
+        if (bridgeActive) bridgeActive(false);
+        DisableUwpExtraInput();
+        log("overlay disabled by Delete; DLLs remain loaded until game exit");
+        return;
+    }
     realDrawGui(runtime);
     // Exact legacy build layout, verified against the original binary.
     if (!runtime || !*(reinterpret_cast<unsigned char*>(runtime) + 0x551)) return;
@@ -232,12 +286,13 @@ static void patchedUpdate(void* input, const void* settings, bool targetFocused,
     realUpdate(input, settings, targetFocused, appFocused);
 }
 
-// Request only two additional keys from the existing UWP polling bridge.
+// Request the scroll and stop keys from the existing UWP polling bridge.
 // No key or wheel activity is stored on disk.
 static void patchedWatchedKeys(const std::array<bool, 256>& requested) {
     auto keys = requested;
     keys[VK_PRIOR] = true;
     keys[VK_NEXT] = true;
+    keys[VK_DELETE] = true;
     realWatchedKeys(keys);
 }
 
@@ -266,7 +321,7 @@ static bool patchedPointer(float& x, float& y, float& w, float& h) {
 // Attach the wheel listener and sample CoreWindow bounds on that same thread.
 static HRESULT patchedTick(void* instance) {
     HRESULT result = realTick(instance);
-    SampleUwpInput();
+    if (!overlayDisabled.load(std::memory_order_acquire)) SampleUwpInput();
     return result;
 }
 
@@ -278,7 +333,7 @@ static void patchedSettingsCtor(ag::Settings* settings) {
 }
 
 static void draw(IDXGISwapChain* chain, UINT flags) {
-    if (!chain || (flags & DXGI_PRESENT_TEST)) return;
+    if (overlayDisabled.load(std::memory_order_acquire) || !chain || (flags & DXGI_PRESENT_TEST)) return;
     ID3D11Device* device = nullptr;
     ID3D11DeviceContext* context = nullptr;
     ID3D11Texture2D* back = nullptr;
@@ -365,7 +420,7 @@ static DWORD WINAPI bootstrap(void*) {
     auto mhApply = symbol<InitFn>("MH_ApplyQueued");
     auto mhDisable = symbol<ToggleFn>("MH_DisableHook");
     auto bridgeInit = symbol<BridgeInitFn>("_ZN2ag19InitializeUwpBridgeEv");
-    auto bridgeActive = symbol<BridgeActiveFn>("_ZN2ag17SetUwpInputActiveEb");
+    bridgeActive = symbol<BridgeActiveFn>("_ZN2ag17SetUwpInputActiveEb");
     void* newFrameTarget = reinterpret_cast<void*>(GetProcAddress(core, "_Z23ImGui_ImplDX11_NewFramev"));
     void* updateTarget = reinterpret_cast<void*>(GetProcAddress(core, "_ZN2ag10InputState6UpdateERKNS_8SettingsEbb"));
     void* pointerTarget = reinterpret_cast<void*>(GetProcAddress(core, "_ZN2ag10UwpPointerERfS0_S0_S0_"));
@@ -392,6 +447,7 @@ static DWORD WINAPI bootstrap(void*) {
     rendererInit = symbol<RendererInitFn>("_Z19ImGui_ImplDX11_InitP12ID3D11DeviceP19ID3D11DeviceContext");
     getIO = symbol<GetIOFn>("_ZN5ImGui5GetIOEv");
     if (!mhInit || !mhCreate || !mhQueueEnable || !mhApply || !mhDisable || !bridgeInit || !bridgeActive || !newFrameTarget || !updateTarget || !pointerTarget || !settingsTarget || !findGameWindow || !addFont || !addWheel || !legacyPresent || !rendererInit || !getIO) { log("legacy DLL exports do not match expected version"); return 1; }
+    log(suppressMouseDiagnostic() ? "mouse diagnostic suppressed" : "mouse diagnostic patch skipped: core mismatch or protection failure");
     void* present = nullptr; void* present1 = nullptr;
     if (!findSwapChainMethods(present, present1)) return 1;
     if (mhInit() != 0) { log("MinHook initialization failed"); return 1; }

@@ -6,3 +6,6 @@ void SampleUwpInput();
 bool GetSampledUwpPointer(float& x, float& y, float& w, float& h);
 // Takes accumulated wheel deltas in Windows WHEEL_DELTA units.
 void TakeUwpWheel(int& horizontal, int& vertical);
+
+// Stops sampling and ignores wheel events; handler stays registered until process exit.
+void DisableUwpExtraInput();

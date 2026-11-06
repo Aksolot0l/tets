@@ -79,6 +79,7 @@ UwpPoint pointer{};
 UwpRect bounds{};
 bool haveSample = false;
 std::atomic<int> wheelX{0}, wheelY{0};
+std::atomic<bool> inputEnabled{true};
 bool attached = false;
 ULONGLONG nextAttempt = 0;
 
@@ -97,7 +98,7 @@ public:
     ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
     ULONG STDMETHODCALLTYPE Release() override { ULONG count = --refs; if (!count) delete this; return count; }
     HRESULT STDMETHODCALLTYPE Invoke(IInspectable*, IInspectable* arg) override {
-        if (!arg) return S_OK;
+        if (!arg || !inputEnabled.load(std::memory_order_acquire)) return S_OK;
         PointerArgs* args = nullptr; IInspectable* rawPoint = nullptr; PointerPoint* point = nullptr;
         IInspectable* rawProperties = nullptr; PointerProperties* properties = nullptr;
         HRESULT hr = arg->QueryInterface(iidArgs, reinterpret_cast<void**>(&args));
@@ -121,6 +122,7 @@ public:
 }
 
 void SampleUwpInput() {
+    if (!inputEnabled.load(std::memory_order_acquire)) return;
     HSTRING className = nullptr;
     CoreWindowStatics* statics = nullptr;
     CoreWindow* window = nullptr;
@@ -156,6 +158,10 @@ bool GetSampledUwpPointer(float& x, float& y, float& w, float& h) {
                                                    bounds.w, bounds.h, x, y, w, h);
     ReleaseSRWLockShared(&sampleLock);
     return valid;
+}
+void DisableUwpExtraInput() {
+    inputEnabled.store(false, std::memory_order_release);
+    wheelX.store(0, std::memory_order_relaxed); wheelY.store(0, std::memory_order_relaxed);
 }
 void TakeUwpWheel(int& horizontal, int& vertical) {
     horizontal = wheelX.exchange(0, std::memory_order_relaxed);
