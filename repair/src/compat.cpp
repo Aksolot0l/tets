@@ -11,6 +11,7 @@
 #include "imgui.h"
 #include "settings.h"
 #include "hud_module_list.h"
+#include "hud_theme.h"
 #include "pointer_mapping.h"
 #include "uwp_extra.h"
 #include "page_scroll.h"
@@ -80,6 +81,7 @@ using DrawRectFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,ImU32,float,
 using DrawGradientRectFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,ImU32,ImU32,ImU32,ImU32);
 using PushVarFloatFn = void (*)(int,float);
 using PopVarFn = void (*)(int);
+using SameLineFn = void (*)(float,float);
 
 static HMODULE selfModule = nullptr;
 static HMODULE core = nullptr;
@@ -106,7 +108,7 @@ static PageScrollRepeat pageScroll;
 static TextFn realText = nullptr;
 static DrawGuiFn realDrawGui = nullptr;
 static SetModuleFn setModule = nullptr;
-static BeginFn guiBegin = nullptr;
+static BeginFn guiBegin = nullptr, realGuiBegin = nullptr;
 static EndFn guiEnd = nullptr;
 static CheckboxFn guiCheckbox = nullptr;
 static SliderFloatFn guiSliderFloat = nullptr;
@@ -134,6 +136,10 @@ static DrawRectFn drawRect = nullptr;
 static DrawGradientRectFn drawGradientRect = nullptr;
 static PushVarFloatFn guiPushVarFloat = nullptr;
 static PopVarFn guiPopVar = nullptr;
+static SameLineFn guiSameLine = nullptr;
+static std::atomic<bool> hudThemeReady{false};
+static thread_local bool insideLegacyHud = false;
+static thread_local float legacyOpacity = 1.f;
 enum class VisualEditor { None, Hat, Trail, Options };
 static std::atomic<VisualEditor> visualEditor{VisualEditor::None};
 static std::atomic<bool> hudHooksReady{false}, notificationHookReady{false};
@@ -141,6 +147,7 @@ static bool hudEditorOpen = false, moduleHudEnabled = false;
 static std::atomic<bool> hudEditorActive{false};
 // New Module List HUD settings are per-session; they do not overwrite profiles.
 static float hudScale = 1.f, hudOpacity = .78f, hudX = .78f, hudY = .05f;
+static float widgetOpacity = .72f;
 static float hudColor[3] = {.35f,.85f,1.f};
 static std::atomic<const WheelBridge*> externalWheel{nullptr};
 static SRWLOCK externalWheelLock = SRWLOCK_INIT;
@@ -541,46 +548,96 @@ static void drawVisualEditor() {
     if (visualEditor==current && current!=VisualEditor::Options) drawEffectPreview(current);
 }
 
-// Draw exactly the same new Module List card in the editor and during play.
-// Existing legacy HUD widgets are not restyled by these settings.
+// Restyle only actual legacy HUD/notification windows, preserving their real
+// metrics, positions, interaction and layout. Never target the game's UI.
+static bool themedBegin(const char* name,bool* open,int flags) {
+    if (!insideLegacyHud || !hud_theme::card(name) || !guiPushColor || !guiPopColor || !guiPushVarFloat || !guiPopVar)
+        return realGuiBegin(name,open,flags);
+    const auto bg=hud_theme::background(widgetOpacity*legacyOpacity), border=hud_theme::border(widgetOpacity*legacyOpacity);
+    guiPushColor(ImGuiCol_WindowBg,ImVec4(bg.r,bg.g,bg.b,bg.a));
+    guiPushColor(ImGuiCol_Border,ImVec4(border.r,border.g,border.b,border.a));
+    guiPushVarFloat(ImGuiStyleVar_WindowRounding,8.f);
+    guiPushVarFloat(ImGuiStyleVar_WindowBorderSize,1.f);
+    // Keystrokes deliberately used NoBackground: add the same card, leaving
+    // the core's actual key-state drawing intact.
+    if (std::strcmp(name,"##hud_keystrokes")==0) flags &= ~ImGuiWindowFlags_NoBackground;
+    const bool result=realGuiBegin(name,open,flags);
+    guiPopVar(2); guiPopColor(2);
+    return result;
+}
+// Draw the same Module List card in the editor and during play.
 static void drawModuleHud(void* runtime, bool preview) {
     if (!runtime || !guiPushColor || !guiPopColor || !guiFontScale) return;
     auto* s = reinterpret_cast<ag::Settings*>(reinterpret_cast<unsigned char*>(runtime)+0x48);
-    // Position is scaled to a small preview area so X/Y sliders also give
-    // immediate feedback without covering the editor itself.
     const float x = preview ? 390.f+hudX*180.f : hudX*static_cast<float>(frameWidth);
     const float y = preview ? 90.f+hudY*180.f : hudY*static_cast<float>(frameHeight);
     guiSetNextPos(ImVec2(x,y),ImGuiCond_Always,ImVec2(0,0));
-    guiPushColor(ImGuiCol_WindowBg,ImVec4(.045f,.055f,.085f,hudOpacity));
+    const auto bg=hud_theme::background(hudOpacity), border=hud_theme::border(hudOpacity);
+    guiPushColor(ImGuiCol_WindowBg,ImVec4(bg.r,bg.g,bg.b,bg.a));
+    guiPushColor(ImGuiCol_Border,ImVec4(border.r,border.g,border.b,border.a));
     guiPushColor(ImGuiCol_Text,ImVec4(hudColor[0],hudColor[1],hudColor[2],1.f));
+    const bool vars=guiPushVarFloat && guiPopVar;
+    if (vars) { guiPushVarFloat(ImGuiStyleVar_WindowRounding,8.f); guiPushVarFloat(ImGuiStyleVar_WindowBorderSize,1.f); }
     const int flags=ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|
         ImGuiWindowFlags_NoInputs|ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|
         ImGuiWindowFlags_NoFocusOnAppearing;
     if (guiBegin(preview?"##module_hud_preview":"##module_hud",nullptr,flags)) {
         guiFontScale(hudScale);
-        realText("MODULES",nullptr);
-        module_hud::labels(s->enabled,ChinaHatEnabled(),TrailEnabled(),[](const char* label) { realText(label,nullptr); });
+        guiPushColor(ImGuiCol_Text,ImVec4(.53f,.95f,.65f,1.f));
+        realText("MODULES",nullptr); guiPopColor(1);
+        module_hud::labels(s->enabled,ChinaHatEnabled(),TrailEnabled(),[](const char* label) {
+            if (guiSameLine) {
+                guiPushColor(ImGuiCol_Text,ImVec4(.35f,.92f,.51f,1.f)); realText(">",nullptr); guiPopColor(1);
+                guiSameLine(0.f,6.f);
+            }
+            realText(label,nullptr);
+        });
     }
-    guiEnd(); guiPopColor(2);
+    guiEnd(); if (vars) guiPopVar(2); guiPopColor(3);
 }
 static void patchedDrawHud(void* runtime) {
     const bool menu=runtime && *(reinterpret_cast<unsigned char*>(runtime)+0x551);
     const bool editing=module_hud::editing(menu,hudEditorOpen || visualEditor!=VisualEditor::None);
     hudEditorActive.store(editing,std::memory_order_release);
     if (!editing) {
-        realDrawHud(runtime);
+        if (hudThemeReady.load(std::memory_order_acquire) && guiPushColor && guiPopColor) {
+            const auto* settings=runtime ? reinterpret_cast<const ag::Settings*>(reinterpret_cast<const unsigned char*>(runtime)+0x48) : nullptr;
+            const bool previous=insideLegacyHud; const float oldOpacity=legacyOpacity;
+            legacyOpacity=settings ? hud_theme::alpha(settings->opacity) : 1.f;
+            guiPushColor(ImGuiCol_Text,ImVec4(hudColor[0]*(settings ? hud_theme::alpha(settings->text[0]) : 1.f),
+              hudColor[1]*(settings ? hud_theme::alpha(settings->text[1]) : 1.f),
+              hudColor[2]*(settings ? hud_theme::alpha(settings->text[2]) : 1.f),1.f));
+            insideLegacyHud=true; realDrawHud(runtime); insideLegacyHud=previous; legacyOpacity=oldOpacity;
+            guiPopColor(1);
+        } else realDrawHud(runtime);
         if (moduleHudEnabled) drawModuleHud(runtime,false);
     }
 }
 static void patchedNotificationDraw(void* queue, const ag::Settings& s) {
-    if (!hudEditorActive.load(std::memory_order_acquire)) realNotificationDraw(queue,s);
+    if (hudEditorActive.load(std::memory_order_acquire)) return;
+    if (hudThemeReady.load(std::memory_order_acquire) && guiPushColor && guiPopColor) {
+        guiPushColor(ImGuiCol_Text,ImVec4(hudColor[0]*hud_theme::alpha(s.text[0]),hudColor[1]*hud_theme::alpha(s.text[1]),hudColor[2]*hud_theme::alpha(s.text[2]),1.f));
+        const bool previous=insideLegacyHud; const float oldOpacity=legacyOpacity;
+        insideLegacyHud=true; legacyOpacity=hud_theme::alpha(s.opacity);
+        realNotificationDraw(queue,s);
+        insideLegacyHud=previous; legacyOpacity=oldOpacity; guiPopColor(1);
+    } else realNotificationDraw(queue,s);
 }
 static void drawHudEditor(void* runtime) {
     guiSetNextPos(ImVec2(18.f,90.f),ImGuiCond_Always,ImVec2(0,0));
-    if (guiSetNextSize) guiSetNextSize(ImVec2(350.f,350.f),ImGuiCond_FirstUseEver);
+    if (guiSetNextSize) guiSetNextSize(ImVec2(350.f,480.f),ImGuiCond_FirstUseEver);
+    pushVisualStyle();
     if (guiBegin("HUD editor",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
-        guiCheckbox("Open editor",&hudEditorOpen);
-        guiCheckbox("Module List HUD",&moduleHudEnabled);
+        if (guiButton && guiButton("Back to menu",ImVec2(-1.f,0.f))) hudEditorOpen=false;
+        realText("WIDGETS",nullptr);
+        if (runtime && setModule) {
+            auto* settings=reinterpret_cast<ag::Settings*>(reinterpret_cast<unsigned char*>(runtime)+0x48);
+            for (const auto& entry:module_hud::entries) {
+                bool enabled=settings->IsEnabled(entry.id);
+                if (guiCheckbox(entry.name,&enabled)) setModule(runtime,entry.id,enabled);
+            }
+        }
+        realText("STYLE",nullptr);
         auto slider=[](const char* label,float* value,float low,float high) {
             if (!guiSliderFloat) return;
             controlLabel(label); char id[128]{}; std::snprintf(id,sizeof(id),"##hud_%s",label);
@@ -588,24 +645,28 @@ static void drawHudEditor(void* runtime) {
             guiSliderFloat(id,value,low,high,"%.2f",0);
             if (guiPushWidth && guiPopWidth) guiPopWidth();
         };
-        slider("Scale",&hudScale,.7f,1.6f);
-        slider("Background opacity",&hudOpacity,0.f,1.f);
-        slider("Position X",&hudX,0.f,.9f);
-        slider("Position Y",&hudY,0.f,.9f);
-        if (guiColorEdit3) { realText("Text color",nullptr); if (guiPushWidth && guiPopWidth) guiPushWidth(-1.f);
+        if (hudThemeReady.load(std::memory_order_acquire)) slider("Widget background opacity",&widgetOpacity,0.f,1.f);
+        else realText("Widget theme unavailable; original widgets retained.",nullptr);
+        if (guiColorEdit3) { realText("HUD text color",nullptr); if (guiPushWidth && guiPopWidth) guiPushWidth(-1.f);
             guiColorEdit3("##hud_color",hudColor,0); if (guiPushWidth && guiPopWidth) guiPopWidth(); }
-        realText("Close editor to return.",nullptr);
-        realText("Settings reset after game exit.",nullptr);
+        realText("MODULE LIST",nullptr);
+        realText("Preview on the right",nullptr);
+        guiCheckbox("Module List HUD",&moduleHudEnabled);
+        slider("Module list scale",&hudScale,.7f,1.6f);
+        slider("Module list opacity",&hudOpacity,0.f,1.f);
+        slider("Module list X",&hudX,0.f,.9f);
+        slider("Module list Y",&hudY,0.f,.9f);
+        realText("Style resets after game exit.",nullptr);
         if (!notificationHookReady) realText("Notifications may remain visible.",nullptr);
     }
-    guiEnd();
+    guiEnd(); popVisualStyle();
     if (hudEditorOpen) drawModuleHud(runtime,true);
 }
 static void drawHudEntry() {
     if (!hudHooksReady) return;
     guiSetNextPos(ImVec2(18.f,130.f),ImGuiCond_FirstUseEver,ImVec2(0,0));
     if (guiBegin("HUD",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoCollapse))
-        guiCheckbox("Open Module List editor",&hudEditorOpen);
+        guiCheckbox("Open HUD editor",&hudEditorOpen);
     guiEnd();
 }
 
@@ -860,6 +921,7 @@ static DWORD WINAPI bootstrap(void*) {
     drawGradientRect = symbol<DrawGradientRectFn>("_ZN10ImDrawList23AddRectFilledMultiColorERK6ImVec2S2_jjjj");
     guiPushVarFloat = symbol<PushVarFloatFn>("_ZN5ImGui12PushStyleVarEif");
     guiPopVar = symbol<PopVarFn>("_ZN5ImGui11PopStyleVarEi");
+    guiSameLine = symbol<SameLineFn>("_ZN5ImGui8SameLineEff");
     guiSetNextPos = symbol<SetNextPosFn>("_ZN5ImGui16SetNextWindowPosERK6ImVec2iS2_");
     findGameWindow = symbol<FindWindowFn>("_ZN2ag19FindMinecraftWindowEb");
     addFont = symbol<AddFontFn>("_ZN2ag15AddEmbeddedFontEfb");
@@ -918,6 +980,11 @@ static DWORD WINAPI bootstrap(void*) {
     if (hudHookCreated) {
         if (mhEnable(hudTarget)==0) hudHooksReady.store(true,std::memory_order_release);
         else { mhRemove(hudTarget); log("HUD editor unavailable"); }
+    }
+    if (hudHooksReady && guiBegin && guiPushVarFloat && guiPopVar &&
+        mhCreate(reinterpret_cast<void*>(guiBegin),reinterpret_cast<void*>(&themedBegin),reinterpret_cast<void**>(&realGuiBegin))==0) {
+        if (mhEnable(reinterpret_cast<void*>(guiBegin))==0) hudThemeReady.store(true,std::memory_order_release);
+        else { mhRemove(reinterpret_cast<void*>(guiBegin)); log("HUD theme unavailable; original widgets retained"); }
     }
     if (hudHooksReady && notifyTarget && mhCreate(notifyTarget,reinterpret_cast<void*>(&patchedNotificationDraw),reinterpret_cast<void**>(&realNotificationDraw))==0) {
         notificationHookReady = mhEnable(notifyTarget)==0;

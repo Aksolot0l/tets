@@ -49,3 +49,20 @@ assert 'current==expectedDepth' in gpu and 'ctx!=expectedContext' in gpu
 assert 'ctx->OMSetDepthStencilState(oldDepth,stencil)' in gpu and 'ctx->OMSetBlendState(oldBlend,oldFactor,sampleMask)' in gpu
 assert 'if (!inVisualDraw) { call(); return; }' in gpu
 assert 'Old overlay (see-through)' in u and 'SetVisualLegacyMode(legacy)' in u
+
+# The main HUD theme is installed after essential hooks, is limited to known
+# core windows during actual HUD/notification drawing, and falls back safely.
+theme=(r/'src/hud_theme.h').read_text()
+assert 'insideLegacyHud || !hud_theme::card(name)' in u
+assert 'hud_theme::background(widgetOpacity*legacyOpacity)' in u
+assert 'insideLegacyHud=true; realDrawHud(runtime)' in u
+assert 'realNotificationDraw(queue,s)' in u and 'insideLegacyHud=previous; legacyOpacity=oldOpacity' in u
+assert 'mhRemove(reinterpret_cast<void*>(guiBegin))' in u
+assert u.index('mhCreate(reinterpret_cast<void*>(guiBegin)') > u.index('mhApply())')
+assert 'Widget background opacity' in u and 'for (const auto& entry:module_hud::entries)' in u
+assert 'setModule(runtime,entry.id,enabled)' in u
+for name in ('fps','cps','clock','cpu','ram','resolution','watermark','info','active','hotkeys','coordinates','keystrokes'):
+    assert '##hud_'+name in theme
+for symbol in ('_ZN5ImGui5BeginEPKcPbi','_ZN5ImGui8SameLineEff','_ZN5ImGui12PushStyleVarEif','_ZN5ImGui11PopStyleVarEi'):
+    assert symbol in u and symbol.encode() in exports
+print('Scoped HUD style and module wiring: static OK; Windows test required')
