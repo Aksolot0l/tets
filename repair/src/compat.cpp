@@ -20,6 +20,8 @@
 #include "mouse_diagnostic_patch.h"
 #include "disable_hotkey.h"
 #include "china_hat_native.h"
+#include "visual_preview.h"
+#include "visual_color.h"
 #include <atomic>
 #include <array>
 #include <cstring>
@@ -65,6 +67,18 @@ using PopColorFn = void (*)(int);
 using FontScaleFn = void (*)(float);
 using DrawHudFn = void (*)(void*);
 using NotificationDrawFn = void (*)(void*, const ag::Settings&);
+using ButtonFn = bool (*)(const char*,const ImVec2&);
+using PushWidthFn = void (*)(float);
+using PopWidthFn = void (*)();
+using GetDrawListFn = ImDrawList* (*)();
+using GetCursorFn = ImVec2 (*)();
+using DummyFn = void (*)(const ImVec2&);
+using DrawLineFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,ImU32,float);
+using DrawTriangleFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,const ImVec2&,ImU32);
+using DrawQuadFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,ImU32);
+using DrawRectFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,ImU32,float,int);
+using PushVarFloatFn = void (*)(int,float);
+using PopVarFn = void (*)(int);
 
 static HMODULE selfModule = nullptr;
 static HMODULE core = nullptr;
@@ -106,6 +120,20 @@ static PopColorFn guiPopColor = nullptr;
 static FontScaleFn guiFontScale = nullptr;
 static DrawHudFn realDrawHud = nullptr;
 static NotificationDrawFn realNotificationDraw = nullptr;
+static ButtonFn guiButton = nullptr;
+static PushWidthFn guiPushWidth = nullptr;
+static PopWidthFn guiPopWidth = nullptr;
+static GetDrawListFn guiDrawList = nullptr;
+static GetCursorFn guiCursor = nullptr;
+static DummyFn guiDummy = nullptr;
+static DrawLineFn drawLine = nullptr;
+static DrawTriangleFn drawTriangle = nullptr;
+static DrawQuadFn drawQuad = nullptr;
+static DrawRectFn drawRect = nullptr;
+static PushVarFloatFn guiPushVarFloat = nullptr;
+static PopVarFn guiPopVar = nullptr;
+enum class VisualEditor { None, Hat, Trail, Options };
+static VisualEditor visualEditor=VisualEditor::None;
 static std::atomic<bool> hudHooksReady{false}, notificationHookReady{false};
 static bool hudEditorOpen = false, moduleHudEnabled = false;
 static std::atomic<bool> hudEditorActive{false};
@@ -250,19 +278,30 @@ static void patchedText(const char* text, const char* textEnd) {
 // This panel uses the same ImGui context and functions exported by the legacy
 // core. It is a separate window, not a modification of the closed-source
 // original category list. Values are kept only for this game session.
+// Labels are placed above full-width controls, so narrow panels do not clip.
+static void controlLabel(const char* label) {
+    const char* end=std::strstr(label,"##"); realText(label,end);
+}
 static void visualSlider(const char* label,VisualParam p,const char* fmt) {
     if (!guiSliderFloat) { realText("Slider unavailable",nullptr); return; }
     const auto i=static_cast<std::size_t>(p);
     if (i>=static_cast<std::size_t>(VisualParam::Count)) return;
     float value=GetVisualParam(p); const auto spec=visualParamSpecs[i];
-    if (guiSliderFloat(label,&value,spec.low,spec.high,fmt,0)) SetVisualParam(p,value);
+    char id[160]{}; std::snprintf(id,sizeof(id),"##%s",label);
+    controlLabel(label);
+    if (guiPushWidth && guiPopWidth) guiPushWidth(-1.f);
+    if (guiSliderFloat(id,&value,spec.low,spec.high,fmt,0)) SetVisualParam(p,value);
+    if (guiPushWidth && guiPopWidth) guiPopWidth();
 }
 static void visualColor(const char* label,VisualParam r,VisualParam g,VisualParam b) {
     if (!guiColorEdit3) { realText("Color picker unavailable",nullptr); return; }
     float color[3]={GetVisualParam(r),GetVisualParam(g),GetVisualParam(b)};
-    if (guiColorEdit3(label,color,0)) {
+    char id[160]{}; std::snprintf(id,sizeof(id),"##%s",label); controlLabel(label);
+    if (guiPushWidth && guiPopWidth) guiPushWidth(-1.f);
+    if (guiColorEdit3(id,color,0)) {
         SetVisualParam(r,color[0]); SetVisualParam(g,color[1]); SetVisualParam(b,color[2]);
     }
+    if (guiPushWidth && guiPopWidth) guiPopWidth();
 }
 static void drawHatSettings() {
     bool enabled=ChinaHatEnabled();
@@ -312,38 +351,141 @@ static void drawVisualOptions() {
     if (guiCheckbox("Enable colors",&tint)) SetVisualTintEnabled(tint);
     bool gradient=VertexGradientEnabled();
     if (guiCheckbox("Vertex gradient (test)",&gradient)) SetVertexGradientEnabled(gradient);
-    realText("Gradient and opacity depend on game material.",nullptr);
+    realText("Gradient/opacity depend on material.",nullptr);
     auto diagnostic=[](const char* label,int bits) {
         char line[120]{};
-        if (!(bits&1)) std::snprintf(line,sizeof(line),"%s: no same-thread context",label);
-        else std::snprintf(line,sizeof(line),"%s: DSV %s, depth %s, blend %s",label,
-            bits&2?"bound":"none",bits&4?"on":"off",bits&8?"on":"off");
+        realText(label,nullptr);
+        if (!(bits&1)) std::snprintf(line,sizeof(line),"  no context/data");
+        else {
+            std::snprintf(line,sizeof(line),"  DSV %s",bits&2?"bound":"none");
+            realText(line,nullptr);
+            std::snprintf(line,sizeof(line),"  depth %s / blend %s",bits&4?"on":"off",bits&8?"on":"off");
+        }
         realText(line,nullptr);
     };
+    diagnostic("World entities",VisualDepthWorld());
     diagnostic("Before UI",VisualDepthBefore()); diagnostic("After UI",VisualDepthAfter());
-    realText("Diagnostics only; not proof of valid scene depth.",nullptr);
-    realText("Settings reset when the game closes.",nullptr);
-    realText("Fill is experimental; uncheck to use lines.",nullptr);
+    realText("Diagnostic only, not proof of depth.",nullptr);
+    realText("Resets after game closes.",nullptr);
+    realText("Fill: turn off to use lines.",nullptr);
+}
+// Match the dark/green Home and HUD panels, without modifying the closed core.
+static void pushVisualStyle() {
+    if (!guiPushColor || !guiPopColor) return;
+    if (guiPushVarFloat && guiPopVar) {
+        guiPushVarFloat(ImGuiStyleVar_WindowBorderSize,1.f);
+        guiPushVarFloat(ImGuiStyleVar_WindowRounding,8.f);
+    }
+    guiPushColor(ImGuiCol_WindowBg,ImVec4(.035f,.065f,.055f,.96f));
+    guiPushColor(ImGuiCol_Border,ImVec4(.10f,.65f,.37f,.85f));
+    guiPushColor(ImGuiCol_TitleBg,ImVec4(.025f,.10f,.065f,.98f));
+    guiPushColor(ImGuiCol_TitleBgActive,ImVec4(.025f,.14f,.08f,1.f));
+    guiPushColor(ImGuiCol_Button,ImVec4(.02f,.22f,.11f,1.f));
+    guiPushColor(ImGuiCol_ButtonHovered,ImVec4(.04f,.42f,.21f,1.f));
+    guiPushColor(ImGuiCol_ButtonActive,ImVec4(.05f,.56f,.28f,1.f));
+    guiPushColor(ImGuiCol_CheckMark,ImVec4(.08f,.78f,.42f,1.f));
+    guiPushColor(ImGuiCol_SliderGrab,ImVec4(.08f,.72f,.38f,1.f));
+    guiPushColor(ImGuiCol_SliderGrabActive,ImVec4(.10f,.92f,.49f,1.f));
+}
+static void popVisualStyle() {
+    if (guiPushColor && guiPopColor) {
+        guiPopColor(10); if (guiPushVarFloat && guiPopVar) guiPopVar(2);
+    }
+}
+static bool canVisualPreview() {
+    return hudHooksReady && guiButton && guiDrawList && guiCursor && guiDummy && drawLine && drawTriangle && drawQuad && drawRect;
 }
 static void drawVisualPanel() {
-    guiSetNextPos(ImVec2(18.0f,280.0f), ImGuiCond_FirstUseEver, ImVec2(0,0));
-    if (guiSetNextSize) guiSetNextSize(ImVec2(350.0f,410.0f),ImGuiCond_FirstUseEver);
-    const int flags=ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoCollapse;
-    if (guiBegin("Visuals",nullptr,flags)) {
-        if (!ChinaHatAvailable()) realText("Visuals: unsupported game or unavailable",nullptr);
-        else if (guiBeginTabBar && guiBeginTabItem && guiEndTabBar && guiEndTabItem) {
-            if (guiBeginTabBar("##visual_tabs",0)) {
-                if (guiBeginTabItem("China Hat",nullptr,0)) { drawHatSettings(); guiEndTabItem(); }
-                if (guiBeginTabItem("Trail",nullptr,0)) { drawTrailSettings(); guiEndTabItem(); }
-                if (guiBeginTabItem("Options",nullptr,0)) { drawVisualOptions(); guiEndTabItem(); }
-                guiEndTabBar();
+    guiSetNextPos(ImVec2(548.f,35.f), ImGuiCond_FirstUseEver, ImVec2(0,0));
+    if (guiSetNextSize) guiSetNextSize(ImVec2(240.f,300.f),ImGuiCond_FirstUseEver);
+    pushVisualStyle();
+    if (guiBegin("Visuals",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoCollapse)) {
+        if (!ChinaHatAvailable()) realText("Visuals unavailable",nullptr);
+        else {
+            bool hat=ChinaHatEnabled(); if (guiCheckbox("China Hat",&hat)) SetChinaHatEnabled(hat);
+            if (canVisualPreview() && guiButton("Settings##open_hat",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Hat;
+            bool trace=TrailEnabled(); if (guiCheckbox("Trail",&trace)) SetTrailEnabled(trace);
+            if (canVisualPreview() && guiButton("Settings##open_trail",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Trail;
+            if (canVisualPreview() && guiButton("Options",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Options;
+            if (!canVisualPreview()) {
+                realText("Preview unavailable; inline settings:",nullptr);
+                drawHatSettings(); drawTrailSettings(); drawVisualOptions();
             }
-        } else {
-            realText("China Hat",nullptr); drawHatSettings();
-            realText("Trail",nullptr); drawTrailSettings(); drawVisualOptions();
         }
     }
-    guiEnd();
+    guiEnd(); popVisualStyle();
+}
+
+static ImU32 previewColor(bool hat,float phase,float turn,std::uint64_t now) {
+    const bool tint=VisualTintEnabled(), rainbow=hat?HatRainbowEnabled():TrailRainbowEnabled();
+    const float opacity=GetVisualParam(hat?VisualParam::HatOpacity:VisualParam::TrailOpacity);
+    auto rgb=visual_color::animated(tint,rainbow,
+      hat?std::array<float,3>{{GetVisualParam(VisualParam::HatRed),GetVisualParam(VisualParam::HatGreen),GetVisualParam(VisualParam::HatBlue)}}:
+          std::array<float,3>{{GetVisualParam(VisualParam::TrailRed),GetVisualParam(VisualParam::TrailGreen),GetVisualParam(VisualParam::TrailBlue)}},
+      GetVisualParam(hat?VisualParam::HatRainbowSpeed:VisualParam::TrailRainbowSpeed),now);
+    if (tint && rainbow && VertexGradientEnabled()) {
+        auto c=china_hat::rainbow(phase+turn*.8f,255); rgb={{c.r/255.f,c.g/255.f,c.b/255.f,1.f}};
+    }
+    return IM_COL32(static_cast<int>(rgb[0]*255),static_cast<int>(rgb[1]*255),static_cast<int>(rgb[2]*255),static_cast<int>(opacity*255));
+}
+static void drawEffectPreview(VisualEditor editor) {
+    if (!canVisualPreview()) return;
+    guiSetNextPos(ImVec2(18.f,90.f),ImGuiCond_Always,ImVec2(0,0));
+    if (guiSetNextSize) guiSetNextSize(ImVec2(310.f,310.f),ImGuiCond_FirstUseEver);
+    pushVisualStyle();
+    if (guiBegin("Preview##effect",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
+        realText("Animated illustration",nullptr);
+        auto* d=guiDrawList(); ImVec2 o=guiCursor(); const auto now=GetTickCount64();
+        auto point=[&](float x,float y) { return ImVec2(o.x+x,o.y+y); };
+        if (d) {
+            // Stylized player; not an in-game screenshot or the game's shader.
+            drawRect(d,point(116,145),point(164,205),IM_COL32(105,112,117,255),4.f,0);
+            drawRect(d,point(123,105),point(157,140),IM_COL32(170,176,177,255),4.f,0);
+            if (editor==VisualEditor::Hat) {
+                const float y=visual_preview::hatY(now,GetVisualParam(VisualParam::HatOffset),GetVisualParam(VisualParam::HatBobAmplitude),GetVisualParam(VisualParam::HatBobSpeed));
+                const float r=GetVisualParam(VisualParam::HatRadius), h=GetVisualParam(VisualParam::HatConeHeight);
+                const float phase=visual_gradient::phase(now,GetVisualParam(VisualParam::HatRainbowSpeed));
+                const ImVec2 apex=point(140.f,y-h*95.f);
+                for (int i=0;i<48;++i) {
+                    auto a=visual_preview::hatRim(i/48.f,r,y), b=visual_preview::hatRim((i+1)/48.f,r,y);
+                    const ImU32 c=previewColor(true,phase,i/48.f,now);
+                    if (HatFillEnabled()) drawTriangle(d,apex,point(a.x,a.y),point(b.x,b.y),c);
+                    drawLine(d,point(a.x,a.y),point(b.x,b.y),c,1.5f);
+                    if (i%4==0) drawLine(d,apex,point(a.x,a.y),c,1.f);
+                }
+            } else if (editor==VisualEditor::Trail) {
+                const float phase=visual_gradient::phase(now,GetVisualParam(VisualParam::TrailRainbowSpeed));
+                const float h=GetVisualParam(VisualParam::TrailHeight)*82.f;
+                for (int i=0;i<24;++i) {
+                    float t=i/24.f, t2=(i+1)/24.f;
+                    auto a=visual_preview::trailPoint(t,now,GetVisualParam(VisualParam::TrailSeconds));
+                    auto b=visual_preview::trailPoint(t2,now,GetVisualParam(VisualParam::TrailSeconds));
+                    ImU32 c=previewColor(false,phase,t,now);
+                    if (TrailFillEnabled()) drawQuad(d,point(a.x,a.y),point(b.x,b.y),point(b.x,b.y-h),point(a.x,a.y-h),c);
+                    drawLine(d,point(a.x,a.y),point(b.x,b.y),c,2.f);
+                }
+            }
+        }
+        guiDummy(ImVec2(280.f,220.f));
+        realText("Game material may look different.",nullptr);
+    }
+    guiEnd(); popVisualStyle();
+}
+static void drawVisualEditor() {
+    const VisualEditor current=visualEditor;
+    // Draw settings before the preview so edits are reflected in the same frame.
+    guiSetNextPos(ImVec2(350.f,90.f),ImGuiCond_Always,ImVec2(0,0));
+    if (guiSetNextSize) guiSetNextSize(ImVec2(310.f,430.f),ImGuiCond_FirstUseEver);
+    pushVisualStyle();
+    const char* title=current==VisualEditor::Hat?"China Hat settings":current==VisualEditor::Trail?"Trail settings":"Visual options";
+    if (guiBegin(title,nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
+        if (guiButton && guiButton("Back to menu",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::None;
+        if (current==VisualEditor::Hat) drawHatSettings();
+        else if (current==VisualEditor::Trail) drawTrailSettings();
+        else drawVisualOptions();
+    }
+    guiEnd(); popVisualStyle();
+    if (visualEditor==current && current!=VisualEditor::Options) drawEffectPreview(current);
 }
 
 // Draw exactly the same new Module List card in the editor and during play.
@@ -370,7 +512,7 @@ static void drawModuleHud(void* runtime, bool preview) {
 }
 static void patchedDrawHud(void* runtime) {
     const bool menu=runtime && *(reinterpret_cast<unsigned char*>(runtime)+0x551);
-    const bool editing=module_hud::editing(menu,hudEditorOpen);
+    const bool editing=module_hud::editing(menu,hudEditorOpen || visualEditor!=VisualEditor::None);
     hudEditorActive.store(editing,std::memory_order_release);
     if (!editing) {
         realDrawHud(runtime);
@@ -386,15 +528,21 @@ static void drawHudEditor(void* runtime) {
     if (guiBegin("HUD editor",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
         guiCheckbox("Open editor",&hudEditorOpen);
         guiCheckbox("Module List HUD",&moduleHudEnabled);
-        if (guiSliderFloat) {
-            guiSliderFloat("Scale",&hudScale,.7f,1.6f,"%.2f",0);
-            guiSliderFloat("Background opacity",&hudOpacity,0.f,1.f,"%.2f",0);
-            guiSliderFloat("Position X",&hudX,0.f,.9f,"%.2f",0);
-            guiSliderFloat("Position Y",&hudY,0.f,.9f,"%.2f",0);
-        }
-        if (guiColorEdit3) guiColorEdit3("Text color",hudColor,0);
-        realText("Preview is on the right; close editor to return.",nullptr);
-        realText("Settings reset after closing the game.",nullptr);
+        auto slider=[](const char* label,float* value,float low,float high) {
+            if (!guiSliderFloat) return;
+            controlLabel(label); char id[128]{}; std::snprintf(id,sizeof(id),"##hud_%s",label);
+            if (guiPushWidth && guiPopWidth) guiPushWidth(-1.f);
+            guiSliderFloat(id,value,low,high,"%.2f",0);
+            if (guiPushWidth && guiPopWidth) guiPopWidth();
+        };
+        slider("Scale",&hudScale,.7f,1.6f);
+        slider("Background opacity",&hudOpacity,0.f,1.f);
+        slider("Position X",&hudX,0.f,.9f);
+        slider("Position Y",&hudY,0.f,.9f);
+        if (guiColorEdit3) { realText("Text color",nullptr); if (guiPushWidth && guiPopWidth) guiPushWidth(-1.f);
+            guiColorEdit3("##hud_color",hudColor,0); if (guiPushWidth && guiPopWidth) guiPopWidth(); }
+        realText("Close editor to return.",nullptr);
+        realText("Settings reset after game exit.",nullptr);
         if (!notificationHookReady) realText("Notifications may remain visible.",nullptr);
     }
     guiEnd();
@@ -423,8 +571,10 @@ static void patchedDrawGui(void* runtime) {
         return;
     }
     const bool menuOpen=runtime && *(reinterpret_cast<unsigned char*>(runtime)+0x551);
-    if (!menuOpen) hudEditorOpen=false;
-    if (!menuOpen || !hudEditorOpen) realDrawGui(runtime);
+    if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }
+    const bool editingVisual=menuOpen && visualEditor!=VisualEditor::None && canVisualPreview();
+    if (!menuOpen || (!hudEditorOpen && !editingVisual)) realDrawGui(runtime);
+    if (editingVisual) { drawVisualEditor(); return; }
     if (menuOpen && hudEditorOpen && hudHooksReady) { drawHudEditor(runtime); return; }
     // Exact legacy build layout, verified against the original binary.
     if (!runtime || !*(reinterpret_cast<unsigned char*>(runtime) + 0x551)) return;
@@ -644,6 +794,18 @@ static DWORD WINAPI bootstrap(void*) {
     guiPushColor = symbol<PushColorFn>("_ZN5ImGui14PushStyleColorEiRK6ImVec4");
     guiPopColor = symbol<PopColorFn>("_ZN5ImGui13PopStyleColorEi");
     guiFontScale = symbol<FontScaleFn>("_ZN5ImGui18SetWindowFontScaleEf");
+    guiButton = symbol<ButtonFn>("_ZN5ImGui6ButtonEPKcRK6ImVec2");
+    guiPushWidth = symbol<PushWidthFn>("_ZN5ImGui13PushItemWidthEf");
+    guiPopWidth = symbol<PopWidthFn>("_ZN5ImGui12PopItemWidthEv");
+    guiDrawList = symbol<GetDrawListFn>("_ZN5ImGui17GetWindowDrawListEv");
+    guiCursor = symbol<GetCursorFn>("_ZN5ImGui18GetCursorScreenPosEv");
+    guiDummy = symbol<DummyFn>("_ZN5ImGui5DummyERK6ImVec2");
+    drawLine = symbol<DrawLineFn>("_ZN10ImDrawList7AddLineERK6ImVec2S2_jf");
+    drawTriangle = symbol<DrawTriangleFn>("_ZN10ImDrawList17AddTriangleFilledERK6ImVec2S2_S2_j");
+    drawQuad = symbol<DrawQuadFn>("_ZN10ImDrawList13AddQuadFilledERK6ImVec2S2_S2_S2_j");
+    drawRect = symbol<DrawRectFn>("_ZN10ImDrawList13AddRectFilledERK6ImVec2S2_jfi");
+    guiPushVarFloat = symbol<PushVarFloatFn>("_ZN5ImGui12PushStyleVarEif");
+    guiPopVar = symbol<PopVarFn>("_ZN5ImGui11PopStyleVarEi");
     guiSetNextPos = symbol<SetNextPosFn>("_ZN5ImGui16SetNextWindowPosERK6ImVec2iS2_");
     findGameWindow = symbol<FindWindowFn>("_ZN2ag19FindMinecraftWindowEb");
     addFont = symbol<AddFontFn>("_ZN2ag15AddEmbeddedFontEfb");

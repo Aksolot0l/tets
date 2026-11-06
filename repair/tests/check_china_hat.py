@@ -33,7 +33,7 @@ assert 'visual_color::animated(materialTint.load' in hat and 'hatRainbow.load' i
 assert 'Enable colors' in u and 'materialTint{true}' in n
 assert 'Filled hat (test)' in u and 'Filled trail (test)' in u
 assert 'hatFill{true}, trailFill{true}' in n
-assert 'guiBegin("Visuals"' in u and 'guiBeginTabItem("China Hat"' in u and 'guiBeginTabItem("Trail"' in u
+assert 'guiBegin("Visuals"' in u and 'Settings##open_hat' in u and 'Settings##open_trail' in u
 assert 'Rainbow hat' in u and 'Rainbow trail' in u
 assert 'hatRainbow{true}, trailRainbow{true}' in n
 assert 'std::atomic<bool> available{false}, enabled{false}' in n and 'trailEnabled{false}' in n
@@ -42,7 +42,7 @@ for symbol in ('_ZN5ImGui11BeginTabBarEPKci','_ZN5ImGui9EndTabBarEv',
                '_ZN5ImGui12BeginTabItemEPKcPbi','_ZN5ImGui10EndTabItemEv',
                '_ZN5ImGui10ColorEdit3EPKcPfi','_ZN5ImGui17SetNextWindowSizeERK6ImVec2i'):
     assert symbol in u and symbol.encode() in (r.parent/'GAYClientInternal.dll').read_bytes(), symbol
-assert 'guiEndTabItem();' in u and 'guiEndTabBar();' in u
+assert 'drawVisualEditor(); return;' in u and 'drawEffectPreview(current)' in u
 trail=n[n.index('void renderTrail('):n.index('void screenHook(')]
 assert 'visual_color::animated(materialTint.load' in trail and 'trailRainbow.load' in trail
 assert 'saved,sizeof(saved)' in hat and 'saved,sizeof(saved)' in trail

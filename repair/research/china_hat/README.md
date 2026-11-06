@@ -35,8 +35,10 @@ Before drawing, it checks player identity, position, dimensions and tessellator
 state and restores the global shader color. This does not prove private ABI,
 local-player chain or camera semantics. Windows runtime testing is essential.
 
-The separate draggable `Visuals` window contains `China Hat`, `Trail`, and
-`Options` tabs. Both modules are off by default; their per-session controls
+The separate draggable `Visuals` window has controls for `China Hat`, `Trail`,
+and `Options`, styled to resemble the existing Home/HUD panels. Effect settings
+hide the client HUD/menu and show a live 2D illustration on the left. It is not
+an in-game material or occlusion preview. Both modules are off by default; their per-session controls
 include fill, animated whole-material rainbow or fixed color, rainbow speed,
 shape/position/bob for the hat, and ribbon height/lifetime for the trail.
 Settings are not persisted. The material tint and simple local-player lines were
@@ -67,5 +69,7 @@ uniform, and an opt-in vertex-gradient mode supplies varying vertex colors;
 these depend on the game's material/blending and are unverified. Default is
 opacity 1 and vertex gradient off, preserving the previous working appearance.
 Depth occlusion is not fixed. Output-merger observations in Options are read-only,
-only from a previously observed same-thread swap-chain context; before/after UI
-state is not proof of the depth content or of state inside tessDraw.
+only from a previously observed same-thread swap-chain context. An optional
+validated hook also reports output-merger state after the entity pass. These
+states are not proof of depth content or state inside tessDraw; the new hook
+and preview require Windows testing.

@@ -26,13 +26,14 @@ namespace {
 using ClientTick = void (*)(void*,int,int);
 using PlayerRender = std::intptr_t (*)(void*,void*,void*,void*,float);
 using ScreenRender = void (*)(void*,void*);
+using EntitiesRender = std::intptr_t (*)(void*,float);
 using TessBegin = void (*)(void*,std::uint8_t,int);
 using TessColor = void (*)(void*,std::uint8_t,std::uint8_t,std::uint8_t,std::uint8_t);
 using TessVertex = void (*)(void*,float,float,float);
 using TessDraw = void (*)(void*,void*,std::int64_t);
 using TessEnd = void (*)(void*,void*,std::int64_t,std::uint8_t);
 constexpr std::uint32_t playerRva=0x581910, screenRva=0x3528c0, clientTickRva=0x11b2d0, beginRva=0x5d0660,
- colorRva=0x5d0890, vertexRva=0x5d0a90, drawRva=0x5d1840, endRva=0x5d14f0;
+ colorRva=0x5d0890, vertexRva=0x5d0a90, drawRva=0x5d1840, endRva=0x5d14f0, worldEntitiesRva=0x5ae250;
 constexpr std::uint32_t originRva=0x19436e8, tessRva=0x1925550, contextRva=0x1913b40,
  shaderColorRva=0x192ae08, shaderFlagRva=0x192ae18;
 std::atomic<bool> available{false}, enabled{false};
@@ -50,7 +51,7 @@ float param(VisualParam p) { return params.values[static_cast<std::size_t>(p)].l
 SRWLOCK contextLock=SRWLOCK_INIT;
 ID3D11DeviceContext* observedContext=nullptr;
 DWORD observedThread=0;
-std::atomic<int> depthBefore{0}, depthAfter{0};
+std::atomic<int> depthBefore{0}, depthAfter{0}, depthWorld{0};
 void sampleOutputMerger(std::atomic<int>& target) {
  ID3D11DeviceContext* ctx=nullptr;
  AcquireSRWLockShared(&contextLock);
@@ -86,6 +87,7 @@ std::atomic<std::uintptr_t> clientInstance{0};
 std::atomic<ULONGLONG> lastClientTick{0};
 PlayerRender originalPlayer=nullptr;
 ScreenRender originalScreen=nullptr;
+EntitiesRender originalEntities=nullptr;
 TessBegin tessBegin=nullptr; TessColor tessColor=nullptr; TessVertex tessVertex=nullptr;
 TessDraw tessDraw=nullptr; TessEnd tessEnd=nullptr;
 struct PlayerFrame { china_hat::Point world{}; float height=0; std::uintptr_t entity=0; ULONGLONG at=0; bool valid=false; };
@@ -247,6 +249,13 @@ std::intptr_t playerHook(void* self,void* entity,void* pos,void* extra,float par
  }
  return result;
 }
+// Read-only observation after the game's entity pass. This candidate has a
+// validated build/prologue but its semantics still need a real game test.
+std::intptr_t entitiesDiagnosticHook(void* self,float partial) {
+ auto result=originalEntities(self,partial);
+ if (anyVisual()) sampleOutputMerger(depthWorld);
+ return result;
+}
 // Keep the previously user-verified wireframe draw path isolated from the
 // experimental trail. Preserve the tested depth, topology and draw sequence.
 // The separate opt-in material tint may be ignored by the game's material.
@@ -402,6 +411,7 @@ void ObserveVisualContext(ID3D11DeviceContext* context) {
 }
 int VisualDepthBefore() { return depthBefore.load(std::memory_order_relaxed); }
 int VisualDepthAfter() { return depthAfter.load(std::memory_order_relaxed); }
+int VisualDepthWorld() { return depthWorld.load(std::memory_order_relaxed); }
 bool ChinaHatAvailable() { return available.load(std::memory_order_acquire); }
 bool ChinaHatEnabled() { return enabled.load(std::memory_order_acquire); }
 namespace {
@@ -426,6 +436,11 @@ bool installHooks() {
  if (!success) {
   clientInstance.store(0,std::memory_order_release); lastClientTick.store(0,std::memory_order_release);
   log("visual hook installation failed");
+ }
+ if (success) {
+  // Optional diagnostics cannot disable the previously working visual hooks.
+  visual_hooks::Hook world[]={{reinterpret_cast<void*>(base+worldEntitiesRva),reinterpret_cast<void*>(&entitiesDiagnosticHook),reinterpret_cast<void**>(&originalEntities)}};
+  if (!visual_hooks::install(world,1,createHook,enableHook,disableHook,removeHook)) log("world-depth diagnostic unavailable");
  }
  if (!success) available.store(false,std::memory_order_release);
  hookState.store(success?2:3,std::memory_order_release);

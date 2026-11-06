@@ -5,6 +5,7 @@ struct ID3D11DeviceContext;
 void ObserveVisualContext(ID3D11DeviceContext* context);
 int VisualDepthBefore();
 int VisualDepthAfter();
+int VisualDepthWorld();
 
 using HatCreateHook = int (WINAPI*)(void*, void*, void**);
 using HatToggleHook = int (WINAPI*)(void*);
