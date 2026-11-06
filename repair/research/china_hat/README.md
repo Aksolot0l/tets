@@ -180,3 +180,14 @@ license and no code was copied. The optional read-only `DIAG_MOUSE_CODE.ps1`
 searches a bounded family of x64 instructions in executable sections of the
 exact on-disk build. Matches may be absent or unrelated; they are research
 leads, not validated hooks or proof that input can be safely suppressed.
+
+The user's first exact-build report contained a substantially stronger lead at
+RVA `0x6fbac0` / `0x6fbb20` / `0x6fbb60`: three small routines use the same
+pointer chain and act on byte `+0x128` and a 32-bit field `+0x74` with values
+1 and 2. Their shape is consistent with toggle/release/relative cursor
+commands, but the objects, call timing, threading, lifetime, and interaction
+with actual input event dispatch remain unverified. They have not been hooked
+or called. Releasing a cursor without preventing clicks/movement reaching the
+game would not meet the user's requirement. The second offline diagnostic
+`DIAG_MOUSE_CODE_2.ps1` collects bounded x64 executable-code windows around
+that candidate and a speculative factory area for continued analysis.
