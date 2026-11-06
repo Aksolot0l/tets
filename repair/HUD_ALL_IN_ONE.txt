@@ -1,0 +1,2466 @@
+GAYCLIENT — ВСЁ В ОДНОМ: ОПИСАНИЕ HUD И ИСХОДНЫЙ КОД
+
+Этот файл содержит полный текст из HUD_VISUAL_GUIDE.txt и актуальные исходники
+новой HUD-плашки, её редактора, Visuals и связанных компонентов. Код скопирован
+как есть по состоянию ветки arena/5d11f1ec-tets на commit f6aed30.
+
+ВАЖНО: это материал для чтения и передачи ИИ, а не один компилируемый C++ файл.
+Имена исходных файлов отмечены перед каждым фрагментом. Внешние заголовки Windows
+SDK и Dear ImGui сюда не включены. Исходников закрытого GAYClientCore.dll нет: 
+старый штатный HUD нельзя восстановить полностью по этому файлу.
+PNG не вложен в текст; описание макета есть ниже. Прозрачность и градиент 3D
+эффектов экспериментальные; просвечивание сквозь объекты не исправлено.
+
+СОДЕРЖАНИЕ:
+1. Полное описание (бывший HUD_VISUAL_GUIDE.txt)
+2. Исходники (пути в проекте):
+   - repair/src/compat.cpp
+   - repair/src/hud_module_list.h
+   - repair/src/settings.h
+   - repair/src/china_hat_native.cpp
+   - repair/src/china_hat_native.h
+   - repair/src/visual_settings.h
+   - repair/src/visual_gradient.h
+   - repair/src/visual_color.h
+   - repair/src/visual_ribbon.h
+   - repair/src/visual_trail.h
+   - repair/src/hat_animation.h
+   - repair/src/china_hat_lines.h
+   - repair/src/china_hat_player.h
+   - repair/src/china_hat_validation.h
+   - repair/src/china_hat_hash.h
+   - repair/src/visual_hooks.h
+   - repair/research/china_hat/hat_mesh.h
+   - repair/src/pointer_mapping.h
+   - repair/src/uwp_extra.h
+   - repair/src/uwp_extra.cpp
+   - repair/src/page_scroll.h
+   - repair/src/wheel_bridge.h
+   - repair/src/wheel_counter.h
+   - repair/src/coordinates_115.h
+   - repair/src/mouse_diagnostic_patch.h
+   - repair/src/disable_hotkey.h
+
+================================================================================
+1. ОПИСАНИЕ: repair/HUD_VISUAL_GUIDE.txt
+================================================================================
+GAYClient — описание модулей и визуала для другого ИИ
+Обновление: Module List HUD + Visuals. Это техническое описание и иллюстрация,
+не скриншот из игры: внешний вид зависит от темы и шрифта игрового меню.
+
+1. ЧТО РЕАЛЬНО СДЕЛАНО
+
+В старом закрытом игровом ядре уже есть HUD-виджеты: FPS, CPS, часы, CPU,
+RAM, разрешение, клавиши, Watermark, Information, Notifications, Active
+Modules, Hotkeys, Coordinates. Часть других названий в структуре ядра не
+поддерживается и не включается. Исходников и точного описания отрисовки старых
+виджетов нет. Не обещать, что новый редактор меняет их индивидуальный стиль.
+
+Отдельный новый модуль Module List HUD — компактная ImGui-плашка с заголовком
+MODULES и названиями включённых модулей; к ним добавляются China Hat и Trail,
+когда они включены. Если список пуст, показывается No active modules. Плашка
+по умолчанию выключена. Она может дублировать уже существующий Active Modules.
+
+В игровом меню есть маленькое окно HUD -> Open Module List editor. Когда
+редактор открыт, штатный HUD и уведомления скрываются (если соответствующие
+хуки ядра доступны); оригинальное меню тоже скрывается. Справа от настроек
+показана та же самая функция отрисовки новой плашки, что и в игре. При
+изменении масштаба, цвета, непрозрачности фона и позиции предпросмотр меняется.
+Позиция в предпросмотре показана условно, в уменьшенном диапазоне. При снятии
+Open editor всё возвращается. Также можно закрыть игровое меню. Если хук HUD
+недоступен, окно входа в редактор не предлагается; если хук уведомлений
+недоступен, уведомления могут оставаться видимыми и появится предупреждение.
+
+Настройки Module List HUD: включение, Scale 0.70–1.60 (по умолчанию 1),
+Background opacity 0–1 (0.78), Position X и Y 0–0.9 (0.78 и 0.05 — доли
+размера экрана), цвет текста RGB (0.35, 0.85, 1.00). Фон тёмный
+RGB примерно (0.045, 0.055, 0.085), прозрачность регулируется. Все эти
+параметры живут только до закрытия игры. Настройки старых виджетов не изменяются.
+
+HUD_PREVIEW.png — условный макет окна редактора и новой плашки со значениями
+по умолчанию и примером включённых FPS / China Hat / Trail. Это не скриншот:
+точные размеры, расположение текста, цвет фона, скругление, шрифт и тема в
+игре могут отличаться. Старые виджеты на картинке не показаны, так как их
+точный внешний вид в данной среде проверить нельзя.
+
+2. VISUALS — ОТДЕЛЬНОЕ ИГРОВОЕ ОКНО
+
+China Hat — конус над локальным игроком, контур с 48 сегментами и 12 спицами,
+заполнение. Можно включать/выключать, менять радиус, высоту конуса и смещение,
+амплитуду/скорость покачивания, цвет или переливание и скорость. Версия с
+контуром/окраской и локальной привязкой ранее подтверждена пользователем;
+заливка также сообщена как работающая в предыдущей версии.
+
+Trail — лента за игроком, с линией и заполнением. Можно регулировать высоту,
+время жизни, цвет или переливание и скорость. История ограничена 128 точками,
+сбрасывается при смене игрока, телепорте и выходе из актуального состояния.
+
+Для каждого эффекта добавлен Opacity (test): 1 — исходная непрозрачность,
+0 — запрашиваемая прозрачность. Изменяется альфа материала, но результат
+зависит от шейдера и blending игры. Если материал не применяет альфу, слайдер
+визуально ничего не изменит. Эта версия не проверена на Windows.
+
+Visuals -> Options -> Vertex gradient (test) пробует использовать разные цвета
+вершин: шляпа — по окружности конуса; след — вдоль истории от старых точек
+к новым. Время сдвигает цвета, скорость берётся из настройки Rainbow speed.
+Требуются включённые цвета и Rainbow у соответствующего эффекта. Если материал
+игры игнорирует цвет вершин, градиент не появится или станет белым: отключить
+Vertex gradient (test), чтобы вернуться к подтверждённому общему переливанию.
+
+Окклюзия на текущем этапе НЕ исправлена: эффекты могут быть видны сквозь блоки
+и игроков, в том числе своего. Версия не включает принудительное вмешательство
+в depth buffer. В Options показаны диагностические данные о состояниях до и
+после экрана игры: DSV bound/none, depth on/off, blend on/off. Значение может
+быть no same-thread context; это диагностика, а не доказательство, что буфер
+содержит корректную глубину сцены. Состояние материала внутри draw может
+отличаться. Нужны реальные данные из игры для безопасного исправления.
+
+3. ПРЕДЛОЖЕНИЕ ДЛЯ ДРУГОГО ИИ
+
+Можно передать этот TXT и HUD_PREVIEW.png как базу для проектирования дизайна.
+Нужно уточнить желаемый стиль и получить скриншот реального HUD: изображения
+здесь — только схематичный новый список. Придумайте визуальную систему для
+нескольких HUD-модулей, редактора с живым предпросмотром и отдельного Visuals:
+размеры, типографику, цвета, отступы, фоны/границы, поведение при длинных
+названиях, изменение масштаба и позиции, состояния включено/выключено, позиции
+на экранах разного размера. Различайте прозрачность HUD-плашки и прозрачность
+3D-эффекта. Не представляйте эскиз как готовое исправление рендера/depth.
+
+================================================================================
+2. ИСХОДНЫЙ КОД
+================================================================================
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/compat.cpp
+================================================================================
+// Experimental compatibility bootstrap for the exact legacy DLL documented in README.md.
+// The legacy library contains the UI and MinHook but does not start its hooks or
+// initialize its ImGui renderer. This adapter must be loaded as GAYClientInternal.dll
+// alongside the original renamed to GAYClientCore.dll. Windows x64 only.
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <d3d11.h>
+#include <dxgi1_2.h>
+#include <cstdio>
+#include "imgui.h"
+#include "settings.h"
+#include "hud_module_list.h"
+#include "pointer_mapping.h"
+#include "uwp_extra.h"
+#include "page_scroll.h"
+#include "wheel_bridge.h"
+#include "wheel_counter.h"
+#include "coordinates_115.h"
+#include "mouse_diagnostic_patch.h"
+#include "disable_hotkey.h"
+#include "china_hat_native.h"
+#include <atomic>
+#include <array>
+#include <cstring>
+
+static_assert(offsetof(ag::Settings, uiScale) == 192, "legacy Settings ABI changed");
+static_assert(sizeof(std::array<bool, 256>) == 256, "legacy watched key ABI changed");
+
+using PresentFn = HRESULT (STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
+using Present1Fn = HRESULT (STDMETHODCALLTYPE*)(IDXGISwapChain1*, UINT, UINT, const DXGI_PRESENT_PARAMETERS*);
+using InitFn = int (WINAPI*)();
+using HookFn = int (WINAPI*)(void*, void*, void**);
+using ToggleFn = int (WINAPI*)(void*);
+using LegacyPresentFn = HRESULT (*)(IDXGISwapChain*, UINT, UINT);
+using NewFrameFn = void (*)();
+using RendererInitFn = bool (*)(ID3D11Device*, ID3D11DeviceContext*);
+using GetIOFn = ImGuiIO& (*)();
+using UpdateFn = void (*)(void*, const void*, bool, bool);
+using BridgeInitFn = void (*)();
+using BridgeActiveFn = void (*)(bool);
+using AddFontFn = ImFont* (*)(float, bool);
+using PointerFn = bool (*)(float&, float&, float&, float&);
+using FindWindowFn = HWND (*)(bool);
+using SettingsCtorFn = void (*)(ag::Settings*);
+using TickFn = HRESULT (*)(void*);
+using AddWheelFn = void (*)(ImGuiIO*, float, float);
+using WatchedKeysFn = void (*)(const std::array<bool, 256>&);
+using KeyDownFn = bool (*)(int);
+using TextFn = void (*)(const char*, const char*);
+using DrawGuiFn = void (*)(void*);
+using SetModuleFn = void (*)(void*, ag::ModuleId, bool);
+using BeginFn = bool (*)(const char*, bool*, int);
+using EndFn = void (*)();
+using CheckboxFn = bool (*)(const char*, bool*);
+using SliderFloatFn = bool (*)(const char*, float*, float, float, const char*, int);
+using SetNextPosFn = void (*)(const ImVec2&, int, const ImVec2&);
+using SetNextSizeFn = void (*)(const ImVec2&, int);
+using BeginTabBarFn = bool (*)(const char*, int);
+using BeginTabItemFn = bool (*)(const char*, bool*, int);
+using EndTabFn = void (*)();
+using ColorEdit3Fn = bool (*)(const char*, float*, int);
+using PushColorFn = void (*)(int, const ImVec4&);
+using PopColorFn = void (*)(int);
+using FontScaleFn = void (*)(float);
+using DrawHudFn = void (*)(void*);
+using NotificationDrawFn = void (*)(void*, const ag::Settings&);
+
+static HMODULE selfModule = nullptr;
+static HMODULE core = nullptr;
+static PresentFn realPresent = nullptr;
+static Present1Fn realPresent1 = nullptr;
+static LegacyPresentFn legacyPresent = nullptr;
+static NewFrameFn realNewFrame = nullptr;
+static RendererInitFn rendererInit = nullptr;
+static GetIOFn getIO = nullptr;
+static UpdateFn realUpdate = nullptr;
+static PointerFn realPointer = nullptr;
+static FindWindowFn findGameWindow = nullptr;
+static SettingsCtorFn realSettingsCtor = nullptr;
+static AddFontFn addFont = nullptr;
+static TickFn realTick = nullptr;
+static AddWheelFn addWheel = nullptr;
+static WatchedKeysFn realWatchedKeys = nullptr;
+static KeyDownFn keyDown = nullptr;
+static bool pageKeysReady = false;
+static BridgeActiveFn bridgeActive = nullptr;
+static std::atomic<bool> overlayDisabled{false};
+static DisableHotkey disableHotkey;
+static PageScrollRepeat pageScroll;
+static TextFn realText = nullptr;
+static DrawGuiFn realDrawGui = nullptr;
+static SetModuleFn setModule = nullptr;
+static BeginFn guiBegin = nullptr;
+static EndFn guiEnd = nullptr;
+static CheckboxFn guiCheckbox = nullptr;
+static SliderFloatFn guiSliderFloat = nullptr;
+static SetNextPosFn guiSetNextPos = nullptr;
+static SetNextSizeFn guiSetNextSize = nullptr;
+static BeginTabBarFn guiBeginTabBar = nullptr;
+static BeginTabItemFn guiBeginTabItem = nullptr;
+static EndTabFn guiEndTabBar = nullptr, guiEndTabItem = nullptr;
+static ColorEdit3Fn guiColorEdit3 = nullptr;
+static PushColorFn guiPushColor = nullptr;
+static PopColorFn guiPopColor = nullptr;
+static FontScaleFn guiFontScale = nullptr;
+static DrawHudFn realDrawHud = nullptr;
+static NotificationDrawFn realNotificationDraw = nullptr;
+static std::atomic<bool> hudHooksReady{false}, notificationHookReady{false};
+static bool hudEditorOpen = false, moduleHudEnabled = false;
+static std::atomic<bool> hudEditorActive{false};
+// New Module List HUD settings are per-session; they do not overwrite profiles.
+static float hudScale = 1.f, hudOpacity = .78f, hudX = .78f, hudY = .05f;
+static float hudColor[3] = {.35f,.85f,1.f};
+static std::atomic<const WheelBridge*> externalWheel{nullptr};
+static SRWLOCK externalWheelLock = SRWLOCK_INIT;
+static HWND pointerWindow = nullptr;
+static thread_local bool insidePresent = false;
+static thread_local bool seenInput = false;
+static thread_local bool pointerInUse = false;
+static thread_local ID3D11Device* frameDevice = nullptr;
+static thread_local ID3D11DeviceContext* frameContext = nullptr;
+static thread_local UINT frameWidth = 0, frameHeight = 0;
+static LARGE_INTEGER lastFrame{};
+static LARGE_INTEGER frequency{};
+
+static void log(const char* text) { OutputDebugStringA("GAYClient repair: "); OutputDebugStringA(text); OutputDebugStringA("\n"); }
+
+template<typename T> static T symbol(const char* name) { return reinterpret_cast<T>(GetProcAddress(core, name)); }
+template<class T> static void release(T*& p) { if (p) { p->Release(); p = nullptr; } }
+
+// Runs before our Present/ImGui detours are enabled, so no thread can be
+// executing drawMarker through this adapter during the code change.
+static bool suppressMouseDiagnostic() {
+    auto* image = reinterpret_cast<unsigned char*>(core);
+    IMAGE_DOS_HEADER dos{}; IMAGE_NT_HEADERS64 nt{};
+    SIZE_T count = 0;
+    if (!ReadProcessMemory(GetCurrentProcess(), image, &dos, sizeof(dos), &count) || count != sizeof(dos) ||
+        dos.e_magic != IMAGE_DOS_SIGNATURE || dos.e_lfanew <= 0 || dos.e_lfanew > 0x10000 ||
+        !ReadProcessMemory(GetCurrentProcess(), image + dos.e_lfanew, &nt, sizeof(nt), &count) || count != sizeof(nt) ||
+        nt.Signature != IMAGE_NT_SIGNATURE || nt.FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64 ||
+        nt.OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC || nt.OptionalHeader.SizeOfImage != 0x2af000 ||
+        reinterpret_cast<unsigned char*>(legacyPresent) != image + 0x1bf0 ||
+        !mouse_diagnostic_patch::matches(image, nt.OptionalHeader.SizeOfImage)) return false;
+    auto* branch = image + mouse_diagnostic_patch::branchRva;
+    DWORD oldProtect = 0;
+    if (!VirtualProtect(branch, 6, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
+    mouse_diagnostic_patch::apply(image);
+    bool flushed = FlushInstructionCache(GetCurrentProcess(), branch, 6) != 0;
+    if (!flushed) {
+        // No hooks are active yet. Revert if the CPU cache could not be synced.
+        std::memcpy(branch, mouse_diagnostic_patch::code + (mouse_diagnostic_patch::branchRva - mouse_diagnostic_patch::codeRva), 6);
+        FlushInstructionCache(GetCurrentProcess(), branch, 6);
+    }
+    DWORD ignored = 0;
+    if (!VirtualProtect(branch, 6, oldProtect, &ignored)) log("mouse diagnostic page protection restore failed");
+    return flushed;
+}
+
+static bool gameIsForeground() {
+    HWND fg = GetForegroundWindow();
+    if (!fg) return false;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(fg, &pid);
+    if (pid == GetCurrentProcessId()) return true;
+    HWND game = findGameWindow ? findGameWindow(true) : nullptr;
+    return game && (game == fg || IsChild(fg, game) || IsChild(game, fg));
+}
+
+// Receives an anonymous read-only mapping handle duplicated by our launcher.
+// It contains wheel counters only; there is no keyboard or cursor recording.
+extern "C" __declspec(dllexport) DWORD WINAPI GAYClientConnectWheel(void* remoteHandle) {
+    HANDLE handle = static_cast<HANDLE>(remoteHandle);
+    if (!handle) return 0;
+    auto* view = static_cast<const WheelBridge*>(MapViewOfFile(handle, FILE_MAP_READ, 0, 0, sizeof(WheelBridge)));
+    CloseHandle(handle);
+    if (!view) return 0;
+    if (view->magic != kWheelMagic || view->version != 1) { UnmapViewOfFile(view); return 0; }
+    // Reconnection is supported if the GUI is restarted while the game stays open.
+    AcquireSRWLockExclusive(&externalWheelLock);
+    const WheelBridge* old = externalWheel.exchange(view, std::memory_order_acq_rel);
+    if (old) UnmapViewOfFile(old);
+    ReleaseSRWLockExclusive(&externalWheelLock);
+    return 1;
+}
+static bool takeExternalWheel(int& x, int& y) {
+    AcquireSRWLockShared(&externalWheelLock);
+    const WheelBridge* view = externalWheel.load(std::memory_order_acquire);
+    if (!view) { ReleaseSRWLockShared(&externalWheelLock); return false; }
+    // The producer uses InterlockedExchangeAdd; aligned 32-bit reads are atomic
+    // on Windows x64. Modular differences handle signed counter wraparound.
+    static const WheelBridge* lastView = nullptr;
+    static WheelCounter counter;
+    if (lastView != view) { lastView = view; counter.reset(); }
+    counter.take(static_cast<std::uint32_t>(view->horizontal), static_cast<std::uint32_t>(view->vertical), x, y);
+    ReleaseSRWLockShared(&externalWheelLock);
+    return true;
+}
+
+static bool readGameBytes(std::uint64_t address, void* output, size_t length) {
+    SIZE_T received = 0;
+    return address && ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(address),
+                                        output, length, &received) && received == length;
+}
+static bool supportedGame(std::uint64_t& base) {
+    HMODULE game = GetModuleHandleW(nullptr);
+    if (!game) return false;
+    wchar_t path[32768]{};
+    DWORD n = GetModuleFileNameW(game, path, 32768);
+    if (!n || n >= 32768) return false;
+    const wchar_t* name = wcsrchr(path, L'\\');
+    if (_wcsicmp(name ? name + 1 : path, L"Minecraft.Windows.exe") != 0) return false;
+    base = reinterpret_cast<std::uint64_t>(game);
+    IMAGE_DOS_HEADER dos{}; IMAGE_NT_HEADERS64 nt{};
+    if (!readGameBytes(base, &dos, sizeof(dos)) || dos.e_magic != IMAGE_DOS_SIGNATURE ||
+        dos.e_lfanew <= 0 || dos.e_lfanew > 0x10000 ||
+        !readGameBytes(base + dos.e_lfanew, &nt, sizeof(nt))) return false;
+    return nt.Signature == IMAGE_NT_SIGNATURE && nt.FileHeader.Machine == IMAGE_FILE_MACHINE_AMD64 &&
+           nt.FileHeader.TimeDateStamp == 0x5976da7b && nt.OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC &&
+           nt.OptionalHeader.SizeOfImage > 0x019431e0 + sizeof(std::uint64_t);
+}
+static void patchedText(const char* text, const char* textEnd) {
+    constexpr char placeholder[] = "XYZ: unavailable";
+    bool isCoords = text && (textEnd ? (textEnd >= text && static_cast<size_t>(textEnd - text) == sizeof(placeholder) - 1 &&
+                                          std::memcmp(text, placeholder, sizeof(placeholder) - 1) == 0)
+                                     : std::strcmp(text, placeholder) == 0);
+    if (isCoords) {
+        // Cache briefly, but never display an old position if the read fails.
+        static ULONGLONG next = 0;
+        static bool supported = false, valid = false;
+        static Position115 position{};
+        ULONGLONG now = GetTickCount64();
+        if (now >= next) {
+            next = now + 100;
+            std::uint64_t base = 0;
+            supported = supportedGame(base);
+            valid = supported && readPosition115(base, readGameBytes, position);
+        }
+        if (valid) {
+            char formatted[96]{};
+            const auto blocks = displayPosition115(position);
+            std::snprintf(formatted, sizeof(formatted), "XYZ (test): %d %d %d", blocks.x, blocks.y, blocks.z);
+            realText(formatted, nullptr); return;
+        }
+        realText(supported ? "XYZ: not ready" : "XYZ: unsupported game build", nullptr);
+        return;
+    }
+    realText(text, textEnd);
+}
+// This panel uses the same ImGui context and functions exported by the legacy
+// core. It is a separate window, not a modification of the closed-source
+// original category list. Values are kept only for this game session.
+static void visualSlider(const char* label,VisualParam p,const char* fmt) {
+    if (!guiSliderFloat) { realText("Slider unavailable",nullptr); return; }
+    const auto i=static_cast<std::size_t>(p);
+    if (i>=static_cast<std::size_t>(VisualParam::Count)) return;
+    float value=GetVisualParam(p); const auto spec=visualParamSpecs[i];
+    if (guiSliderFloat(label,&value,spec.low,spec.high,fmt,0)) SetVisualParam(p,value);
+}
+static void visualColor(const char* label,VisualParam r,VisualParam g,VisualParam b) {
+    if (!guiColorEdit3) { realText("Color picker unavailable",nullptr); return; }
+    float color[3]={GetVisualParam(r),GetVisualParam(g),GetVisualParam(b)};
+    if (guiColorEdit3(label,color,0)) {
+        SetVisualParam(r,color[0]); SetVisualParam(g,color[1]); SetVisualParam(b,color[2]);
+    }
+}
+static void drawHatSettings() {
+    bool enabled=ChinaHatEnabled();
+    if (guiCheckbox("China Hat (test)",&enabled)) SetChinaHatEnabled(enabled);
+    bool fill=HatFillEnabled();
+    if (guiCheckbox("Filled hat (test)",&fill)) SetHatFillEnabled(fill);
+    bool rainbow=HatRainbowEnabled();
+    if (guiCheckbox("Rainbow hat",&rainbow)) SetHatRainbowEnabled(rainbow);
+    if (rainbow) visualSlider("Rainbow speed##hat",VisualParam::HatRainbowSpeed,"%.2f");
+    else visualColor("Hat color",VisualParam::HatRed,VisualParam::HatGreen,VisualParam::HatBlue);
+    visualSlider("Opacity (test)##hat",VisualParam::HatOpacity,"%.2f");
+    visualSlider("Radius",VisualParam::HatRadius,"%.2f");
+    visualSlider("Cone height",VisualParam::HatConeHeight,"%.2f");
+    visualSlider("Hat height",VisualParam::HatOffset,"%.2f");
+    visualSlider("Float amount",VisualParam::HatBobAmplitude,"%.2f");
+    visualSlider("Float speed",VisualParam::HatBobSpeed,"%.2f");
+    if (ChinaHatEnabled()) {
+        const int status=ChinaHatStatus();
+        realText(status==1 ? "Hat: submitted" : status==2 ? "Hat: renderer not ready" : "Hat: waiting for player",nullptr);
+        if (fill) { const int fs=HatFillStatus();
+            realText(fs==1?"Fill: submitted (visibility unverified)":fs==2?"Fill: renderer busy":"Fill: waiting",nullptr);
+        }
+    }
+}
+static void drawTrailSettings() {
+    bool enabled=TrailEnabled();
+    if (guiCheckbox("Trail (test)",&enabled)) SetTrailEnabled(enabled);
+    bool fill=TrailFillEnabled();
+    if (guiCheckbox("Filled trail (test)",&fill)) SetTrailFillEnabled(fill);
+    bool rainbow=TrailRainbowEnabled();
+    if (guiCheckbox("Rainbow trail",&rainbow)) SetTrailRainbowEnabled(rainbow);
+    if (rainbow) visualSlider("Rainbow speed##trail",VisualParam::TrailRainbowSpeed,"%.2f");
+    else visualColor("Trail color",VisualParam::TrailRed,VisualParam::TrailGreen,VisualParam::TrailBlue);
+    visualSlider("Opacity (test)##trail",VisualParam::TrailOpacity,"%.2f");
+    visualSlider("Trail height",VisualParam::TrailHeight,"%.2f");
+    visualSlider("Lifetime (seconds)",VisualParam::TrailSeconds,"%.1f");
+    if (TrailEnabled()) {
+        const int status=TrailStatus();
+        realText(status==1 ? "Trail: submitted" : status==2 ? "Trail: renderer not ready" : "Trail: move to create trail",nullptr);
+        if (fill) { const int fs=TrailFillStatus();
+            realText(fs==1?"Fill: submitted (visibility unverified)":fs==2?"Fill: renderer busy":"Fill: waiting",nullptr);
+        }
+    }
+}
+static void drawVisualOptions() {
+    bool tint=VisualTintEnabled();
+    if (guiCheckbox("Enable colors",&tint)) SetVisualTintEnabled(tint);
+    bool gradient=VertexGradientEnabled();
+    if (guiCheckbox("Vertex gradient (test)",&gradient)) SetVertexGradientEnabled(gradient);
+    realText("Gradient and opacity depend on game material.",nullptr);
+    auto diagnostic=[](const char* label,int bits) {
+        char line[120]{};
+        if (!(bits&1)) std::snprintf(line,sizeof(line),"%s: no same-thread context",label);
+        else std::snprintf(line,sizeof(line),"%s: DSV %s, depth %s, blend %s",label,
+            bits&2?"bound":"none",bits&4?"on":"off",bits&8?"on":"off");
+        realText(line,nullptr);
+    };
+    diagnostic("Before UI",VisualDepthBefore()); diagnostic("After UI",VisualDepthAfter());
+    realText("Diagnostics only; not proof of valid scene depth.",nullptr);
+    realText("Settings reset when the game closes.",nullptr);
+    realText("Fill is experimental; uncheck to use lines.",nullptr);
+}
+static void drawVisualPanel() {
+    guiSetNextPos(ImVec2(18.0f,280.0f), ImGuiCond_FirstUseEver, ImVec2(0,0));
+    if (guiSetNextSize) guiSetNextSize(ImVec2(350.0f,410.0f),ImGuiCond_FirstUseEver);
+    const int flags=ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoCollapse;
+    if (guiBegin("Visuals",nullptr,flags)) {
+        if (!ChinaHatAvailable()) realText("Visuals: unsupported game or unavailable",nullptr);
+        else if (guiBeginTabBar && guiBeginTabItem && guiEndTabBar && guiEndTabItem) {
+            if (guiBeginTabBar("##visual_tabs",0)) {
+                if (guiBeginTabItem("China Hat",nullptr,0)) { drawHatSettings(); guiEndTabItem(); }
+                if (guiBeginTabItem("Trail",nullptr,0)) { drawTrailSettings(); guiEndTabItem(); }
+                if (guiBeginTabItem("Options",nullptr,0)) { drawVisualOptions(); guiEndTabItem(); }
+                guiEndTabBar();
+            }
+        } else {
+            realText("China Hat",nullptr); drawHatSettings();
+            realText("Trail",nullptr); drawTrailSettings(); drawVisualOptions();
+        }
+    }
+    guiEnd();
+}
+
+// Draw exactly the same new Module List card in the editor and during play.
+// Existing legacy HUD widgets are not restyled by these settings.
+static void drawModuleHud(void* runtime, bool preview) {
+    if (!runtime || !guiPushColor || !guiPopColor || !guiFontScale) return;
+    auto* s = reinterpret_cast<ag::Settings*>(reinterpret_cast<unsigned char*>(runtime)+0x48);
+    // Position is scaled to a small preview area so X/Y sliders also give
+    // immediate feedback without covering the editor itself.
+    const float x = preview ? 390.f+hudX*180.f : hudX*static_cast<float>(frameWidth);
+    const float y = preview ? 90.f+hudY*180.f : hudY*static_cast<float>(frameHeight);
+    guiSetNextPos(ImVec2(x,y),ImGuiCond_Always,ImVec2(0,0));
+    guiPushColor(ImGuiCol_WindowBg,ImVec4(.045f,.055f,.085f,hudOpacity));
+    guiPushColor(ImGuiCol_Text,ImVec4(hudColor[0],hudColor[1],hudColor[2],1.f));
+    const int flags=ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|
+        ImGuiWindowFlags_NoInputs|ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|
+        ImGuiWindowFlags_NoFocusOnAppearing;
+    if (guiBegin(preview?"##module_hud_preview":"##module_hud",nullptr,flags)) {
+        guiFontScale(hudScale);
+        realText("MODULES",nullptr);
+        module_hud::labels(s->enabled,ChinaHatEnabled(),TrailEnabled(),[](const char* label) { realText(label,nullptr); });
+    }
+    guiEnd(); guiPopColor(2);
+}
+static void patchedDrawHud(void* runtime) {
+    const bool menu=runtime && *(reinterpret_cast<unsigned char*>(runtime)+0x551);
+    const bool editing=module_hud::editing(menu,hudEditorOpen);
+    hudEditorActive.store(editing,std::memory_order_release);
+    if (!editing) {
+        realDrawHud(runtime);
+        if (moduleHudEnabled) drawModuleHud(runtime,false);
+    }
+}
+static void patchedNotificationDraw(void* queue, const ag::Settings& s) {
+    if (!hudEditorActive.load(std::memory_order_acquire)) realNotificationDraw(queue,s);
+}
+static void drawHudEditor(void* runtime) {
+    guiSetNextPos(ImVec2(18.f,90.f),ImGuiCond_Always,ImVec2(0,0));
+    if (guiSetNextSize) guiSetNextSize(ImVec2(350.f,350.f),ImGuiCond_FirstUseEver);
+    if (guiBegin("HUD editor",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
+        guiCheckbox("Open editor",&hudEditorOpen);
+        guiCheckbox("Module List HUD",&moduleHudEnabled);
+        if (guiSliderFloat) {
+            guiSliderFloat("Scale",&hudScale,.7f,1.6f,"%.2f",0);
+            guiSliderFloat("Background opacity",&hudOpacity,0.f,1.f,"%.2f",0);
+            guiSliderFloat("Position X",&hudX,0.f,.9f,"%.2f",0);
+            guiSliderFloat("Position Y",&hudY,0.f,.9f,"%.2f",0);
+        }
+        if (guiColorEdit3) guiColorEdit3("Text color",hudColor,0);
+        realText("Preview is on the right; close editor to return.",nullptr);
+        realText("Settings reset after closing the game.",nullptr);
+        if (!notificationHookReady) realText("Notifications may remain visible.",nullptr);
+    }
+    guiEnd();
+    if (hudEditorOpen) drawModuleHud(runtime,true);
+}
+static void drawHudEntry() {
+    if (!hudHooksReady) return;
+    guiSetNextPos(ImVec2(18.f,130.f),ImGuiCond_FirstUseEver,ImVec2(0,0));
+    if (guiBegin("HUD",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoCollapse))
+        guiCheckbox("Open Module List editor",&hudEditorOpen);
+    guiEnd();
+}
+
+static void patchedDrawGui(void* runtime) {
+    // The old loop never calls RequestUnload for Delete. This is an explicit
+    // one-way overlay stop, NOT a DLL unload: callbacks and hooks remain pinned.
+    bool down = pageKeysReady && keyDown && keyDown(VK_DELETE);
+    bool editing = getIO && getIO().WantTextInput;
+    if (disableHotkey.update(down, down && gameIsForeground(), editing)) {
+        overlayDisabled.store(true, std::memory_order_release);
+        SetChinaHatEnabled(false);
+        SetTrailEnabled(false);
+        if (bridgeActive) bridgeActive(false);
+        DisableUwpExtraInput();
+        log("overlay disabled by Delete; DLLs remain loaded until game exit");
+        return;
+    }
+    const bool menuOpen=runtime && *(reinterpret_cast<unsigned char*>(runtime)+0x551);
+    if (!menuOpen) hudEditorOpen=false;
+    if (!menuOpen || !hudEditorOpen) realDrawGui(runtime);
+    if (menuOpen && hudEditorOpen && hudHooksReady) { drawHudEditor(runtime); return; }
+    // Exact legacy build layout, verified against the original binary.
+    if (!runtime || !*(reinterpret_cast<unsigned char*>(runtime) + 0x551)) return;
+    auto* settings = reinterpret_cast<ag::Settings*>(reinterpret_cast<unsigned char*>(runtime) + 0x48);
+    bool enabled = settings->enabled[static_cast<size_t>(ag::ModuleId::Coordinates)];
+    guiSetNextPos(ImVec2(18.0f, 235.0f), ImGuiCond_FirstUseEver, ImVec2(0, 0));
+    const int flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                      ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse;
+    if (guiBegin("##coordinate_switch_115", nullptr, flags)) {
+        if (guiCheckbox("Coordinates (test)", &enabled)) setModule(runtime, ag::ModuleId::Coordinates, enabled);
+    }
+    guiEnd();
+    drawVisualPanel();
+    drawHudEntry();
+}
+
+// Called from legacy drawMarker, while its own render lock is held. The ImGui
+// context is created there immediately before this function is first called.
+static void patchedNewFrame() {
+    ImGuiIO& io = getIO();
+    if (!io.BackendRendererUserData && frameDevice && frameContext) {
+        // The legacy bootstrap creates a context but never installs its bundled
+        // Cyrillic font. Load it before DX11 builds the atlas on the first frame.
+        if (io.Fonts && io.Fonts->Fonts.Size == 0) {
+            ImFont* font = addFont(16.0f, false);
+            if (font) io.FontDefault = font;
+            else log("could not load embedded Cyrillic font");
+        }
+        if (!rendererInit(frameDevice, frameContext)) log("ImGui DX11 initialization failed");
+    }
+    io.DisplaySize = ImVec2(static_cast<float>(frameWidth), static_cast<float>(frameHeight));
+    int wheelX = 0, wheelY = 0;
+    TakeUwpWheel(wheelX, wheelY);
+    // Prefer the external wheel-only bridge when connected; otherwise use UWP.
+    // Do not add both, or one physical wheel movement could scroll twice.
+    takeExternalWheel(wheelX, wheelY);
+    if (pointerInUse && (wheelX || wheelY)) addWheel(&io, wheelX / 120.0f, wheelY / 120.0f);
+    const float pageWheel = pageScroll.step(pointerInUse && pageKeysReady,
+        pageKeysReady && keyDown(VK_PRIOR), pageKeysReady && keyDown(VK_NEXT), GetTickCount64());
+    if (pageWheel != 0.0f) addWheel(&io, 0.0f, pageWheel);
+    LARGE_INTEGER now{};
+    QueryPerformanceCounter(&now);
+    if (lastFrame.QuadPart && frequency.QuadPart && now.QuadPart > lastFrame.QuadPart) {
+        double seconds = double(now.QuadPart - lastFrame.QuadPart) / double(frequency.QuadPart);
+        io.DeltaTime = static_cast<float>(seconds > 0.25 ? 0.25 : seconds);
+    } else io.DeltaTime = 1.0f / 60.0f;
+    lastFrame = now;
+    realNewFrame();
+}
+
+// The legacy loop calls Update six times; later calls erase key transitions.
+static void patchedUpdate(void* input, const void* settings, bool targetFocused, bool appFocused) {
+    if (insidePresent) {
+        if (seenInput) return;
+        seenInput = true;
+    }
+    realUpdate(input, settings, targetFocused, appFocused);
+}
+
+// Request the scroll and stop keys from the existing UWP polling bridge.
+// No key or wheel activity is stored on disk.
+static void patchedWatchedKeys(const std::array<bool, 256>& requested) {
+    auto keys = requested;
+    keys[VK_PRIOR] = true;
+    keys[VK_NEXT] = true;
+    keys[VK_DELETE] = true;
+    realWatchedKeys(keys);
+}
+
+// Use coordinates relative to the actual client area, not the UWP screen /
+// non-client origin. All Win32 values are obtained on the same thread, so
+// Windows DPI virtualization affects cursor and client rectangle consistently.
+// If these APIs are unavailable in AppContainer, retain the legacy UWP input.
+static bool patchedPointer(float& x, float& y, float& w, float& h) {
+    pointerInUse = true;
+    // CoreWindow bounds describe the non-client origin in DIPs. Subtract it
+    // on the dispatcher thread's consistent sample before scaling to DXGI pixels.
+    if (GetSampledUwpPointer(x, y, w, h)) return true;
+    if (!pointerWindow || !IsWindow(pointerWindow)) pointerWindow = findGameWindow(true);
+    RECT client{};
+    POINT position{};
+    if (pointerWindow && GetClientRect(pointerWindow, &client) && GetCursorPos(&position) &&
+        ScreenToClient(pointerWindow, &position) &&
+        client_pointer(static_cast<float>(position.x - client.left),
+                       static_cast<float>(position.y - client.top),
+                       static_cast<float>(client.right - client.left),
+                       static_cast<float>(client.bottom - client.top), x, y, w, h)) return true;
+    return realPointer(x, y, w, h);
+}
+
+// The legacy bridge already dispatches this tick on the CoreWindow UI thread.
+// Attach the wheel listener and sample CoreWindow bounds on that same thread.
+static HRESULT patchedTick(void* instance) {
+    HRESULT result = realTick(instance);
+    if (!overlayDisabled.load(std::memory_order_acquire)) SampleUwpInput();
+    return result;
+}
+
+// Increase the default only. A saved profile may supply its own scale and the
+// user can still change it in Settings -> UI Scale.
+static void patchedSettingsCtor(ag::Settings* settings) {
+    realSettingsCtor(settings);
+    settings->uiScale = 1.20f;
+}
+
+static void draw(IDXGISwapChain* chain, UINT flags) {
+    if (overlayDisabled.load(std::memory_order_acquire) || !chain || (flags & DXGI_PRESENT_TEST)) return;
+    ID3D11Device* device = nullptr;
+    ID3D11DeviceContext* context = nullptr;
+    ID3D11Texture2D* back = nullptr;
+    if (SUCCEEDED(chain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&device))) && device &&
+        SUCCEEDED(chain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&back))) && back) {
+        D3D11_TEXTURE2D_DESC desc{};
+        back->GetDesc(&desc);
+        if (desc.Width >= 320 && desc.Height >= 200) {
+            device->GetImmediateContext(&context);
+            if (context) {
+                ObserveVisualContext(context);
+                frameDevice = device; frameContext = context;
+                frameWidth = desc.Width; frameHeight = desc.Height; seenInput = false; pointerInUse = false;
+                legacyPresent(chain, 0, flags);
+                frameDevice = nullptr; frameContext = nullptr;
+            }
+        }
+    }
+    release(back); release(context); release(device);
+}
+static HRESULT STDMETHODCALLTYPE hookPresent(IDXGISwapChain* chain, UINT sync, UINT flags) {
+    if (insidePresent) return realPresent(chain, sync, flags);
+    insidePresent = true;
+    draw(chain, flags);
+    HRESULT result = realPresent(chain, sync, flags);
+    insidePresent = false;
+    return result;
+}
+static HRESULT STDMETHODCALLTYPE hookPresent1(IDXGISwapChain1* chain, UINT sync, UINT flags, const DXGI_PRESENT_PARAMETERS* params) {
+    if (insidePresent) return realPresent1(chain, sync, flags, params);
+    insidePresent = true;
+    draw(chain, flags);
+    HRESULT result = realPresent1(chain, sync, flags, params);
+    insidePresent = false;
+    return result;
+}
+
+static bool findSwapChainMethods(void*& present, void*& present1) {
+    ID3D11Device* device = nullptr;
+    ID3D11DeviceContext* context = nullptr;
+    IDXGIDevice* dxgiDevice = nullptr;
+    IDXGIAdapter* adapter = nullptr;
+    IDXGIFactory2* factory = nullptr;
+    IDXGISwapChain1* chain = nullptr;
+    D3D_FEATURE_LEVEL level{};
+    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &device, &level, &context);
+    if (SUCCEEDED(hr)) hr = device->QueryInterface(__uuidof(IDXGIDevice), reinterpret_cast<void**>(&dxgiDevice));
+    if (SUCCEEDED(hr)) hr = dxgiDevice->GetAdapter(&adapter);
+    if (SUCCEEDED(hr)) hr = adapter->GetParent(__uuidof(IDXGIFactory2), reinterpret_cast<void**>(&factory));
+    if (SUCCEEDED(hr)) {
+        DXGI_SWAP_CHAIN_DESC1 desc{};
+        desc.Width = 2; desc.Height = 2; desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        desc.SampleDesc.Count = 1; desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+        desc.BufferCount = 2; desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+        desc.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
+        hr = factory->CreateSwapChainForComposition(device, &desc, nullptr, &chain);
+    }
+    if (SUCCEEDED(hr) && chain) {
+        void** vtable = *reinterpret_cast<void***>(chain);
+        present = vtable[8]; present1 = vtable[22];
+    } else {
+        char message[96]; std::snprintf(message, sizeof(message), "dummy DX11 swap chain failed: 0x%08lx", static_cast<unsigned long>(hr)); log(message);
+    }
+    release(chain); release(factory); release(adapter); release(dxgiDevice); release(context); release(device);
+    return present && present1 && present != present1;
+}
+
+static DWORD WINAPI bootstrap(void*) {
+    // Never unload this module while its detours are installed.
+    HMODULE pinned = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                            reinterpret_cast<LPCWSTR>(&bootstrap), &pinned)) { log("could not pin bootstrap"); return 1; }
+    wchar_t path[32768]{};
+    DWORD n = GetModuleFileNameW(selfModule, path, static_cast<DWORD>(sizeof(path) / sizeof(path[0])));
+    if (!n || n >= sizeof(path) / sizeof(path[0])) { log("cannot find bootstrap path"); return 1; }
+    wchar_t* slash = wcsrchr(path, L'\\');
+    if (!slash || static_cast<size_t>(slash - path) + 20 >= sizeof(path) / sizeof(path[0])) { log("invalid bootstrap path"); return 1; }
+    wcscpy(slash + 1, L"GAYClientCore.dll");
+    core = LoadLibraryW(path);
+    if (!core) { log("cannot load GAYClientCore.dll; check path and AppContainer access"); return 1; }
+    auto mhInit = symbol<InitFn>("MH_Initialize");
+    auto mhCreate = symbol<HookFn>("MH_CreateHook");
+    auto mhQueueEnable = symbol<ToggleFn>("MH_QueueEnableHook");
+    auto mhApply = symbol<InitFn>("MH_ApplyQueued");
+    auto mhDisable = symbol<ToggleFn>("MH_DisableHook");
+    auto mhEnable = symbol<ToggleFn>("MH_EnableHook");
+    auto mhRemove = symbol<ToggleFn>("MH_RemoveHook");
+    auto bridgeInit = symbol<BridgeInitFn>("_ZN2ag19InitializeUwpBridgeEv");
+    bridgeActive = symbol<BridgeActiveFn>("_ZN2ag17SetUwpInputActiveEb");
+    void* newFrameTarget = reinterpret_cast<void*>(GetProcAddress(core, "_Z23ImGui_ImplDX11_NewFramev"));
+    void* updateTarget = reinterpret_cast<void*>(GetProcAddress(core, "_ZN2ag10InputState6UpdateERKNS_8SettingsEbb"));
+    void* pointerTarget = reinterpret_cast<void*>(GetProcAddress(core, "_ZN2ag10UwpPointerERfS0_S0_S0_"));
+    void* settingsTarget = reinterpret_cast<void*>(GetProcAddress(core, "_ZN2ag8SettingsC1Ev"));
+    void* watchedTarget = reinterpret_cast<void*>(GetProcAddress(core, "_ZN2ag17UwpSetWatchedKeysERKSt5arrayIbLy256EE"));
+    keyDown = symbol<KeyDownFn>("_ZN2ag10UwpKeyDownEi");
+    void* textTarget = reinterpret_cast<void*>(GetProcAddress(core, "_ZN5ImGui15TextUnformattedEPKcS1_"));
+    void* drawGuiTarget = reinterpret_cast<void*>(GetProcAddress(core, "_ZN2ag12DrawClickGuiERNS_7RuntimeE"));
+    setModule = symbol<SetModuleFn>("_ZN2ag7Runtime9SetModuleENS_8ModuleIdEb");
+    guiBegin = symbol<BeginFn>("_ZN5ImGui5BeginEPKcPbi");
+    guiEnd = symbol<EndFn>("_ZN5ImGui3EndEv");
+    guiCheckbox = symbol<CheckboxFn>("_ZN5ImGui8CheckboxEPKcPb");
+    guiSliderFloat = symbol<SliderFloatFn>("_ZN5ImGui11SliderFloatEPKcPfffS1_i");
+    guiSetNextSize = symbol<SetNextSizeFn>("_ZN5ImGui17SetNextWindowSizeERK6ImVec2i");
+    guiBeginTabBar = symbol<BeginTabBarFn>("_ZN5ImGui11BeginTabBarEPKci");
+    guiEndTabBar = symbol<EndTabFn>("_ZN5ImGui9EndTabBarEv");
+    guiBeginTabItem = symbol<BeginTabItemFn>("_ZN5ImGui12BeginTabItemEPKcPbi");
+    guiEndTabItem = symbol<EndTabFn>("_ZN5ImGui10EndTabItemEv");
+    guiColorEdit3 = symbol<ColorEdit3Fn>("_ZN5ImGui10ColorEdit3EPKcPfi");
+    guiPushColor = symbol<PushColorFn>("_ZN5ImGui14PushStyleColorEiRK6ImVec4");
+    guiPopColor = symbol<PopColorFn>("_ZN5ImGui13PopStyleColorEi");
+    guiFontScale = symbol<FontScaleFn>("_ZN5ImGui18SetWindowFontScaleEf");
+    guiSetNextPos = symbol<SetNextPosFn>("_ZN5ImGui16SetNextWindowPosERK6ImVec2iS2_");
+    findGameWindow = symbol<FindWindowFn>("_ZN2ag19FindMinecraftWindowEb");
+    addFont = symbol<AddFontFn>("_ZN2ag15AddEmbeddedFontEfb");
+    addWheel = symbol<AddWheelFn>("_ZN7ImGuiIO18AddMouseWheelEventEff");
+    // This non-exported dispatcher callback is specific to the documented core
+    // build. Verify its known prologue before treating its RVA as code.
+    auto* tickTarget = reinterpret_cast<unsigned char*>(core) + 0x2060;
+    static const unsigned char expectedTick[] = {0x41,0x55,0x41,0x54,0x55,0x57,0x56,0x53,0x48,0x83,0xec,0x68};
+    bool tickHook = std::memcmp(tickTarget, expectedTick, sizeof(expectedTick)) == 0;
+    if (!tickHook) log("unsupported core input callback; using legacy input only");
+    legacyPresent = symbol<LegacyPresentFn>("_Z11PresentHookP14IDXGISwapChainjj");
+    rendererInit = symbol<RendererInitFn>("_Z19ImGui_ImplDX11_InitP12ID3D11DeviceP19ID3D11DeviceContext");
+    getIO = symbol<GetIOFn>("_ZN5ImGui5GetIOEv");
+    if (!mhInit || !mhCreate || !mhQueueEnable || !mhApply || !mhDisable || !bridgeInit || !bridgeActive || !newFrameTarget || !updateTarget || !pointerTarget || !settingsTarget || !findGameWindow || !addFont || !addWheel || !legacyPresent || !rendererInit || !getIO) { log("legacy DLL exports do not match expected version"); return 1; }
+    log(suppressMouseDiagnostic() ? "mouse diagnostic suppressed" : "mouse diagnostic patch skipped: core mismatch or protection failure");
+    void* present = nullptr; void* present1 = nullptr;
+    if (!findSwapChainMethods(present, present1)) return 1;
+    if (mhInit() != 0) { log("MinHook initialization failed"); return 1; }
+    if (mhCreate(newFrameTarget, reinterpret_cast<void*>(&patchedNewFrame), reinterpret_cast<void**>(&realNewFrame)) != 0 ||
+        mhCreate(updateTarget, reinterpret_cast<void*>(&patchedUpdate), reinterpret_cast<void**>(&realUpdate)) != 0 ||
+        mhCreate(pointerTarget, reinterpret_cast<void*>(&patchedPointer), reinterpret_cast<void**>(&realPointer)) != 0 ||
+        mhCreate(settingsTarget, reinterpret_cast<void*>(&patchedSettingsCtor), reinterpret_cast<void**>(&realSettingsCtor)) != 0 ||
+        mhCreate(present, reinterpret_cast<void*>(&hookPresent), reinterpret_cast<void**>(&realPresent)) != 0 ||
+        mhCreate(present1, reinterpret_cast<void*>(&hookPresent1), reinterpret_cast<void**>(&realPresent1)) != 0) { log("hook creation failed"); return 1; }
+    bool coordHooks = textTarget && drawGuiTarget && setModule && guiBegin && guiEnd && guiCheckbox && guiSetNextPos &&
+        mhCreate(textTarget, reinterpret_cast<void*>(&patchedText), reinterpret_cast<void**>(&realText)) == 0 &&
+        mhCreate(drawGuiTarget, reinterpret_cast<void*>(&patchedDrawGui), reinterpret_cast<void**>(&realDrawGui)) == 0;
+    if (!coordHooks) log("coordinate display hooks unavailable");
+    void* hudTarget = reinterpret_cast<void*>(GetProcAddress(core,"_ZN2ag7DrawHudERNS_7RuntimeE"));
+    void* notifyTarget = reinterpret_cast<void*>(GetProcAddress(core,"_ZN2ag17NotificationQueue4DrawERKNS_8SettingsE"));
+    // Optional HUD hooks are enabled only after the essential overlay is live;
+    // failure must not prevent the verified overlay from starting.
+    const bool hudHookCreated = coordHooks && mhEnable && mhRemove && hudTarget && guiPushColor && guiPopColor && guiFontScale &&
+        mhCreate(hudTarget,reinterpret_cast<void*>(&patchedDrawHud),reinterpret_cast<void**>(&realDrawHud))==0;
+    bool pageKeyHook = watchedTarget && keyDown &&
+        mhCreate(watchedTarget, reinterpret_cast<void*>(&patchedWatchedKeys), reinterpret_cast<void**>(&realWatchedKeys)) == 0;
+    pageKeysReady = pageKeyHook;
+    if (!pageKeyHook) log("PageUp/PageDown fallback unavailable");
+    if (tickHook && mhCreate(tickTarget, reinterpret_cast<void*>(&patchedTick), reinterpret_cast<void**>(&realTick)) != 0) {
+        tickHook = false;
+        log("UWP input hook unavailable; using legacy input only");
+    }
+    QueryPerformanceFrequency(&frequency);
+    bridgeInit();
+    bridgeActive(true);
+    if (mhQueueEnable(newFrameTarget) || mhQueueEnable(updateTarget) ||
+        mhQueueEnable(pointerTarget) || mhQueueEnable(settingsTarget) || (pageKeyHook && mhQueueEnable(watchedTarget)) || (tickHook && mhQueueEnable(tickTarget)) ||
+        (coordHooks && (mhQueueEnable(textTarget) || mhQueueEnable(drawGuiTarget))) ||
+        mhQueueEnable(present) || mhQueueEnable(present1) || mhApply()) {
+        mhDisable(present1); mhDisable(present); if (hudHookCreated) mhRemove(hudTarget); if (coordHooks) { mhDisable(textTarget); mhDisable(drawGuiTarget); }
+        if (tickHook) mhDisable(tickTarget); if (pageKeyHook) mhDisable(watchedTarget); mhDisable(settingsTarget);
+        mhDisable(pointerTarget); mhDisable(updateTarget); mhDisable(newFrameTarget);
+        log("hook enable failed; attempted to disable hooks"); return 1;
+    }
+    log("hooks enabled");
+    if (hudHookCreated) {
+        if (mhEnable(hudTarget)==0) hudHooksReady.store(true,std::memory_order_release);
+        else { mhRemove(hudTarget); log("HUD editor unavailable"); }
+    }
+    if (hudHooksReady && notifyTarget && mhCreate(notifyTarget,reinterpret_cast<void*>(&patchedNotificationDraw),reinterpret_cast<void**>(&realNotificationDraw))==0) {
+        notificationHookReady = mhEnable(notifyTarget)==0;
+        if (!notificationHookReady) mhRemove(notifyTarget);
+    }
+    // Hat is optional and must never block the already working overlay.
+    // Private game-render hooks are deferred until the user checks the box.
+    try { InitializeChinaHat(mhCreate,mhEnable,mhDisable,mhRemove); }
+    catch (...) { log("China Hat initialization failed; overlay remains available"); }
+    return 0;
+}
+
+BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID) {
+    if (reason == DLL_PROCESS_ATTACH) {
+        selfModule = module;
+        DisableThreadLibraryCalls(module);
+        HANDLE thread = CreateThread(nullptr, 0, bootstrap, nullptr, 0, nullptr);
+        if (thread) CloseHandle(thread);
+    }
+    return TRUE;
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/compat.cpp
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/hud_module_list.h
+================================================================================
+#pragma once
+#include "settings.h"
+#include <array>
+namespace module_hud {
+struct Entry { ag::ModuleId id; const char* name; };
+inline constexpr Entry entries[] = {{ag::ModuleId::Fps,"FPS"},{ag::ModuleId::Cps,"CPS"},
+ {ag::ModuleId::Clock,"Clock"},{ag::ModuleId::Cpu,"CPU"},{ag::ModuleId::Ram,"RAM"},
+ {ag::ModuleId::Resolution,"Resolution"},{ag::ModuleId::Keystrokes,"Keystrokes"},
+ {ag::ModuleId::Watermark,"Watermark"},{ag::ModuleId::Information,"Information"},
+ {ag::ModuleId::Notifications,"Notifications"},{ag::ModuleId::ActiveModules,"Active Modules"},
+ {ag::ModuleId::Hotkeys,"Hotkeys"},{ag::ModuleId::Coordinates,"Coordinates"}};
+inline bool editing(bool menuOpen,bool editorOpen) { return menuOpen && editorOpen; }
+template<class Emit> void labels(const std::array<bool,ag::kModuleCount>& enabled, bool hat, bool trail, Emit emit) {
+ bool any=false;
+ for (const auto& e:entries) if (ag::ModuleAvailable(e.id) && enabled[static_cast<std::size_t>(e.id)]) { emit(e.name); any=true; }
+ if (hat) { emit("China Hat"); any=true; }
+ if (trail) { emit("Trail"); any=true; }
+ if (!any) emit("No active modules");
+}
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/hud_module_list.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/settings.h
+================================================================================
+#pragma once
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <string_view>
+
+namespace ag {
+
+inline constexpr const char* kVersion = "0.3.5-mouse-test";
+
+enum class ModuleId : std::size_t {
+    Fps, Cps, Clock, Session, Date, SystemTime, Cpu, Ram, Resolution,
+    WindowTitle, Keystrokes, Watermark, Information, Notifications,
+    ActiveModules, Hotkeys, TimeIndicator, Coordinates, Count
+};
+inline constexpr std::size_t kModuleCount = static_cast<std::size_t>(ModuleId::Count);
+constexpr bool ModuleAvailable(ModuleId id) {
+    return static_cast<std::size_t>(id) < kModuleCount && id != ModuleId::Session && id != ModuleId::Date &&
+           id != ModuleId::SystemTime && id != ModuleId::WindowTitle && id != ModuleId::TimeIndicator;
+}
+inline constexpr std::size_t kPageCount = 4;
+inline constexpr std::size_t kPanelCount = 6;
+enum class PanelId : std::size_t { Home, Hud, Modules, Appearance, Layout, Settings };
+inline constexpr std::array<std::size_t,5> kDisplayedPanelIds{{0,1,2,3,5}};
+
+struct ModuleInfo {
+    ModuleId id;
+    const char* name;
+    const char* category;
+    const char* description;
+    bool defaultEnabled;
+};
+extern const std::array<ModuleInfo, kModuleCount> kModules;
+
+enum class EffectId : std::size_t {
+    Fade, Slide, Glow, Hover, Borders, Particles, ColorPulse,
+    Notifications, ButtonPress, Count
+};
+inline constexpr std::size_t kEffectCount = static_cast<std::size_t>(EffectId::Count);
+struct EffectInfo { EffectId id; const char* name; const char* description; };
+extern const std::array<EffectInfo, kEffectCount> kEffects;
+
+struct ThemePreset {
+    const char* name;
+    std::array<float, 4> accent;
+    std::array<float, 4> text;
+    std::array<float, 4> background;
+    std::array<float, 4> panel;
+};
+inline constexpr std::size_t kThemeCount = 6;
+extern const std::array<ThemePreset, kThemeCount> kThemes;
+
+struct KeyChoice { int vk; const char* name; };
+extern const std::array<KeyChoice, 20> kKeyChoices;
+bool IsBindableKey(int key, bool allowNone = true);
+const char* KeyName(int key);
+
+struct Settings {
+    std::array<bool, kModuleCount> enabled{};
+    std::array<int, kModuleCount> keys{};
+    std::array<int, kPageCount> navigationOrder{{0,1,2,3}};
+    std::array<bool, kPanelCount> panelVisible{};
+    std::array<bool, kPanelCount> panelExpanded{};
+    int menuKey = 0xA1;
+    int panicKey = 0x2E;
+    int theme = 0;
+    std::array<float, 4> accent{};
+    std::array<float, 4> text{};
+    std::array<float, 4> background{};
+    float opacity = 0.94f;
+    float glow = 0.65f;
+    float rounding = 10.0f;
+    float uiScale = 1.0f;
+    float hudScale = 1.0f;
+    float brightness = 1.0f;
+    float animationSpeed = 1.0f;
+    int refreshHz = 60;
+    bool effectsEnabled = true;
+    std::array<bool, kEffectCount> effects{};
+    float effectIntensity = 0.80f;
+    float keystrokeScale = 1.0f;
+    std::array<float, 4> keyActive{};
+    std::array<float, 3> coordinates{};
+    int coordinatePrecision = 1;
+    bool coordinateLabels = true;
+
+    Settings();
+    bool IsEnabled(ModuleId id) const { return ModuleAvailable(id) && enabled[static_cast<std::size_t>(id)]; }
+    bool Effect(EffectId id) const { return effectsEnabled && effects[static_cast<std::size_t>(id)]; }
+    void SelectTheme(int index);
+    bool ReorderNavigation(int movedPage, int targetPage);
+    void Normalize();
+    std::size_t EnabledCount() const;
+};
+
+} // namespace ag
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/settings.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/china_hat_native.cpp
+================================================================================
+// Experimental rendering adapter for the user's exact 1.1.5 executable.
+// The design was researched independently from public version-specific
+// entry-point descriptions; it does not embed or redistribute their code.
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include "china_hat_native.h"
+#include "china_hat_validation.h"
+#include "china_hat_lines.h"
+#include "china_hat_hash.h"
+#include "visual_trail.h"
+#include "china_hat_player.h"
+#include "visual_hooks.h"
+#include "visual_color.h"
+#include "visual_ribbon.h"
+#include "visual_gradient.h"
+#include <d3d11.h>
+#include "hat_animation.h"
+#include <bcrypt.h>
+#include <atomic>
+#include <cstdint>
+#include <cstring>
+#include <cmath>
+#include <algorithm>
+
+namespace {
+using ClientTick = void (*)(void*,int,int);
+using PlayerRender = std::intptr_t (*)(void*,void*,void*,void*,float);
+using ScreenRender = void (*)(void*,void*);
+using TessBegin = void (*)(void*,std::uint8_t,int);
+using TessColor = void (*)(void*,std::uint8_t,std::uint8_t,std::uint8_t,std::uint8_t);
+using TessVertex = void (*)(void*,float,float,float);
+using TessDraw = void (*)(void*,void*,std::int64_t);
+using TessEnd = void (*)(void*,void*,std::int64_t,std::uint8_t);
+constexpr std::uint32_t playerRva=0x581910, screenRva=0x3528c0, clientTickRva=0x11b2d0, beginRva=0x5d0660,
+ colorRva=0x5d0890, vertexRva=0x5d0a90, drawRva=0x5d1840, endRva=0x5d14f0;
+constexpr std::uint32_t originRva=0x19436e8, tessRva=0x1925550, contextRva=0x1913b40,
+ shaderColorRva=0x192ae08, shaderFlagRva=0x192ae18;
+std::atomic<bool> available{false}, enabled{false};
+// Modules remain off until the user explicitly enables them. Defaults configure
+// the requested filled/rainbow appearance, with a wireframe fallback in Visuals.
+std::atomic<bool> trailEnabled{false}, materialTint{true}, hatFill{true}, trailFill{true};
+std::atomic<bool> hatRainbow{true}, trailRainbow{true}, vertexGradient{false};
+struct ParamStorage {
+ std::atomic<float> values[static_cast<std::size_t>(VisualParam::Count)]{};
+ ParamStorage() { for (std::size_t i=0;i<static_cast<std::size_t>(VisualParam::Count);++i) values[i].store(visualParamSpecs[i].value); }
+} params;
+float param(VisualParam p) { return params.values[static_cast<std::size_t>(p)].load(std::memory_order_acquire); }
+// Diagnostics only: record OM bindings before and after the existing screen
+// hook, never modify depth/blend. A bound DSV is not proof of valid scene depth.
+SRWLOCK contextLock=SRWLOCK_INIT;
+ID3D11DeviceContext* observedContext=nullptr;
+DWORD observedThread=0;
+std::atomic<int> depthBefore{0}, depthAfter{0};
+void sampleOutputMerger(std::atomic<int>& target) {
+ ID3D11DeviceContext* ctx=nullptr;
+ AcquireSRWLockShared(&contextLock);
+ if (observedContext && observedThread==GetCurrentThreadId()) { ctx=observedContext; ctx->AddRef(); }
+ ReleaseSRWLockShared(&contextLock);
+ if (!ctx) { target.store(0,std::memory_order_relaxed); return; }
+ ID3D11DepthStencilView* dsv=nullptr; ctx->OMGetRenderTargets(0,nullptr,&dsv);
+ ID3D11DepthStencilState* depth=nullptr; UINT ref=0; ctx->OMGetDepthStencilState(&depth,&ref);
+ D3D11_DEPTH_STENCIL_DESC desc{};
+ if (depth) depth->GetDesc(&desc);
+ // D3D11 default null depth state enables LESS depth test and writes.
+ int bits=1 | (dsv?2:0) | ((!depth || desc.DepthEnable)?4:0);
+ ID3D11BlendState* blend=nullptr; FLOAT factors[4]{}; UINT mask=0;
+ ctx->OMGetBlendState(&blend,factors,&mask);
+ D3D11_BLEND_DESC blendDesc{}; if (blend) blend->GetDesc(&blendDesc);
+ if (blend && blendDesc.RenderTarget[0].BlendEnable) bits |= 8;
+ if (blend) blend->Release(); if (depth) depth->Release(); if (dsv) dsv->Release(); ctx->Release();
+ target.store(bits,std::memory_order_relaxed);
+}
+std::atomic<unsigned> trailGeneration{0};
+thread_local visual_trail::History trail;
+thread_local unsigned seenTrailGeneration=0;
+// 0 waiting for a player, 1 submitted to GPU, 2 game renderer busy/unavailable.
+std::atomic<int> hatStatus{0}, trailStatus{0}, hatFillStatus{0}, trailFillStatus{0};
+std::atomic<ULONGLONG> lastHatSubmit{0}, lastTrailSubmit{0};
+bool anyVisual() { return enabled.load(std::memory_order_acquire) || trailEnabled.load(std::memory_order_acquire); }
+// 0 = not attempted, 1 = installing, 2 = installed, 3 = failed.
+std::atomic<int> hookState{0};
+HatCreateHook createHook=nullptr; HatToggleHook enableHook=nullptr, disableHook=nullptr, removeHook=nullptr;
+std::uintptr_t base=0;
+ClientTick originalTick=nullptr;
+std::atomic<std::uintptr_t> clientInstance{0};
+std::atomic<ULONGLONG> lastClientTick{0};
+PlayerRender originalPlayer=nullptr;
+ScreenRender originalScreen=nullptr;
+TessBegin tessBegin=nullptr; TessColor tessColor=nullptr; TessVertex tessVertex=nullptr;
+TessDraw tessDraw=nullptr; TessEnd tessEnd=nullptr;
+struct PlayerFrame { china_hat::Point world{}; float height=0; std::uintptr_t entity=0; ULONGLONG at=0; bool valid=false; };
+thread_local PlayerFrame frame;
+thread_local bool inScreen=false;
+void log(const char* s) { OutputDebugStringA("GAYClient China Hat: "); OutputDebugStringA(s); OutputDebugStringA("\n"); }
+
+bool read(std::uintptr_t p, void* out, std::size_t n) {
+ SIZE_T got=0;
+ return p && ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(p),out,n,&got) && got==n;
+}
+template<class T> bool fetch(std::uintptr_t p, T& out) { return read(p,&out,sizeof(out)); }
+// Only a recent ClientInstance's local-player slot is accepted. The old
+// 0x1921df8 chain is deliberately not a fallback: on a server it can identify
+// a different player while still returning plausible coordinates.
+bool localPlayer(std::uintptr_t& result) {
+ auto observed=clientInstance.load(std::memory_order_acquire);
+ auto tick=lastClientTick.load(std::memory_order_acquire);
+ if (!hat_player::fromClient(observed,tick,GetTickCount64(),
+     [](std::uintptr_t address,std::uintptr_t& value) { return fetch(address,value); },result)) return false;
+ if (clientInstance.load(std::memory_order_acquire)!=observed) { result=0; return false; }
+ return true;
+}
+bool writable(std::uintptr_t p, std::size_t n) {
+ MEMORY_BASIC_INFORMATION m{};
+ if (!VirtualQuery(reinterpret_cast<void*>(p),&m,sizeof(m)) || m.State!=MEM_COMMIT || (m.Protect&(PAGE_GUARD|PAGE_NOACCESS))) return false;
+ DWORD prot=m.Protect & 0xff;
+ if (prot!=PAGE_READWRITE && prot!=PAGE_WRITECOPY && prot!=PAGE_EXECUTE_READWRITE && prot!=PAGE_EXECUTE_WRITECOPY) return false;
+ std::uintptr_t end=reinterpret_cast<std::uintptr_t>(m.BaseAddress)+m.RegionSize;
+ return p<=end && n<=end-p;
+}
+// Check again after a draw/end before an optional second tessellator batch.
+bool tessIdle(std::uintptr_t tess) {
+ std::uint8_t state[0x178]{};
+ if (!read(tess,state,sizeof(state)) || !writable(tess,sizeof(state))) return false;
+ std::int32_t pending=0; std::memcpy(&pending,state+0x168,sizeof(pending));
+ return !state[0x125] && !state[0x170] && !pending;
+}
+struct BCryptApi {
+ using Algorithm=BCRYPT_ALG_HANDLE;
+ using Hash=BCRYPT_HASH_HANDLE;
+ bool openAlgorithm(Algorithm& out) { return BCryptOpenAlgorithmProvider(&out,BCRYPT_SHA256_ALGORITHM,nullptr,0)>=0; }
+ bool property(Algorithm h,LPCWSTR name,std::uint32_t& value) {
+  DWORD got=0, data=0;
+  bool ok=BCryptGetProperty(h,name,reinterpret_cast<PUCHAR>(&data),sizeof(data),&got,0)>=0 && got==sizeof(data);
+  value=data; return ok;
+ }
+ bool objectLength(Algorithm h,std::uint32_t& n) { return property(h,BCRYPT_OBJECT_LENGTH,n); }
+ bool hashLength(Algorithm h,std::uint32_t& n) { return property(h,BCRYPT_HASH_LENGTH,n); }
+ bool createHash(Algorithm a,Hash& h,std::uint8_t* object,std::uint32_t n) {
+  return BCryptCreateHash(a,&h,object,n,nullptr,0,0)>=0;
+ }
+ bool hashData(Hash h,const std::uint8_t* bytes,std::uint32_t n) {
+  return BCryptHashData(h,const_cast<PUCHAR>(bytes),n,0)>=0;
+ }
+ bool finishHash(Hash h,std::uint8_t* result,std::uint32_t n) { return BCryptFinishHash(h,result,n,0)>=0; }
+ void destroyHash(Hash h) { BCryptDestroyHash(h); }
+ void closeAlgorithm(Algorithm a) { BCryptCloseAlgorithmProvider(a,0); }
+};
+bool hashFile(const BYTE* bytes,std::size_t size,std::uint8_t result[32]) {
+ BCryptApi api;
+ return hashHatExecutable(api,bytes,size,result);
+}
+// Reads a specific executable RVA only if it is wholly file-backed and in an
+// executable PE section. This also verifies candidate screen/end entry points,
+// for which the user did not provide a separate prologue in the diagnostic.
+bool fileCodeAt(const BYTE* file,std::size_t size,const IMAGE_NT_HEADERS64& nt,std::size_t table,
+                std::uint32_t rva,const BYTE*& out) {
+ for (unsigned i=0;i<nt.FileHeader.NumberOfSections;i++) {
+  const std::size_t off=table+i*sizeof(IMAGE_SECTION_HEADER);
+  if (off>size || sizeof(IMAGE_SECTION_HEADER)>size-off) return false;
+  IMAGE_SECTION_HEADER sec{}; std::memcpy(&sec,file+off,sizeof(sec));
+  if (!(sec.Characteristics & IMAGE_SCN_MEM_EXECUTE) || rva<sec.VirtualAddress) continue;
+  const std::uint64_t delta=static_cast<std::uint64_t>(rva)-sec.VirtualAddress;
+  if (delta+16>sec.SizeOfRawData || delta+16>sec.Misc.VirtualSize ||
+      static_cast<std::uint64_t>(sec.PointerToRawData)+delta+16>size) continue;
+  out=file+sec.PointerToRawData+delta; return true;
+ }
+ return false;
+}
+bool validateGame() {
+ HMODULE module=GetModuleHandleW(nullptr); if (!module) return false;
+ wchar_t path[32768]{}; DWORD n=GetModuleFileNameW(module,path,32768);
+ if (!n || n>=32768) return false;
+ const wchar_t* name=wcsrchr(path,L'\\');
+ if (_wcsicmp(name?name+1:path,L"Minecraft.Windows.exe")!=0) return false;
+ HANDLE file=CreateFileW(path,GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+ if (file==INVALID_HANDLE_VALUE) return false;
+ LARGE_INTEGER length{}; HANDLE mapping=nullptr; const BYTE* bytes=nullptr; bool valid=false;
+ if (GetFileSizeEx(file,&length) && length.QuadPart>0 && length.QuadPart<=128LL*1024*1024) {
+  mapping=CreateFileMappingW(file,nullptr,PAGE_READONLY,0,0,nullptr);
+  if (mapping) bytes=static_cast<const BYTE*>(MapViewOfFile(mapping,FILE_MAP_READ,0,0,0));
+ }
+ if (bytes) {
+  std::size_t size=static_cast<std::size_t>(length.QuadPart);
+  IMAGE_DOS_HEADER dos{}; IMAGE_NT_HEADERS64 nt{}; std::uint8_t digest[32]{};
+  if (size>=sizeof(dos)) std::memcpy(&dos,bytes,sizeof(dos));
+  const bool dosOk=dos.e_magic==IMAGE_DOS_SIGNATURE && dos.e_lfanew>0 && dos.e_lfanew<=0x10000 &&
+                   static_cast<std::size_t>(dos.e_lfanew)+sizeof(nt)<=size;
+  if (dosOk) std::memcpy(&nt,bytes+dos.e_lfanew,sizeof(nt));
+  if (dosOk && nt.Signature==IMAGE_NT_SIGNATURE && nt.FileHeader.Machine==IMAGE_FILE_MACHINE_AMD64 &&
+      nt.OptionalHeader.Magic==IMAGE_NT_OPTIONAL_HDR64_MAGIC && nt.FileHeader.NumberOfSections>0 && nt.FileHeader.NumberOfSections<=96 &&
+      nt.FileHeader.SizeOfOptionalHeader>=sizeof(IMAGE_OPTIONAL_HEADER64) && hashFile(bytes,size,digest) &&
+      hat_validation::identity(digest,nt.FileHeader.TimeDateStamp,nt.OptionalHeader.SizeOfImage)) {
+   const std::size_t table=static_cast<std::size_t>(dos.e_lfanew)+4+sizeof(IMAGE_FILE_HEADER)+nt.FileHeader.SizeOfOptionalHeader;
+   const auto image=reinterpret_cast<std::uintptr_t>(module);
+   valid=true;
+   for (const auto& sig:hat_validation::signatures) {
+    const BYTE* fromFile=nullptr; std::uint8_t inMemory[16]{};
+    if (!fileCodeAt(bytes,size,nt,table,sig.rva,fromFile) || std::memcmp(fromFile,sig.bytes,16)!=0 ||
+        !read(image+sig.rva,inMemory,16) || std::memcmp(inMemory,fromFile,16)!=0) { valid=false; break; }
+   }
+   for (auto rva : {screenRva,endRva,clientTickRva}) {
+    const BYTE* fromFile=nullptr; std::uint8_t inMemory[16]{};
+    if (!fileCodeAt(bytes,size,nt,table,rva,fromFile) || !read(image+rva,inMemory,16) || std::memcmp(inMemory,fromFile,16)!=0) valid=false;
+   }
+   if (valid) base=image;
+  }
+  UnmapViewOfFile(bytes);
+ }
+ if (mapping) CloseHandle(mapping); CloseHandle(file); return valid;
+}
+
+// 1.1.5 candidate tick signature, called only after exact EXE identity and
+// loaded/file code comparison. This observes the live ClientInstance; it never
+// writes to the instance or changes the original tick arguments.
+void clientTickHook(void* self,int a2,int a3) {
+ auto instance=reinterpret_cast<std::uintptr_t>(self);
+ if (hat_player::alignedPointer(instance)) {
+  clientInstance.store(instance,std::memory_order_release);
+  lastClientTick.store(GetTickCount64(),std::memory_order_release);
+ }
+ originalTick(self,a2,a3);
+}
+void rememberPlayer(void* entity,float partial) {
+ frame.valid=false;
+ if (!anyVisual() || !entity || !std::isfinite(partial)) return;
+ std::uintptr_t actual=0, actor=reinterpret_cast<std::uintptr_t>(entity);
+ if (!localPlayer(actual) || actual!=actor) return;
+ std::int32_t type=0; float current[3]{}, old[3]{}, dims[2]{};
+ if (!fetch(actor+0x14c,type) || type!=30 || !read(actor+0x88,current,sizeof(current)) ||
+     !read(actor+0x94,old,sizeof(old)) || !read(actor+0x198,dims,sizeof(dims)) ||
+     !std::isfinite(dims[0]) || !std::isfinite(dims[1]) || dims[0]<0.2f || dims[0]>1.5f || dims[1]<0.8f || dims[1]>2.5f) return;
+ partial=std::clamp(partial,0.0f,1.0f); float value[3]{};
+ for (int i=0;i<3;i++) {
+  if (!std::isfinite(current[i]) || !std::isfinite(old[i]) || std::fabs(current[i]-old[i])>64.0f) return;
+  value[i]=old[i]+(current[i]-old[i])*partial;
+ }
+ if (std::fabs(value[0])>30000000 || std::fabs(value[1])>4096 || std::fabs(value[2])>30000000) return;
+ std::uintptr_t again=0; if (!localPlayer(again) || again!=actor) return;
+ frame={{value[0],value[1],value[2]},dims[1],actor,GetTickCount64(),true};
+}
+std::intptr_t playerHook(void* self,void* entity,void* pos,void* extra,float partial) {
+ const auto result=originalPlayer(self,entity,pos,extra,partial);
+ // Do not clear a local-player frame when another player's renderer runs.
+ if (anyVisual()) {
+  std::uintptr_t local=0;
+  if (localPlayer(local) && reinterpret_cast<std::uintptr_t>(entity)==local) rememberPlayer(entity,partial);
+ }
+ return result;
+}
+// Keep the previously user-verified wireframe draw path isolated from the
+// experimental trail. Preserve the tested depth, topology and draw sequence.
+// The separate opt-in material tint may be ignored by the game's material.
+void renderHat(const PlayerFrame& player) {
+ if (!enabled.load(std::memory_order_acquire)) return;
+ if (!player.valid || GetTickCount64()-player.at>250) { hatStatus.store(0,std::memory_order_relaxed); return; }
+ hatStatus.store(2,std::memory_order_relaxed);
+ std::uintptr_t actor=0; if (!localPlayer(actor) || actor!=player.entity) return;
+ float origin[3]{}, saved[4]{}; std::uint8_t oldFlag=0, state[0x178]{};
+ auto tess=base+tessRva, color=base+shaderColorRva, flag=base+shaderFlagRva;
+ if (!read(base+originRva,origin,sizeof(origin)) || !read(tess,state,sizeof(state)) ||
+     !read(color,saved,sizeof(saved)) || !fetch(flag,oldFlag) || !writable(color,sizeof(saved)) || !writable(flag,1) ||
+     !writable(tess,sizeof(state))) return;
+ // Never reset or flush a tessellator another game operation is using.
+ std::int32_t pending=0; std::memcpy(&pending,state+0x168,sizeof(pending));
+ if (state[0x125] || state[0x170] || pending) return;
+ for (float v:origin) if (!std::isfinite(v)) return;
+ const auto now=GetTickCount64();
+ china_hat::Point head{player.world.x-origin[0],player.world.y-origin[1]-1.62f+player.height+0.03f+
+   param(VisualParam::HatOffset)+hat_animation::bob(now,param(VisualParam::HatBobAmplitude),param(VisualParam::HatBobSpeed)),player.world.z-origin[2]};
+ if (std::fabs(head.x)>16 || std::fabs(head.y)>16 || std::fabs(head.z)>16) return;
+ china_hat::Mesh mesh{};
+ const bool gradient=materialTint.load(std::memory_order_acquire) && hatRainbow.load(std::memory_order_acquire) && vertexGradient.load(std::memory_order_acquire);
+ const float phase=gradient ? visual_gradient::phase(now,param(VisualParam::HatRainbowSpeed)) : static_cast<float>(now%8000)/8000.0f;
+ if (!china_hat::build(mesh,head,param(VisualParam::HatRadius),param(VisualParam::HatConeHeight),48,phase,255)) return;
+ auto tint=visual_color::animated(materialTint.load(std::memory_order_acquire),hatRainbow.load(std::memory_order_acquire),
+    {{param(VisualParam::HatRed),param(VisualParam::HatGreen),param(VisualParam::HatBlue)}},param(VisualParam::HatRainbowSpeed),now);
+ if (gradient) tint={{1.f,1.f,1.f,1.f}};
+ tint[3]=param(VisualParam::HatOpacity); // The game's material must support alpha/blending.
+ std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
+ auto* t=reinterpret_cast<void*>(tess);
+ // The documented 1.1.5 renderer uses topology 4 for line segments. The first
+ // experimental version is a wireframe hat, not a filled/textured cone.
+ constexpr int segments=48, spokes=12;
+ tessBegin(t,4,2*(segments+spokes));
+ auto vertex=[&](const china_hat::Vertex& v) { tessColor(t,v.color.r,v.color.g,v.color.b,v.color.a); tessVertex(t,v.position.x,v.position.y,v.position.z); };
+ china_hat::emitWireframe(mesh,spokes,vertex);
+ tessDraw(t,reinterpret_cast<void*>(base+contextRva),0);
+ lastHatSubmit.store(GetTickCount64(),std::memory_order_relaxed);
+ hatStatus.store(1,std::memory_order_relaxed);
+ // The researched renderer releases its temporary tessellation at this point.
+ // A zeroed, aligned output slot is provided as required by the native ABI.
+ alignas(16) std::uint8_t scratch[0x200]{};
+ tessEnd(t,scratch,0,0);
+ if (hatFill.load(std::memory_order_acquire)) {
+  if (!tessIdle(tess)) { hatFillStatus.store(2,std::memory_order_relaxed); }
+  else {
+  // The prior batch may have consumed the game's shader-color dirty flag.
+  std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
+  // Candidate triangle-list mode, not yet confirmed for the user's build.
+  // Keep the proven wireframe as the first, separate batch.
+  tessBegin(t,2,static_cast<int>(mesh.triangleVertices*2));
+  china_hat::emitDoubleSidedSurface(mesh,vertex);
+  tessDraw(t,reinterpret_cast<void*>(base+contextRva),0);
+  hatFillStatus.store(1,std::memory_order_relaxed);
+  alignas(16) std::uint8_t surfaceScratch[0x200]{}; tessEnd(t,surfaceScratch,0,0);
+  }
+ } else hatFillStatus.store(0,std::memory_order_relaxed);
+ std::memcpy(reinterpret_cast<void*>(color),saved,sizeof(saved)); *reinterpret_cast<std::uint8_t*>(flag)=oldFlag;
+}
+
+void renderTrail(const PlayerFrame& player) {
+ unsigned gen=trailGeneration.load(std::memory_order_acquire);
+ if (gen!=seenTrailGeneration) { trail.clear(); seenTrailGeneration=gen; }
+ if (!trailEnabled.load(std::memory_order_acquire)) { trail.clear(); trailStatus.store(0,std::memory_order_relaxed); return; }
+ const ULONGLONG now=GetTickCount64();
+ if (!player.valid || now-player.at>250) { trail.clear(); trailStatus.store(0,std::memory_order_relaxed); return; }
+ std::uintptr_t actor=0;
+ if (!localPlayer(actor) || actor!=player.entity) { trail.clear(); trailStatus.store(0,std::memory_order_relaxed); return; }
+ china_hat::Point feet{player.world.x,player.world.y-1.62f+.10f,player.world.z};
+ const auto ttl=static_cast<std::uint64_t>(param(VisualParam::TrailSeconds)*1000.0f);
+ trail.update(actor,feet,now,ttl);
+ if (trail.size()<2) { trailStatus.store(0,std::memory_order_relaxed); return; }
+ trailStatus.store(2,std::memory_order_relaxed);
+ float origin[3]{}, saved[4]{}; std::uint8_t oldFlag=0, state[0x178]{};
+ auto tess=base+tessRva, color=base+shaderColorRva, flag=base+shaderFlagRva;
+ if (!read(base+originRva,origin,sizeof(origin)) || !read(tess,state,sizeof(state)) ||
+     !read(color,saved,sizeof(saved)) || !fetch(flag,oldFlag) || !writable(color,sizeof(saved)) || !writable(flag,1) ||
+     !writable(tess,sizeof(state))) return;
+ std::int32_t pending=0; std::memcpy(&pending,state+0x168,sizeof(pending));
+ if (state[0x125] || state[0x170] || pending) return;
+ for (float v:origin) if (!std::isfinite(v)) return;
+ china_hat::Vertex points[visual_trail::History::capacity]{}; bool valid[visual_trail::History::capacity]{};
+ int segments=0;
+ const bool gradient=materialTint.load(std::memory_order_acquire) && trailRainbow.load(std::memory_order_acquire) && vertexGradient.load(std::memory_order_acquire);
+ const float phase=visual_gradient::phase(now,param(VisualParam::TrailRainbowSpeed));
+ for (std::size_t i=0;i<trail.size();++i) {
+  const auto& p=trail[i]; auto& v=points[i];
+  v.position={p.point.x-origin[0],p.point.y-origin[1],p.point.z-origin[2]};
+  valid[i]=std::fabs(v.position.x)<32 && std::fabs(v.position.y)<32 && std::fabs(v.position.z)<32;
+  float age=static_cast<float>(now-p.time)/static_cast<float>(ttl);
+  const auto alpha=static_cast<std::uint8_t>(255.f*(1.f-std::clamp(age,0.f,1.f)));
+  v.color=gradient ? visual_gradient::trail(i,trail.size(),phase,alpha) : china_hat::rainbow(.38f+static_cast<float>(i)*.002f,alpha);
+  if (i && valid[i] && valid[i-1]) ++segments;
+ }
+ if (!segments) return;
+ auto tint=visual_color::animated(materialTint.load(std::memory_order_acquire),trailRainbow.load(std::memory_order_acquire),
+    {{param(VisualParam::TrailRed),param(VisualParam::TrailGreen),param(VisualParam::TrailBlue)}},param(VisualParam::TrailRainbowSpeed),now);
+ if (gradient) tint={{1.f,1.f,1.f,1.f}};
+ tint[3]=param(VisualParam::TrailOpacity); // The game's material must support alpha/blending.
+ std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
+ auto* t=reinterpret_cast<void*>(tess);
+ tessBegin(t,4,segments*2);
+ auto vertex=[&](const china_hat::Vertex& v) { tessColor(t,v.color.r,v.color.g,v.color.b,v.color.a); tessVertex(t,v.position.x,v.position.y,v.position.z); };
+ for (std::size_t i=1;i<trail.size();++i) if (valid[i] && valid[i-1]) { vertex(points[i-1]); vertex(points[i]); }
+ tessDraw(t,reinterpret_cast<void*>(base+contextRva),0);
+ lastTrailSubmit.store(GetTickCount64(),std::memory_order_relaxed);
+ trailStatus.store(1,std::memory_order_relaxed);
+ alignas(16) std::uint8_t scratch[0x200]{}; tessEnd(t,scratch,0,0);
+ if (trailFill.load(std::memory_order_acquire)) {
+  if (!tessIdle(tess)) { trailFillStatus.store(2,std::memory_order_relaxed); }
+  else {
+  std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
+  // 12 vertices per segment: two triangles, each drawn in both directions.
+  // Screen/material state and transparency remain controlled by the game.
+  float height=std::clamp(player.height*param(VisualParam::TrailHeight),0.4f,2.0f);
+  tessBegin(t,2,segments*12);
+  for (std::size_t i=1;i<trail.size();++i)
+   if (valid[i] && valid[i-1]) visual_ribbon::segment(points[i-1],points[i],height,vertex);
+  tessDraw(t,reinterpret_cast<void*>(base+contextRva),0);
+  trailFillStatus.store(1,std::memory_order_relaxed);
+  alignas(16) std::uint8_t ribbonScratch[0x200]{}; tessEnd(t,ribbonScratch,0,0);
+  }
+ } else trailFillStatus.store(0,std::memory_order_relaxed);
+ std::memcpy(reinterpret_cast<void*>(color),saved,sizeof(saved)); *reinterpret_cast<std::uint8_t*>(flag)=oldFlag;
+}
+void screenHook(void* self,void* ctx) {
+ if (inScreen) { originalScreen(self,ctx); return; }
+ inScreen=true;
+ if (anyVisual()) sampleOutputMerger(depthBefore);
+ originalScreen(self,ctx);
+ if (anyVisual()) sampleOutputMerger(depthAfter);
+ PlayerFrame visible=frame; frame.valid=false;
+ // Submit the verified hat before collecting/drawing the experimental trail.
+ renderHat(visible);
+ PlayerFrame local=visible;
+ if (trailEnabled.load(std::memory_order_acquire) && !local.valid) {
+  std::uintptr_t actor=0;
+  if (localPlayer(actor)) { rememberPlayer(reinterpret_cast<void*>(actor),1.0f); local=frame; frame.valid=false; }
+ }
+ renderTrail(local);
+ inScreen=false;
+}
+}
+void ObserveVisualContext(ID3D11DeviceContext* context) {
+ if (!context) return;
+ context->AddRef();
+ AcquireSRWLockExclusive(&contextLock);
+ ID3D11DeviceContext* old=observedContext;
+ observedContext=context; observedThread=GetCurrentThreadId();
+ ReleaseSRWLockExclusive(&contextLock);
+ if (old) old->Release();
+}
+int VisualDepthBefore() { return depthBefore.load(std::memory_order_relaxed); }
+int VisualDepthAfter() { return depthAfter.load(std::memory_order_relaxed); }
+bool ChinaHatAvailable() { return available.load(std::memory_order_acquire); }
+bool ChinaHatEnabled() { return enabled.load(std::memory_order_acquire); }
+namespace {
+bool installHooks() {
+ int state=0;
+ if (!hookState.compare_exchange_strong(state,1,std::memory_order_acq_rel)) return state==2;
+ // The user can wait a long time before checking the box. Revalidate loaded
+ // instructions immediately before patching, in case another component has
+ // changed the game code since bootstrap.
+ if (!validateGame()) {
+  available.store(false,std::memory_order_release);
+  hookState.store(3,std::memory_order_release);
+  log("game changed or could not be verified before enabling"); return false;
+ }
+ auto p=reinterpret_cast<void*>(base+playerRva), s=reinterpret_cast<void*>(base+screenRva);
+ auto tick=reinterpret_cast<void*>(base+clientTickRva);
+ // All hooks are created before enabling; rollback never removes active hooks.
+ visual_hooks::Hook hooks[]={{tick,reinterpret_cast<void*>(&clientTickHook),reinterpret_cast<void**>(&originalTick)},
+                             {p,reinterpret_cast<void*>(&playerHook),reinterpret_cast<void**>(&originalPlayer)},
+                             {s,reinterpret_cast<void*>(&screenHook),reinterpret_cast<void**>(&originalScreen)}};
+ bool success=visual_hooks::install(hooks,3,createHook,enableHook,disableHook,removeHook);
+ if (!success) {
+  clientInstance.store(0,std::memory_order_release); lastClientTick.store(0,std::memory_order_release);
+  log("visual hook installation failed");
+ }
+ if (!success) available.store(false,std::memory_order_release);
+ hookState.store(success?2:3,std::memory_order_release);
+ return success;
+}
+}
+namespace {
+bool enableVisual() {
+ if (!ChinaHatAvailable()) return false;
+ try { return installHooks(); }
+ catch (...) {
+  enabled.store(false,std::memory_order_release); trailEnabled.store(false,std::memory_order_release);
+  available.store(false,std::memory_order_release); hookState.store(3,std::memory_order_release);
+  log("failed to enable; overlay remains available"); return false;
+ }
+}
+}
+void SetChinaHatEnabled(bool value) {
+ if (!value) { enabled.store(false,std::memory_order_release); hatStatus.store(0,std::memory_order_relaxed); return; }
+ hatStatus.store(0,std::memory_order_relaxed);
+ if (enableVisual()) enabled.store(true,std::memory_order_release);
+}
+bool HatFillEnabled() { return hatFill.load(std::memory_order_acquire); }
+void SetHatFillEnabled(bool value) { hatFill.store(value,std::memory_order_release); hatFillStatus.store(0,std::memory_order_relaxed); }
+bool TrailFillEnabled() { return trailFill.load(std::memory_order_acquire); }
+void SetTrailFillEnabled(bool value) { trailFill.store(value,std::memory_order_release); trailFillStatus.store(0,std::memory_order_relaxed); }
+bool VisualTintEnabled() { return materialTint.load(std::memory_order_acquire); }
+void SetVisualTintEnabled(bool value) { materialTint.store(value,std::memory_order_release); }
+bool TrailEnabled() { return trailEnabled.load(std::memory_order_acquire); }
+void SetTrailEnabled(bool value) {
+ if (!value) { trailEnabled.store(false,std::memory_order_release); trailGeneration.fetch_add(1,std::memory_order_acq_rel); trailStatus.store(0,std::memory_order_relaxed); return; }
+ trailStatus.store(0,std::memory_order_relaxed);
+ if (enableVisual()) trailEnabled.store(true,std::memory_order_release);
+}
+float GetVisualParam(VisualParam p) {
+ auto i=static_cast<std::size_t>(p); return i<static_cast<std::size_t>(VisualParam::Count)?params.values[i].load(std::memory_order_acquire):0.f;
+}
+void SetVisualParam(VisualParam p,float value) {
+ auto i=static_cast<std::size_t>(p); if (i<static_cast<std::size_t>(VisualParam::Count)) params.values[i].store(sanitizeVisualParam(p,value),std::memory_order_release);
+}
+float ChinaHatHeight() { return GetVisualParam(VisualParam::HatOffset); }
+void SetChinaHatHeight(float value) { SetVisualParam(VisualParam::HatOffset,value); }
+bool HatRainbowEnabled() { return hatRainbow.load(std::memory_order_acquire); }
+void SetHatRainbowEnabled(bool value) { hatRainbow.store(value,std::memory_order_release); }
+bool TrailRainbowEnabled() { return trailRainbow.load(std::memory_order_acquire); }
+void SetTrailRainbowEnabled(bool value) { trailRainbow.store(value,std::memory_order_release); }
+bool VertexGradientEnabled() { return vertexGradient.load(std::memory_order_acquire); }
+void SetVertexGradientEnabled(bool value) { vertexGradient.store(value,std::memory_order_release); }
+int HatFillStatus() { return hatFillStatus.load(std::memory_order_relaxed); }
+int TrailFillStatus() { return trailFillStatus.load(std::memory_order_relaxed); }
+int ChinaHatStatus() {
+ int status=hatStatus.load(std::memory_order_relaxed);
+ auto then=lastHatSubmit.load(std::memory_order_relaxed), now=GetTickCount64();
+ return status==1 && (!then || now<then || now-then>1000) ? 0 : status;
+}
+int TrailStatus() {
+ int status=trailStatus.load(std::memory_order_relaxed);
+ auto then=lastTrailSubmit.load(std::memory_order_relaxed), now=GetTickCount64();
+ return status==1 && (!then || now<then || now-then>1000) ? 0 : status;
+}
+bool InitializeChinaHat(HatCreateHook create,HatToggleHook enable,HatToggleHook disable,HatToggleHook remove) {
+ if (!create || !enable || !disable || !remove || !validateGame()) { log("unsupported game or unable to verify executable; disabled"); return false; }
+ tessBegin=reinterpret_cast<TessBegin>(base+beginRva); tessColor=reinterpret_cast<TessColor>(base+colorRva);
+ tessVertex=reinterpret_cast<TessVertex>(base+vertexRva); tessDraw=reinterpret_cast<TessDraw>(base+drawRva); tessEnd=reinterpret_cast<TessEnd>(base+endRva);
+ createHook=create; enableHook=enable; disableHook=disable; removeHook=remove;
+ available.store(true,std::memory_order_release);
+ log("validated; hooks and drawing stay off until enabled in menu"); return true;
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/china_hat_native.cpp
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/china_hat_native.h
+================================================================================
+#pragma once
+#include <windows.h>
+#include "visual_settings.h"
+struct ID3D11DeviceContext;
+void ObserveVisualContext(ID3D11DeviceContext* context);
+int VisualDepthBefore();
+int VisualDepthAfter();
+
+using HatCreateHook = int (WINAPI*)(void*, void*, void**);
+using HatToggleHook = int (WINAPI*)(void*);
+// Verifies the exact user-observed game binary. Hooks and rendering are only
+// installed on opt-in. Failure leaves the normal client working.
+bool InitializeChinaHat(HatCreateHook create, HatToggleHook enable,
+                        HatToggleHook disable, HatToggleHook remove);
+bool ChinaHatAvailable();
+bool ChinaHatEnabled();
+void SetChinaHatEnabled(bool enabled);
+
+// Visuals are independent switches and use the same validated game hooks.
+bool HatFillEnabled();
+void SetHatFillEnabled(bool enabled);
+bool TrailFillEnabled();
+void SetTrailFillEnabled(bool enabled);
+bool VisualTintEnabled();
+void SetVisualTintEnabled(bool enabled);
+bool TrailEnabled();
+void SetTrailEnabled(bool enabled);
+float ChinaHatHeight();
+void SetChinaHatHeight(float value);
+int ChinaHatStatus();
+int TrailStatus();
+
+float GetVisualParam(VisualParam param);
+void SetVisualParam(VisualParam param,float value);
+bool HatRainbowEnabled();
+void SetHatRainbowEnabled(bool enabled);
+bool TrailRainbowEnabled();
+void SetTrailRainbowEnabled(bool enabled);
+bool VertexGradientEnabled();
+void SetVertexGradientEnabled(bool enabled);
+int HatFillStatus();
+int TrailFillStatus();
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/china_hat_native.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/visual_settings.h
+================================================================================
+#pragma once
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+
+// Per-session settings only. Every value exposed in the UI is consumed by the
+// renderer and clamped before publication to the render thread.
+enum class VisualParam : std::size_t {
+ HatRadius, HatConeHeight, HatOffset, HatBobAmplitude, HatBobSpeed, HatRainbowSpeed,
+ HatRed, HatGreen, HatBlue, TrailHeight, TrailSeconds, TrailRainbowSpeed,
+ TrailRed, TrailGreen, TrailBlue, HatOpacity, TrailOpacity, Count
+};
+struct VisualParamSpec { float value, low, high; };
+constexpr VisualParamSpec visualParamSpecs[] = {
+ {.58f,.30f,1.00f}, {.34f,.12f,.80f}, {0.f,-.20f,.40f},
+ {.07f,0.f,.20f}, {.3125f,.10f,1.f}, {.15f,.03f,.8f},
+ {.20f,0.f,1.f},{1.f,0.f,1.f},{.42f,0.f,1.f},
+ {.80f,.30f,1.00f},{3.f,1.f,6.f},{.15f,.03f,.8f},
+ {.08f,0.f,1.f},{.86f,0.f,1.f},{1.f,0.f,1.f},
+ {1.f,0.f,1.f},{1.f,0.f,1.f}
+};
+static_assert(sizeof(visualParamSpecs)/sizeof(visualParamSpecs[0])==static_cast<std::size_t>(VisualParam::Count),"visual parameters mismatch");
+inline float sanitizeVisualParam(VisualParam param,float value) {
+ auto i=static_cast<std::size_t>(param);
+ if (i>=static_cast<std::size_t>(VisualParam::Count)) return 0.f;
+ const auto spec=visualParamSpecs[i];
+ return std::isfinite(value) ? std::clamp(value,spec.low,spec.high) : spec.value;
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/visual_settings.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/visual_gradient.h
+================================================================================
+#pragma once
+#include "../research/china_hat/hat_mesh.h"
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+
+namespace visual_gradient {
+inline float phase(std::uint64_t ms, float cyclesPerSecond) {
+ if (!std::isfinite(cyclesPerSecond) || cyclesPerSecond < 0) return 0.f;
+ return static_cast<float>(std::fmod(static_cast<double>(ms)*.001*cyclesPerSecond,1.0));
+}
+// Samples run from oldest to newest. Geometry interpolation between samples is
+// controlled by the game's vertex material; this code does not enable blending.
+inline china_hat::Color trail(std::size_t index, std::size_t count, float timePhase, std::uint8_t alpha) {
+ if (count < 2 || !std::isfinite(timePhase)) return china_hat::rainbow(0.f,alpha);
+ const float position=static_cast<float>(std::min(index,count-1))/static_cast<float>(count-1);
+ // Less than a full hue turn so the newest and oldest ends differ.
+ return china_hat::rainbow(timePhase + position*.8f,alpha);
+}
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/visual_gradient.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/visual_color.h
+================================================================================
+#pragma once
+#include <array>
+#include <cmath>
+#include <cstdint>
+
+namespace visual_color {
+enum class Effect { Hat, Trail };
+inline std::array<float,4> material(bool enabled,Effect effect) {
+ if (!enabled) return {{1.f,1.f,1.f,1.f}};
+ return effect==Effect::Hat ? std::array<float,4>{{0.20f,1.f,0.42f,1.f}}
+                            : std::array<float,4>{{0.08f,0.86f,1.f,1.f}};
+}
+// Animate the whole material color; 1.1.5's active material did not honor our
+// per-vertex gradient in the user's test. Never imply per-vertex rainbow.
+inline std::array<float,4> animated(bool enabled,bool rainbow,std::array<float,3> base,float cyclesPerSecond,std::uint64_t ms) {
+ if (!enabled) return {{1.f,1.f,1.f,1.f}};
+ if (!rainbow) return {{base[0],base[1],base[2],1.f}};
+ double hue=std::fmod(static_cast<double>(ms)*0.001*static_cast<double>(cyclesPerSecond),1.0);
+ float x=static_cast<float>(hue*6.0); int sector=static_cast<int>(x); float f=x-sector;
+ constexpr float floor=.22f; float rise=floor+(1.f-floor)*f, fall=1.f-(1.f-floor)*f;
+ switch (sector) {
+  case 0: return {{1.f,rise,floor,1.f}};
+  case 1: return {{fall,1.f,floor,1.f}};
+  case 2: return {{floor,1.f,rise,1.f}};
+  case 3: return {{floor,fall,1.f,1.f}};
+  case 4: return {{rise,floor,1.f,1.f}};
+  default:return {{1.f,floor,fall,1.f}};
+ }
+}
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/visual_color.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/visual_ribbon.h
+================================================================================
+#pragma once
+#include "../research/china_hat/hat_mesh.h"
+#include <cmath>
+namespace visual_ribbon {
+// One vertical trail panel as two triangles, emitted in both orientations.
+// Points are already camera-relative. This is geometry only, not a promise
+// that the native game accepts the candidate triangle topology/material.
+template<class Emit>
+bool segment(const china_hat::Vertex& a,const china_hat::Vertex& b,float height,Emit emit) {
+ if (!std::isfinite(height) || height<=0 || height>2.0f) return false;
+ for (const auto p:{a.position,b.position})
+  if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) return false;
+ auto upperA=a, upperB=b; upperA.position.y+=height; upperB.position.y+=height;
+ emit(a); emit(b); emit(upperB); emit(a); emit(upperB); emit(upperA);
+ emit(upperB); emit(b); emit(a); emit(upperA); emit(upperB); emit(a);
+ return true;
+}
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/visual_ribbon.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/visual_trail.h
+================================================================================
+#pragma once
+#include "../research/china_hat/hat_mesh.h"
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <cmath>
+
+// Bounded history in world space. No platform, input, game or rendering calls.
+namespace visual_trail {
+struct Sample { china_hat::Point point; std::uint64_t time=0; };
+class History {
+public:
+ static constexpr std::size_t capacity=128;
+ static constexpr std::uint64_t lifetime=3000;
+ void clear() { count_=0; actor_=0; lastSeen_=0; }
+ void update(std::uintptr_t actor, china_hat::Point p, std::uint64_t now, std::uint64_t ttl=lifetime) {
+  if (!actor || !std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) { clear(); return; }
+  if (actor_!=actor || (lastSeen_ && (now<lastSeen_ || now-lastSeen_>1000))) { clear(); actor_=actor; }
+  lastSeen_=now; expire(now,ttl);
+  if (count_) {
+   const auto& last=points_[count_-1];
+   float dx=p.x-last.point.x, dy=p.y-last.point.y, dz=p.z-last.point.z;
+   float distance2=dx*dx+dy*dy+dz*dz;
+   if (!std::isfinite(distance2) || distance2>64.f) { clear(); actor_=actor; lastSeen_=now; }
+   else if (distance2<.0025f || now-last.time<50) return;
+  }
+  if (count_==capacity) { for (std::size_t i=1;i<count_;++i) points_[i-1]=points_[i]; --count_; }
+  points_[count_++]={p,now};
+ }
+ void expire(std::uint64_t now,std::uint64_t ttl=lifetime) {
+  std::size_t n=0;
+  while (n<count_ && (now<points_[n].time || now-points_[n].time>ttl)) ++n;
+  if (n) { for (std::size_t i=n;i<count_;++i) points_[i-n]=points_[i]; count_-=n; }
+ }
+ std::size_t size() const { return count_; }
+ const Sample& operator[](std::size_t i) const { return points_[i]; }
+private:
+ std::array<Sample,capacity> points_{};
+ std::size_t count_=0;
+ std::uintptr_t actor_=0;
+ std::uint64_t lastSeen_=0;
+};
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/visual_trail.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/hat_animation.h
+================================================================================
+#pragma once
+#include <cmath>
+#include <cstdint>
+namespace hat_animation {
+// A gentle lift above the calibrated head anchor; period is in milliseconds.
+// No accumulated timestep drift and no dependence on frame rate.
+inline float bob(std::uint64_t now,float amplitude=.07f,float speed=.3125f) {
+ constexpr double tau=6.2831853071795864769;
+ const double phase=std::fmod(static_cast<double>(now)*.001*static_cast<double>(speed),1.0);
+ return amplitude*(1.0f+static_cast<float>(std::sin(tau*phase)));
+}
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/hat_animation.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/china_hat_lines.h
+================================================================================
+#pragma once
+#include "../research/china_hat/hat_mesh.h"
+#include <cstddef>
+// Emit an independent ring plus evenly spaced apex-to-rim spokes. The caller
+// chooses line-list topology/material, and owns all native rendering state.
+namespace china_hat {
+template<class Emit> bool emitDoubleSidedSurface(const Mesh& mesh, Emit emit) {
+ if (mesh.triangleVertices < 24 || mesh.triangleVertices > kMaxSegments*3 || mesh.triangleVertices%3) return false;
+ for (std::size_t i=0;i<mesh.triangleVertices;i+=3) {
+  emit(mesh.triangles[i]); emit(mesh.triangles[i+1]); emit(mesh.triangles[i+2]);
+  emit(mesh.triangles[i]); emit(mesh.triangles[i+2]); emit(mesh.triangles[i+1]);
+ }
+ return true;
+}
+template<class Emit> bool emitWireframe(const Mesh& mesh, std::size_t spokes, Emit emit) {
+ if (mesh.outlineVertices<9 || mesh.outlineVertices>kMaxSegments+1) return false;
+ const std::size_t n=mesh.outlineVertices-1;
+ if (!spokes || spokes>n || n%spokes || mesh.triangleVertices!=n*3) return false;
+ for (std::size_t i=0;i<n;i++) { emit(mesh.outline[i]); emit(mesh.outline[i+1]); }
+ for (std::size_t i=0;i<n;i+=n/spokes) { emit(mesh.triangles[i*3]); emit(mesh.outline[i]); }
+ return true;
+}
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/china_hat_lines.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/china_hat_player.h
+================================================================================
+#pragma once
+#include <cstdint>
+
+// Resolve only the player slot of a recently observed ClientInstance. A
+// plausible unrelated actor or the camera target is not evidence of identity.
+namespace hat_player {
+constexpr std::uintptr_t playerSlot=0x60;
+constexpr std::uint64_t maxTickAge=2000;
+inline bool alignedPointer(std::uintptr_t value) {
+ return value>=0x10000 && value<0x0000800000000000ULL && (value&7)==0;
+}
+template<class Read>
+bool fromClient(std::uintptr_t client,std::uint64_t tick,std::uint64_t now,Read read,std::uintptr_t& player) {
+ player=0;
+ if (!alignedPointer(client) || !tick || now<tick || now-tick>maxTickAge) return false;
+ std::uintptr_t first=0, again=0;
+ if (!read(client+playerSlot,first) || !alignedPointer(first) ||
+     !read(client+playerSlot,again) || again!=first) return false;
+ player=first; return true;
+}
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/china_hat_player.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/china_hat_validation.h
+================================================================================
+#pragma once
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+namespace hat_validation {
+constexpr std::size_t kImageSize = 0x1a91000;
+constexpr std::uint32_t kTimestamp = 0x5976da7b;
+constexpr std::uint8_t kHash[32] = {0x28,0x83,0xb7,0x2a,0x35,0x79,0xd9,0x5b,0xfe,0xc7,0x33,0x30,0xc5,0xe0,0x6f,0x24,0x63,0x25,0x3b,0x7c,0xa5,0x30,0xdd,0x59,0xf5,0x08,0x85,0xa7,0x1a,0x72,0x47,0x32};
+struct Signature { std::uint32_t rva; std::uint8_t bytes[16]; };
+// User-provided read-only diagnostics for the exact game executable. In
+// addition to these signatures, check the complete on-disk SHA-256.
+constexpr Signature signatures[] = {
+ {0x581910, {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x48,0x89,0x7c,0x24,0x18,0x41}},
+ {0x55d640, {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57}},
+ {0x5ae250, {0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x50,0x4c,0x8b,0x81,0x90,0x06,0x00}},
+ {0x5b07d0, {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x48,0x89,0x7c,0x24,0x18,0x4c}},
+ {0x5d0660, {0x48,0x83,0xec,0x68,0x80,0xb9,0x70,0x01,0x00,0x00,0x00,0x45,0x8b,0xd0,0x4c,0x8b}},
+ {0x5d0890, {0x80,0xb9,0x24,0x01,0x00,0x00,0x00,0x75,0x69,0x44,0x0f,0xb6,0x54,0x24,0x28,0x41}},
+ {0x5d0a90, {0x4c,0x8b,0xdc,0x57,0x48,0x81,0xec,0xb0,0x00,0x00,0x00,0x8b,0x81,0x6c,0x01,0x00}},
+ {0x5d1840, {0x48,0x8b,0xc4,0x55,0x48,0x8d,0x68,0xa1,0x48,0x81,0xec,0xe0,0x00,0x00,0x00,0x48}}
+};
+inline bool identity(const std::uint8_t* hash, std::uint32_t timestamp, std::size_t imageSize) {
+ return hash && timestamp == kTimestamp && imageSize == kImageSize && std::memcmp(hash,kHash,32)==0;
+}
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/china_hat_validation.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/china_hat_hash.h
+================================================================================
+#pragma once
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <vector>
+
+// BCrypt retains the caller-owned hash object buffer until the hash handle is
+// destroyed. Keep storage alive longer than both handles, including on errors
+// and exceptions. Api is injectable so this ordering can be tested portably.
+template <class Api>
+bool hashHatExecutable(Api& api, const std::uint8_t* bytes, std::size_t size, std::uint8_t result[32]) {
+    std::vector<std::uint8_t> storage;
+    typename Api::Algorithm algorithm{};
+    typename Api::Hash hash{};
+    struct Cleanup {
+        Api& api;
+        typename Api::Algorithm& algorithm;
+        typename Api::Hash& hash;
+        ~Cleanup() {
+            if (hash) api.destroyHash(hash);
+            if (algorithm) api.closeAlgorithm(algorithm);
+        }
+    } cleanup{api, algorithm, hash};
+    if (!api.openAlgorithm(algorithm)) return false;
+    std::uint32_t objectSize=0, hashSize=0;
+    if (!api.objectLength(algorithm,objectSize) || objectSize==0 || objectSize>=65536 ||
+        !api.hashLength(algorithm,hashSize) || hashSize!=32) return false;
+    storage.resize(objectSize);
+    if (!api.createHash(algorithm,hash,storage.data(),objectSize)) return false;
+    for (std::size_t pos=0;pos<size;) {
+        auto chunk=static_cast<std::uint32_t>(std::min<std::size_t>(size-pos,1024*1024));
+        if (!api.hashData(hash,bytes+pos,chunk)) return false;
+        pos+=chunk;
+    }
+    return api.finishHash(hash,result,32);
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/china_hat_hash.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/visual_hooks.h
+================================================================================
+#pragma once
+#include <cstddef>
+
+// MinHook operations are injected for portable rollback tests. Do not remove
+// a trampoline when disabling its active hook failed.
+namespace visual_hooks {
+struct Hook { void* target; void* detour; void** original; bool created=false; bool active=false; };
+template<class Create,class Enable,class Disable,class Remove>
+bool install(Hook* hooks,std::size_t count,Create create,Enable enable,Disable disable,Remove remove) {
+ bool success=true;
+ for (std::size_t i=0;i<count;++i) {
+  if (create(hooks[i].target,hooks[i].detour,hooks[i].original)!=0) { success=false; break; }
+  hooks[i].created=true;
+ }
+ if (success) for (std::size_t i=0;i<count;++i) {
+  if (enable(hooks[i].target)!=0) { success=false; break; }
+  hooks[i].active=true;
+ }
+ if (!success) for (std::size_t i=0;i<count;++i) {
+  auto& hook=hooks[i];
+  if (hook.active && disable(hook.target)==0) hook.active=false;
+  if (hook.created && !hook.active) remove(hook.target);
+ }
+ return success;
+}
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/visual_hooks.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/research/china_hat/hat_mesh.h
+================================================================================
+#pragma once
+// Standalone experimental cone mesh. No Minecraft hooks, memory access, or
+// rendering side effects. The caller must supply the interpolated world-space
+// position of the head, relative to the render origin; the game-specific
+// camera/model binding for 1.1.5 is not yet established.
+#include <array>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+
+namespace china_hat {
+struct Point { float x, y, z; };
+struct Color { std::uint8_t r, g, b, a; };
+struct Vertex { Point position; Color color; };
+constexpr std::size_t kMaxSegments = 96;
+struct Mesh {
+    // A triangle list is usable by either a game's tessellator or a GPU buffer.
+    std::array<Vertex, kMaxSegments * 3> triangles{};
+    std::array<Vertex, kMaxSegments + 1> outline{};
+    std::size_t triangleVertices = 0, outlineVertices = 0;
+};
+inline Color rainbow(float hue, std::uint8_t alpha) {
+    hue = hue - std::floor(hue);
+    float t = hue * 6.0f;
+    int sector = static_cast<int>(t);
+    float f = t - static_cast<float>(sector);
+    auto scale = [](float v) { return static_cast<std::uint8_t>(std::lround(v * 255.0f)); };
+    const float dim = 0.22f, mid = dim + (1.0f - dim) * f, inv = 1.0f - (1.0f - dim) * f;
+    switch (sector) {
+    case 0: return {255, scale(mid), scale(dim), alpha};
+    case 1: return {scale(inv), 255, scale(dim), alpha};
+    case 2: return {scale(dim), 255, scale(mid), alpha};
+    case 3: return {scale(dim), scale(inv), 255, alpha};
+    case 4: return {scale(mid), scale(dim), 255, alpha};
+    default: return {255, scale(dim), scale(inv), alpha};
+    }
+}
+// Start empty on invalid input. Explicit limits prevent huge / nonfinite world
+// camera-relative coordinates from generating invalid vertices. Subtract the
+// render origin before calling, so distant world positions keep float precision.
+// phase is cycles, not seconds.
+inline bool build(Mesh& out, Point head, float radius, float height,
+                  std::size_t segments, float phase, std::uint8_t alpha = 160) {
+    out.triangleVertices = out.outlineVertices = 0;
+    if (!std::isfinite(head.x) || !std::isfinite(head.y) || !std::isfinite(head.z) ||
+        std::fabs(head.x) > 32768.0f || std::fabs(head.y) > 32768.0f || std::fabs(head.z) > 32768.0f ||
+        !std::isfinite(radius) || !std::isfinite(height) || !std::isfinite(phase) ||
+        radius <= 0.0f || radius > 2.0f || height <= 0.0f || height > 2.0f ||
+        segments < 8 || segments > kMaxSegments) return false;
+    constexpr float tau = 6.2831853071795864769f;
+    // Reduce before adding fractions so very large phases cannot overflow.
+    phase -= std::floor(phase);
+    const Point apex{head.x, head.y + height, head.z};
+    auto rim = [&](std::size_t i) {
+        float turn = static_cast<float>(i % segments) / static_cast<float>(segments);
+        float angle = tau * turn;
+        return Vertex{{head.x + radius * std::cos(angle), head.y,
+                       head.z + radius * std::sin(angle)}, rainbow(turn + phase, alpha)};
+    };
+    for (std::size_t i = 0; i < segments; ++i) {
+        Vertex a = rim(i), b = rim(i + 1);
+        // Winding is consistent around the cone. Material/depth configuration
+        // is deliberately left to the eventual game-specific renderer.
+        out.triangles[i * 3] = {apex, rainbow(phase + (static_cast<float>(i) + 0.5f) / segments, alpha)};
+        out.triangles[i * 3 + 1] = a;
+        out.triangles[i * 3 + 2] = b;
+        out.outline[i] = a;
+    }
+    out.outline[segments] = out.outline[0];
+    out.triangleVertices = segments * 3;
+    out.outlineVertices = segments + 1;
+    return true;
+}
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/research/china_hat/hat_mesh.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/pointer_mapping.h
+================================================================================
+#pragma once
+
+// Windows cursor and client rectangle must be expressed in the same coordinate
+// system. ImGui's legacy bridge later scales these values to the back buffer.
+// Do not clamp: an outside cursor must remain outside the overlay as well.
+inline bool client_pointer(float cursorX, float cursorY, float clientWidth, float clientHeight,
+                           float& x, float& y, float& w, float& h) {
+    if (clientWidth <= 0.0f || clientHeight <= 0.0f) return false;
+    x = cursorX; y = cursorY; w = clientWidth; h = clientHeight;
+    return true;
+}
+
+// CoreWindow bounds are in the same DIPs as PointerPosition. Bounds origin
+// describes the client origin inside the system window (e.g. its title bar).
+inline bool uwp_client_pointer(float pointerX, float pointerY, float left, float top,
+                               float width, float height, float& x, float& y, float& w, float& h) {
+    return client_pointer(pointerX - left, pointerY - top, width, height, x, y, w, h);
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/pointer_mapping.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/uwp_extra.h
+================================================================================
+#pragma once
+
+// Called on CoreWindow's dispatcher thread after the legacy input tick.
+void SampleUwpInput();
+// Copies a sampled UWP pointer in client-area DIPs, false before first sample.
+bool GetSampledUwpPointer(float& x, float& y, float& w, float& h);
+// Takes accumulated wheel deltas in Windows WHEEL_DELTA units.
+void TakeUwpWheel(int& horizontal, int& vertical);
+
+// Stops sampling and ignores wheel events; handler stays registered until process exit.
+void DisableUwpExtraInput();
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/uwp_extra.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/uwp_extra.cpp
+================================================================================
+// Additional UWP input collected on the same dispatcher thread as the legacy
+// CoreWindow bridge. Interface order follows Windows SDK / windows-rs metadata.
+#include "uwp_extra.h"
+#include "pointer_mapping.h"
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <roapi.h>
+#include <winstring.h>
+#include <inspectable.h>
+#include <atomic>
+#include <new>
+
+struct UwpPoint { float x, y; };
+struct UwpRect { float x, y, w, h; };
+struct CoreWindow : IInspectable {
+    virtual HRESULT STDMETHODCALLTYPE unusedAutomation() = 0;
+    virtual HRESULT STDMETHODCALLTYPE get_Bounds(UwpRect*) = 0;
+    virtual HRESULT STDMETHODCALLTYPE unusedProperties() = 0;
+    virtual HRESULT STDMETHODCALLTYPE unusedDispatcher() = 0;
+    virtual HRESULT STDMETHODCALLTYPE unusedFlow() = 0;
+    virtual HRESULT STDMETHODCALLTYPE unusedSetFlow() = 0;
+    virtual HRESULT STDMETHODCALLTYPE unusedInput() = 0;
+    virtual HRESULT STDMETHODCALLTYPE unusedSetInput() = 0;
+    virtual HRESULT STDMETHODCALLTYPE unusedCursor() = 0;
+    virtual HRESULT STDMETHODCALLTYPE unusedSetCursor() = 0;
+    virtual HRESULT STDMETHODCALLTYPE get_PointerPosition(UwpPoint*) = 0;
+    virtual HRESULT STDMETHODCALLTYPE unusedVisible() = 0;
+    virtual HRESULT STDMETHODCALLTYPE unusedActivate() = 0;
+    virtual HRESULT STDMETHODCALLTYPE unusedClose() = 0;
+    virtual HRESULT STDMETHODCALLTYPE unusedAsyncKey() = 0;
+    virtual HRESULT STDMETHODCALLTYPE unusedKey() = 0;
+    virtual HRESULT STDMETHODCALLTYPE unusedReleaseCapture() = 0;
+    virtual HRESULT STDMETHODCALLTYPE unusedSetCapture() = 0;
+#define UNUSED_PAIR(n) virtual HRESULT STDMETHODCALLTYPE unused##n() = 0; virtual HRESULT STDMETHODCALLTYPE unusedRemove##n() = 0;
+    UNUSED_PAIR(Activated) UNUSED_PAIR(AutomationEvent) UNUSED_PAIR(Character) UNUSED_PAIR(Closed)
+    UNUSED_PAIR(InputEnabled) UNUSED_PAIR(KeyDown) UNUSED_PAIR(KeyUp) UNUSED_PAIR(CaptureLost)
+    UNUSED_PAIR(PointerEntered) UNUSED_PAIR(PointerExited) UNUSED_PAIR(PointerMoved)
+    UNUSED_PAIR(PointerPressed) UNUSED_PAIR(PointerReleased) UNUSED_PAIR(TouchHitTesting)
+#undef UNUSED_PAIR
+    virtual HRESULT STDMETHODCALLTYPE add_PointerWheelChanged(IUnknown*, INT64*) = 0;
+};
+struct CoreWindowStatics : IInspectable {
+    virtual HRESULT STDMETHODCALLTYPE GetForCurrentThread(CoreWindow**) = 0;
+};
+struct PointerArgs : IInspectable {
+    virtual HRESULT STDMETHODCALLTYPE get_CurrentPoint(IInspectable**) = 0;
+};
+struct PointerPoint : IInspectable {
+    virtual HRESULT STDMETHODCALLTYPE unusedDevice() = 0;
+    virtual HRESULT STDMETHODCALLTYPE get_Position(UwpPoint*) = 0;
+    virtual HRESULT STDMETHODCALLTYPE unusedRawPosition() = 0;
+    virtual HRESULT STDMETHODCALLTYPE unusedId() = 0;
+    virtual HRESULT STDMETHODCALLTYPE unusedFrame() = 0;
+    virtual HRESULT STDMETHODCALLTYPE unusedTimestamp() = 0;
+    virtual HRESULT STDMETHODCALLTYPE unusedContact() = 0;
+    virtual HRESULT STDMETHODCALLTYPE get_Properties(IInspectable**) = 0;
+};
+struct PointerProperties : IInspectable {
+#define UNUSED(n) virtual HRESULT STDMETHODCALLTYPE unused##n() = 0;
+    UNUSED(0) UNUSED(1) UNUSED(2) UNUSED(3) UNUSED(4) UNUSED(5) UNUSED(6)
+    UNUSED(7) UNUSED(8) UNUSED(9) UNUSED(10) UNUSED(11) UNUSED(12)
+#undef UNUSED
+    virtual HRESULT STDMETHODCALLTYPE get_MouseWheelDelta(INT32*) = 0;
+    virtual HRESULT STDMETHODCALLTYPE get_IsHorizontalMouseWheel(boolean*) = 0;
+};
+struct PointerHandler : IUnknown {
+    virtual HRESULT STDMETHODCALLTYPE Invoke(IInspectable*, IInspectable*) = 0;
+};
+
+namespace {
+constexpr GUID iidStatics = {0x4d239005,0x3c2a,0x41b1,{0x90,0x22,0x53,0x6b,0xb9,0xcf,0x93,0xb1}};
+constexpr GUID iidArgs = {0x920d9cb1,0xa5fc,0x4a21,{0x8c,0x09,0x49,0xdf,0xe6,0xff,0xe2,0x5f}};
+constexpr GUID iidPoint = {0xe995317d,0x7296,0x42d9,{0x82,0x33,0xc5,0xbe,0x73,0xb7,0x4a,0x4a}};
+constexpr GUID iidProperties = {0xc79d8a4b,0xc163,0x4ee7,{0x80,0x3f,0x67,0xce,0x79,0xf9,0x97,0x2d}};
+constexpr GUID iidHandler = {0x420e1bb6,0xe99d,0x5e64,{0x8e,0x25,0x07,0x46,0x7e,0x3c,0xae,0x9e}};
+SRWLOCK sampleLock = SRWLOCK_INIT;
+UwpPoint pointer{};
+UwpRect bounds{};
+bool haveSample = false;
+std::atomic<int> wheelX{0}, wheelY{0};
+std::atomic<bool> inputEnabled{true};
+bool attached = false;
+ULONGLONG nextAttempt = 0;
+
+template<class T> void release(T*& p) { if (p) { p->Release(); p = nullptr; } }
+class WheelHandler final : public PointerHandler {
+    std::atomic<ULONG> refs{1};
+public:
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        if (iid == IID_IUnknown || iid == IID_IAgileObject || iid == iidHandler) {
+            *out = static_cast<PointerHandler*>(this); AddRef(); return S_OK;
+        }
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
+    ULONG STDMETHODCALLTYPE Release() override { ULONG count = --refs; if (!count) delete this; return count; }
+    HRESULT STDMETHODCALLTYPE Invoke(IInspectable*, IInspectable* arg) override {
+        if (!arg || !inputEnabled.load(std::memory_order_acquire)) return S_OK;
+        PointerArgs* args = nullptr; IInspectable* rawPoint = nullptr; PointerPoint* point = nullptr;
+        IInspectable* rawProperties = nullptr; PointerProperties* properties = nullptr;
+        HRESULT hr = arg->QueryInterface(iidArgs, reinterpret_cast<void**>(&args));
+        if (SUCCEEDED(hr) && args) hr = args->get_CurrentPoint(&rawPoint);
+        if (SUCCEEDED(hr) && rawPoint) hr = rawPoint->QueryInterface(iidPoint, reinterpret_cast<void**>(&point));
+        if (SUCCEEDED(hr) && point) hr = point->get_Properties(&rawProperties);
+        if (SUCCEEDED(hr) && rawProperties) hr = rawProperties->QueryInterface(iidProperties, reinterpret_cast<void**>(&properties));
+        if (SUCCEEDED(hr) && properties) {
+            INT32 delta = 0; boolean horizontal = 0;
+            if (SUCCEEDED(properties->get_MouseWheelDelta(&delta)) &&
+                SUCCEEDED(properties->get_IsHorizontalMouseWheel(&horizontal))) {
+                if (delta > 12000) delta = 12000;
+                if (delta < -12000) delta = -12000;
+                (horizontal ? wheelX : wheelY).fetch_add(delta, std::memory_order_relaxed);
+            }
+        }
+        release(properties); release(rawProperties); release(point); release(rawPoint); release(args);
+        return S_OK;
+    }
+};
+}
+
+void SampleUwpInput() {
+    if (!inputEnabled.load(std::memory_order_acquire)) return;
+    HSTRING className = nullptr;
+    CoreWindowStatics* statics = nullptr;
+    CoreWindow* window = nullptr;
+    constexpr wchar_t name[] = L"Windows.UI.Core.CoreWindow";
+    HRESULT hr = WindowsCreateString(name, static_cast<UINT32>(sizeof(name)/sizeof(name[0])-1), &className);
+    if (SUCCEEDED(hr)) hr = RoGetActivationFactory(className, iidStatics, reinterpret_cast<void**>(&statics));
+    if (SUCCEEDED(hr) && statics) hr = statics->GetForCurrentThread(&window);
+    if (SUCCEEDED(hr) && window) {
+        UwpPoint p{}; UwpRect r{};
+        if (SUCCEEDED(window->get_PointerPosition(&p)) && SUCCEEDED(window->get_Bounds(&r)) && r.w > 0 && r.h > 0) {
+            AcquireSRWLockExclusive(&sampleLock);
+            pointer = p; bounds = r; haveSample = true;
+            ReleaseSRWLockExclusive(&sampleLock);
+        }
+        ULONGLONG now = GetTickCount64();
+        if (!attached && now >= nextAttempt) {
+            nextAttempt = now + 2000;
+            WheelHandler* handler = new (std::nothrow) WheelHandler;
+            if (handler) {
+                INT64 token = 0;
+                attached = SUCCEEDED(window->add_PointerWheelChanged(handler, &token));
+                handler->Release();
+                if (attached) OutputDebugStringA("GAYClient repair: UWP mouse wheel handler attached\n");
+            }
+        }
+    }
+    release(window); release(statics);
+    if (className) WindowsDeleteString(className);
+}
+bool GetSampledUwpPointer(float& x, float& y, float& w, float& h) {
+    AcquireSRWLockShared(&sampleLock);
+    bool valid = haveSample && uwp_client_pointer(pointer.x, pointer.y, bounds.x, bounds.y,
+                                                   bounds.w, bounds.h, x, y, w, h);
+    ReleaseSRWLockShared(&sampleLock);
+    return valid;
+}
+void DisableUwpExtraInput() {
+    inputEnabled.store(false, std::memory_order_release);
+    wheelX.store(0, std::memory_order_relaxed); wheelY.store(0, std::memory_order_relaxed);
+}
+void TakeUwpWheel(int& horizontal, int& vertical) {
+    horizontal = wheelX.exchange(0, std::memory_order_relaxed);
+    vertical = wheelY.exchange(0, std::memory_order_relaxed);
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/uwp_extra.cpp
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/page_scroll.h
+================================================================================
+#pragma once
+#include <cstdint>
+
+// Simple key-repeat fallback when UWP doesn't deliver mouse-wheel events.
+// Returns an ImGui vertical wheel value, never queues scroll with no menu.
+struct PageScrollRepeat {
+    int direction = 0;
+    std::uint64_t next = 0;
+    float step(bool enabled, bool pageUp, bool pageDown, std::uint64_t nowMs) {
+        const int requested = enabled ? (pageUp ? 1 : 0) - (pageDown ? 1 : 0) : 0;
+        if (!requested) { direction = 0; next = 0; return 0.0f; }
+        if (requested != direction) {
+            direction = requested; next = nowMs + 400;
+            return static_cast<float>(requested);
+        }
+        if (nowMs >= next) {
+            next = nowMs + 110;
+            return static_cast<float>(requested);
+        }
+        return 0.0f;
+    }
+};
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/page_scroll.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/wheel_bridge.h
+================================================================================
+#pragma once
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <cstdint>
+
+// Pagefile-backed mapping shared by duplicating a read-only handle into the
+// game. Never a named object, never a disk file. Aligned 32-bit counter reads
+// are atomic on the x64 Windows targets supported by this project.
+struct WheelBridge {
+    std::uint32_t magic;
+    std::uint32_t version;
+    volatile LONG horizontal;
+    volatile LONG vertical;
+};
+constexpr std::uint32_t kWheelMagic = 0x47574831;
+static_assert(sizeof(WheelBridge) == 16, "wheel bridge ABI");
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/wheel_bridge.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/wheel_counter.h
+================================================================================
+#pragma once
+#include <cstdint>
+#include <cstring>
+
+// Windows wheel deltas can accumulate through 32-bit signed wraparound.
+// Read the cumulative value without modifying the read-only mapping.
+struct WheelCounter {
+    std::uint32_t lastX = 0, lastY = 0;
+    bool initialized = false;
+    static int delta(std::uint32_t current, std::uint32_t last) {
+        std::uint32_t modular = current - last;
+        std::int32_t value = 0;
+        std::memcpy(&value, &modular, sizeof(value));
+        return value > 12000 ? 12000 : value < -12000 ? -12000 : value;
+    }
+    void reset() { initialized = false; }
+    void take(std::uint32_t currentX, std::uint32_t currentY, int& x, int& y) {
+        if (!initialized) { lastX = currentX; lastY = currentY; initialized = true; }
+        x = delta(currentX, lastX); y = delta(currentY, lastY);
+        lastX = currentX; lastY = currentY;
+    }
+};
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/wheel_counter.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/coordinates_115.h
+================================================================================
+#pragma once
+#include <cstdint>
+#include <cstddef>
+#include <cmath>
+#include <limits>
+
+struct Position115 { float x, y, z; };
+struct BlockPosition115 { int x, y, z; };
+
+// The reader validates ranges and finiteness before this is called. Block
+// coordinates floor toward negative infinity, not toward zero. The one-block
+// vertical correction is a display calibration based on player feedback; it
+// does not change the raw values used for the independent Y consistency test.
+inline BlockPosition115 displayPosition115(const Position115& position) {
+    return {static_cast<int>(std::floor(position.x)),
+            static_cast<int>(std::floor(position.y)) - 1,
+            static_cast<int>(std::floor(position.z))};
+}
+
+// Experimental, read-only 1.1.5 paths. A separate height path is required
+// for either candidate. No failed read may replace out or reuse old values.
+template<class Read> bool readPosition115(std::uint64_t base, Read read, Position115& out) {
+    auto pointer = [&](std::uint64_t address, std::uint64_t& value) {
+        return address && read(address, &value, sizeof(value)) && value >= 0x10000 &&
+               value < 0x0000800000000000ULL && (value & 7) == 0;
+    };
+    auto add = [](std::uint64_t a, std::uint64_t b, std::uint64_t& value) {
+        if (a > std::numeric_limits<std::uint64_t>::max() - b) return false;
+        value = a + b; return true;
+    };
+    auto chain = [&](std::uint64_t start, const std::uint64_t* offsets, std::size_t count, std::uint64_t& result) {
+        std::uint64_t address = 0;
+        if (!pointer(start, result)) return false;
+        for (std::size_t i = 0; i < count; ++i)
+            if (!add(result, offsets[i], address) || !pointer(address, result)) return false;
+        return true;
+    };
+    constexpr std::uint64_t yPath[] = {0x30, 0x328, 0x0, 0x68, 0x90, 0x18};
+    constexpr std::uint64_t playerPath[] = {0x30, 0x2c0, 0x0, 0x78, 0x28, 0x58};
+    std::uint64_t sharedStart = 0, yRoot = 0, address = 0;
+    if (!add(base, 0x01921DF8, sharedStart) ||
+        !chain(sharedStart, yPath, sizeof(yPath)/sizeof(yPath[0]), yRoot)) return false;
+    float separateY = 0;
+    if (!add(yRoot, 0x164, address) || !read(address, &separateY, sizeof(separateY)) ||
+        !std::isfinite(separateY) || std::fabs(separateY) > 4096.0f) return false;
+    auto plausible = [&](const Position115& p) {
+        return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z) &&
+               std::fabs(p.x) <= 30000000.0f && std::fabs(p.z) <= 30000000.0f &&
+               std::fabs(p.y) <= 4096.0f && std::fabs(p.y - separateY) <= 2.5f;
+    };
+    auto yStillValid = [&]() {
+        std::uint64_t again = 0;
+        return chain(sharedStart, yPath, sizeof(yPath)/sizeof(yPath[0]), again) && again == yRoot;
+    };
+    // C: alternative local player chain observed by the user's diagnostic.
+    std::uint64_t player = 0, again = 0;
+    Position115 candidate{};
+    if (chain(sharedStart, playerPath, sizeof(playerPath)/sizeof(playerPath[0]), player) &&
+        add(player, 0x94, address) && read(address, &candidate, sizeof(candidate)) && plausible(candidate) &&
+        chain(sharedStart, playerPath, sizeof(playerPath)/sizeof(playerPath[0]), again) && again == player &&
+        yStillValid()) {
+        out = candidate;
+        return true;
+    }
+    // A: retain the earlier candidate as a fallback for other matching builds.
+    std::uint64_t rootAddress = 0, root = 0;
+    if (!add(base, 0x019431E0, rootAddress) || !pointer(rootAddress, root) ||
+        !add(root, 0x524, address) || !read(address, &candidate, sizeof(candidate)) || !plausible(candidate) ||
+        !pointer(rootAddress, again) || again != root || !yStillValid()) return false;
+    out = candidate;
+    return true;
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/coordinates_115.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/mouse_diagnostic_patch.h
+================================================================================
+#pragma once
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+
+// Exact legacy core only. The JNE at 0x183d branches into the mouse test
+// background and text. Six NOPs fall through to ImGui::Render at 0x1843.
+// The checks deliberately fail closed for a different core or existing patch.
+namespace mouse_diagnostic_patch {
+constexpr std::size_t codeRva = 0x1836;
+constexpr std::size_t branchRva = 0x183d;
+constexpr std::size_t formatRva = 0x1bb008;
+constexpr unsigned char code[] = {0xe8,0xf5,0x17,0x00,0x00,0x84,0xc0,0x0f,0x85,0x18,0x02,0x00,0x00,0xe8,0xb8,0x67,0x05,0x00};
+constexpr char format[] = "UWP mouse test: reg %u/3  events %u  poll %u/3 %s";
+inline bool matches(const unsigned char* image, std::size_t size) {
+    return image && size >= formatRva + sizeof(format) && size >= codeRva + sizeof(code) &&
+        std::memcmp(image + codeRva, code, sizeof(code)) == 0 &&
+        std::memcmp(image + formatRva, format, sizeof(format)) == 0;
+}
+inline void apply(unsigned char* image) { std::memset(image + branchRva, 0x90, 6); }
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/mouse_diagnostic_patch.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/disable_hotkey.h
+================================================================================
+#pragma once
+// Disable only on a fresh Delete press, in the active game, never while an
+// ImGui text editor is accepting input. Ignore holds and background presses.
+class DisableHotkey {
+    bool wasDown = false;
+public:
+    bool update(bool down, bool gameForeground, bool editingText) {
+        bool pressed = down && !wasDown && gameForeground && !editingText;
+        wasDown = down;
+        return pressed;
+    }
+};
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/disable_hotkey.h
+--------------------------------------------------------------------------------
