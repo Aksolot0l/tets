@@ -23,6 +23,7 @@
 #include "china_hat_native.h"
 #include "visual_avatar_preview.h"
 #include "visual_color.h"
+#include "visual_player_skin.h"
 #include <atomic>
 #include <array>
 #include <cstring>
@@ -79,6 +80,8 @@ using DrawTriangleFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,const Im
 using DrawQuadFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,ImU32);
 using DrawRectFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,ImU32,float,int);
 using DrawGradientRectFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,ImU32,ImU32,ImU32,ImU32);
+using DrawImageFn = void (*)(ImDrawList*,ImTextureID,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,ImU32);
+using DrawImageQuadFn = void (*)(ImDrawList*,ImTextureID,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,ImU32);
 using PushVarFloatFn = void (*)(int,float);
 using PopVarFn = void (*)(int);
 using SameLineFn = void (*)(float,float);
@@ -134,6 +137,8 @@ static DrawTriangleFn drawTriangle = nullptr;
 static DrawQuadFn drawQuad = nullptr;
 static DrawRectFn drawRect = nullptr;
 static DrawGradientRectFn drawGradientRect = nullptr;
+static DrawImageFn drawImage = nullptr;
+static DrawImageQuadFn drawImageQuad = nullptr;
 static PushVarFloatFn guiPushVarFloat = nullptr;
 static PopVarFn guiPopVar = nullptr;
 static SameLineFn guiSameLine = nullptr;
@@ -158,6 +163,8 @@ static thread_local bool pointerInUse = false;
 static thread_local ID3D11Device* frameDevice = nullptr;
 static thread_local ID3D11DeviceContext* frameContext = nullptr;
 static thread_local UINT frameWidth = 0, frameHeight = 0;
+// One SRV reference is retained until the ImGui draw data is submitted.
+static thread_local ID3D11ShaderResourceView* previewFrameView = nullptr;
 static LARGE_INTEGER lastFrame{};
 static LARGE_INTEGER frequency{};
 
@@ -427,7 +434,7 @@ static void popVisualStyle() {
 }
 static bool canVisualPreview() {
     return hudHooksReady && guiButton && guiDrawList && guiCursor && guiDummy &&
-        drawLine && drawTriangle && drawQuad && drawRect && drawGradientRect;
+        drawLine && drawTriangle && drawQuad && drawRect && drawGradientRect && drawImage && drawImageQuad;
 }
 static void drawVisualPanel() {
     guiSetNextPos(ImVec2(548.f,35.f), ImGuiCond_FirstUseEver, ImVec2(0,0));
@@ -451,7 +458,7 @@ static void drawVisualPanel() {
 }
 
 // Example avatar, not an extracted game skin. These calls only draw UI geometry.
-static void drawAvatar(ImDrawList* d,ImVec2 o,float scale) {
+static void drawFallbackAvatar(ImDrawList* d,ImVec2 o,float scale) {
     auto p=[&](float x,float y,float z) { auto v=visual_avatar_preview::project({x,y,z},scale); return ImVec2(o.x+v.x,o.y+v.y); };
     const ImU32 skin=IM_COL32(178,121,88,255), hair=IM_COL32(57,39,31,255);
     // Torso and shoulders. Camera is nearly front-on, with a small angle so
@@ -476,6 +483,33 @@ static void drawAvatar(ImDrawList* d,ImVec2 o,float scale) {
     for (int y=0;y<8;++y) for (int x=0;x<8;++x) if (pattern[y][x])
         drawRect(d,ImVec2(top.x+x*cell,top.y+y*ch),ImVec2(top.x+(x+1)*cell+.2f,top.y+(y+1)*ch+.2f),palette[pattern[y][x]],0.f,0);
 }
+// Candidate texture UVs use the conventional 64x64 / 64x32 skin layout.
+// This is an independently projected sample model, not the game's model.
+static ImVec2 skinUv(const visual_player_skin::Snapshot& s,float x,float y) {
+    return ImVec2(x/64.f,y/64.f*visual_skin_policy::vScale(s.width,s.height));
+}
+static void skinRect(ImDrawList* d,const visual_player_skin::Snapshot& s,ImVec2 a,ImVec2 b,float x0,float y0,float x1,float y1,ImU32 tint=IM_COL32_WHITE) {
+    drawImage(d,static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(s.view)),a,b,skinUv(s,x0,y0),skinUv(s,x1,y1),tint);
+}
+static void skinQuad(ImDrawList* d,const visual_player_skin::Snapshot& s,ImVec2 a,ImVec2 b,ImVec2 c,ImVec2 e,float x0,float y0,float x1,float y1,ImU32 tint=IM_COL32_WHITE) {
+    drawImageQuad(d,static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(s.view)),a,b,c,e,skinUv(s,x0,y0),skinUv(s,x1,y0),skinUv(s,x1,y1),skinUv(s,x0,y1),tint);
+}
+static void drawAvatar(ImDrawList* d,ImVec2 o,float scale,const visual_player_skin::Snapshot& s) {
+    if (!s.view) { drawFallbackAvatar(d,o,scale); return; }
+    auto p=[&](float x,float y,float z) { auto v=visual_avatar_preview::project({x,y,z},scale); return ImVec2(o.x+v.x,o.y+v.y); };
+    // Upper torso and arms with actual sampled texture; preserves the same
+    // near-front view and geometric dimensions as the fallback model.
+    skinQuad(d,s,p(.31f,.02f,-.19f),p(.31f,.02f,.05f),p(.31f,-.35f,.05f),p(.31f,-.35f,-.19f),16,20,20,32,IM_COL32(190,190,190,255));
+    skinRect(d,s,p(-.31f,.02f,.05f),p(.31f,-.35f,.05f),20,20,28,32);
+    skinRect(d,s,p(-.41f,-.02f,.05f),p(-.31f,-.34f,.05f),44,20,48,32);
+    skinRect(d,s,p(.31f,-.02f,.05f),p(.41f,-.34f,.05f),44,20,48,32);
+    // Head top, visible side and front. The outer head layer can carry hair,
+    // glasses, hats etc.; custom Bedrock geometry is not captured.
+    skinQuad(d,s,p(-.27f,.64f,-.27f),p(.27f,.64f,-.27f),p(.27f,.64f,.27f),p(-.27f,.64f,.27f),8,0,16,8,IM_COL32(210,210,210,255));
+    skinQuad(d,s,p(.27f,.64f,-.27f),p(.27f,.64f,.27f),p(.27f,.10f,.27f),p(.27f,.10f,-.27f),16,8,24,16,IM_COL32(190,190,190,255));
+    skinRect(d,s,p(-.27f,.64f,.27f),p(.27f,.10f,.27f),8,8,16,16);
+    skinRect(d,s,p(-.27f,.64f,.27f),p(.27f,.10f,.27f),40,8,48,16);
+}
 static ImU32 previewMaterial(bool hat,std::uint64_t now,china_hat::Color vertex) {
     const bool colors=VisualTintEnabled(), rainbow=hat?HatRainbowEnabled():TrailRainbowEnabled();
     const float opacity=GetVisualParam(hat?VisualParam::HatOpacity:VisualParam::TrailOpacity);
@@ -486,7 +520,7 @@ static ImU32 previewMaterial(bool hat,std::uint64_t now,china_hat::Color vertex)
     if (colors && rainbow && VertexGradientEnabled()) tint={{vertex.r/255.f,vertex.g/255.f,vertex.b/255.f,1.f}};
     return IM_COL32(static_cast<int>(tint[0]*255.f),static_cast<int>(tint[1]*255.f),static_cast<int>(tint[2]*255.f),static_cast<int>(opacity*255.f));
 }
-static void drawHatPreview(ImDrawList* d,ImVec2 o,std::uint64_t now) {
+static void drawHatPreview(ImDrawList* d,ImVec2 o,std::uint64_t now,const visual_player_skin::Snapshot& skin) {
     visual_avatar_preview::HatSettings s{GetVisualParam(VisualParam::HatRadius),GetVisualParam(VisualParam::HatConeHeight),
       GetVisualParam(VisualParam::HatOffset),GetVisualParam(VisualParam::HatBobAmplitude),GetVisualParam(VisualParam::HatBobSpeed),
       GetVisualParam(VisualParam::HatRainbowSpeed),VisualTintEnabled() && HatRainbowEnabled() && VertexGradientEnabled()};
@@ -503,10 +537,10 @@ static void drawHatPreview(ImDrawList* d,ImVec2 o,std::uint64_t now) {
         if (i%4==0) drawLine(d,p(apex.position),p(a.position),color,1.f);
     };
     for (int i=0;i<48;++i) if (mesh.triangles[i*3+1].position.z+mesh.triangles[i*3+2].position.z<0) sector(i);
-    drawAvatar(d,o,scale);
+    drawAvatar(d,o,scale,skin);
     for (int i=0;i<48;++i) if (mesh.triangles[i*3+1].position.z+mesh.triangles[i*3+2].position.z>=0) sector(i);
 }
-static void drawTrailPreview(ImDrawList* d,ImVec2 o,std::uint64_t now) {
+static void drawTrailPreview(ImDrawList* d,ImVec2 o,std::uint64_t now,const visual_player_skin::Snapshot& skin) {
     const float seconds=GetVisualParam(VisualParam::TrailSeconds);
     const float height=visual_avatar_preview::trailHeight(GetVisualParam(VisualParam::TrailHeight));
     const float phase=visual_gradient::phase(now,GetVisualParam(VisualParam::TrailRainbowSpeed));
@@ -523,29 +557,46 @@ static void drawTrailPreview(ImDrawList* d,ImVec2 o,std::uint64_t now) {
     }
     // Side-facing sample player: distinct from the front-facing hat preview.
     const float x=o.x+226.f, foot=o.y+183.f;
-    drawRect(d,ImVec2(x-14,foot-92),ImVec2(x+14,foot-65),IM_COL32(178,121,88,255),1.f,0);
-    drawRect(d,ImVec2(x-14,foot-94),ImVec2(x+14,foot-86),IM_COL32(57,39,31,255),1.f,0);
-    drawRect(d,ImVec2(x+5,foot-83),ImVec2(x+10,foot-79),IM_COL32(58,66,142,255),0.f,0);
-    drawRect(d,ImVec2(x-13,foot-65),ImVec2(x+13,foot-29),IM_COL32(34,144,143,255),1.f,0);
-    drawRect(d,ImVec2(x-6,foot-60),ImVec2(x+7,foot-33),IM_COL32(25,117,119,255),1.f,0);
     const float step=std::sin(static_cast<double>(now)*.006)*5.f;
-    drawRect(d,ImVec2(x-12+step,foot-29),ImVec2(x-1+step,foot),IM_COL32(48,60,120,255),1.f,0);
-    drawRect(d,ImVec2(x+1-step,foot-29),ImVec2(x+12-step,foot),IM_COL32(58,72,139,255),1.f,0);
+    if (skin.view) {
+        skinRect(d,skin,ImVec2(x-14,foot-92),ImVec2(x+14,foot-65),16,8,24,16);
+        skinRect(d,skin,ImVec2(x-14,foot-92),ImVec2(x+14,foot-65),48,8,56,16);
+        skinRect(d,skin,ImVec2(x-13,foot-65),ImVec2(x+13,foot-29),16,20,20,32);
+        skinRect(d,skin,ImVec2(x-6,foot-60),ImVec2(x+7,foot-33),40,20,44,32);
+        skinRect(d,skin,ImVec2(x-12+step,foot-29),ImVec2(x-1+step,foot),0,20,4,32,IM_COL32(190,190,190,255));
+        skinRect(d,skin,ImVec2(x+1-step,foot-29),ImVec2(x+12-step,foot),0,20,4,32);
+    } else {
+        drawRect(d,ImVec2(x-14,foot-92),ImVec2(x+14,foot-65),IM_COL32(178,121,88,255),1.f,0);
+        drawRect(d,ImVec2(x-14,foot-94),ImVec2(x+14,foot-86),IM_COL32(57,39,31,255),1.f,0);
+        drawRect(d,ImVec2(x+5,foot-83),ImVec2(x+10,foot-79),IM_COL32(58,66,142,255),0.f,0);
+        drawRect(d,ImVec2(x-13,foot-65),ImVec2(x+13,foot-29),IM_COL32(34,144,143,255),1.f,0);
+        drawRect(d,ImVec2(x-6,foot-60),ImVec2(x+7,foot-33),IM_COL32(25,117,119,255),1.f,0);
+        drawRect(d,ImVec2(x-12+step,foot-29),ImVec2(x-1+step,foot),IM_COL32(48,60,120,255),1.f,0);
+        drawRect(d,ImVec2(x+1-step,foot-29),ImVec2(x+12-step,foot),IM_COL32(58,72,139,255),1.f,0);
+    }
 }
 static void drawEffectPreview(VisualEditor editor) {
     guiSetNextPos(ImVec2(18.f,90.f),ImGuiCond_Always,ImVec2(0,0));
-    if (guiSetNextSize) guiSetNextSize(ImVec2(310.f,310.f),ImGuiCond_FirstUseEver);
+    if (guiSetNextSize) guiSetNextSize(ImVec2(310.f,360.f),ImGuiCond_FirstUseEver);
     pushVisualStyle();
     if (guiBegin("Preview##effect",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
-        realText("Example avatar (Steve style)",nullptr);
+        // Keep the acquired view alive until the ImGui renderer has consumed
+        // this frame; the candidate list itself can change or be cleared.
+        release(previewFrameView);
+        auto skin=visual_player_skin::acquire(frameDevice); previewFrameView=skin.view;
+        if (skin.view) {
+            char label[96]{}; std::snprintf(label,sizeof(label),"Game texture %u/%u (verify)",skin.index+1,skin.count); realText(label,nullptr);
+        } else realText("Waiting for player; sample avatar",nullptr);
         auto* d=guiDrawList(); const ImVec2 o=guiCursor(); const auto now=GetTickCount64();
         if (d) {
             drawGradientRect(d,o,ImVec2(o.x+280.f,o.y+215.f),IM_COL32(19,33,37,255),IM_COL32(17,26,33,255),IM_COL32(8,14,20,255),IM_COL32(9,18,20,255));
             drawLine(d,ImVec2(o.x+15,o.y+205),ImVec2(o.x+265,o.y+205),IM_COL32(42,85,68,150),1.f);
-            if (editor==VisualEditor::Hat) drawHatPreview(d,o,now); else drawTrailPreview(d,o,now);
+            if (editor==VisualEditor::Hat) drawHatPreview(d,o,now,skin); else drawTrailPreview(d,o,now,skin);
         }
         guiDummy(ImVec2(280.f,215.f));
-        realText("Game shader may look different.",nullptr);
+        realText("Sample model; game shader may differ.",nullptr);
+        if (skin.count>1 && guiButton("Next texture##skin",ImVec2(-1.f,0.f))) visual_player_skin::next();
+        if (!skin.view) realText("Use third person to detect skin.",nullptr);
     }
     guiEnd(); popVisualStyle();
 }
@@ -697,6 +748,7 @@ static void patchedDrawGui(void* runtime) {
         overlayDisabled.store(true, std::memory_order_release);
         SetChinaHatEnabled(false);
         SetTrailEnabled(false);
+        SetPlayerSkinPreviewActive(false);
         if (bridgeActive) bridgeActive(false);
         DisableUwpExtraInput();
         log("overlay disabled by Delete; DLLs remain loaded until game exit");
@@ -705,6 +757,7 @@ static void patchedDrawGui(void* runtime) {
     const bool menuOpen=runtime && *(reinterpret_cast<unsigned char*>(runtime)+0x551);
     if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }
     const bool editingVisual=menuOpen && visualEditor!=VisualEditor::None && canVisualPreview();
+    SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options);
     if (!menuOpen || (!hudEditorOpen && !editingVisual)) realDrawGui(runtime);
     if (editingVisual) { drawVisualEditor(); return; }
     if (menuOpen && hudEditorOpen && hudHooksReady) { drawHudEditor(runtime); return; }
@@ -828,6 +881,7 @@ static void draw(IDXGISwapChain* chain, UINT flags) {
                 frameDevice = device; frameContext = context;
                 frameWidth = desc.Width; frameHeight = desc.Height; seenInput = false; pointerInUse = false;
                 legacyPresent(chain, 0, flags);
+                release(previewFrameView);
                 frameDevice = nullptr; frameContext = nullptr;
             }
         }
@@ -937,6 +991,8 @@ static DWORD WINAPI bootstrap(void*) {
     drawQuad = symbol<DrawQuadFn>("_ZN10ImDrawList13AddQuadFilledERK6ImVec2S2_S2_S2_j");
     drawRect = symbol<DrawRectFn>("_ZN10ImDrawList13AddRectFilledERK6ImVec2S2_jfi");
     drawGradientRect = symbol<DrawGradientRectFn>("_ZN10ImDrawList23AddRectFilledMultiColorERK6ImVec2S2_jjjj");
+    drawImage = symbol<DrawImageFn>("_ZN10ImDrawList8AddImageEyRK6ImVec2S2_S2_S2_j");
+    drawImageQuad = symbol<DrawImageQuadFn>("_ZN10ImDrawList12AddImageQuadEyRK6ImVec2S2_S2_S2_S2_S2_S2_S2_j");
     guiPushVarFloat = symbol<PushVarFloatFn>("_ZN5ImGui12PushStyleVarEif");
     guiPopVar = symbol<PopVarFn>("_ZN5ImGui11PopStyleVarEi");
     guiSameLine = symbol<SameLineFn>("_ZN5ImGui8SameLineEff");

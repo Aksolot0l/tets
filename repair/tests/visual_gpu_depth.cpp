@@ -36,9 +36,14 @@ struct Context:ID3D11DeviceContext {
  void OMSetDepthStencilState(ID3D11DepthStencilState* p,UINT r) override {curDepth=p;stencil=r;sets++;}
  void OMSetBlendState(ID3D11BlendState* p,const FLOAT* f,UINT m) override {curBlend=p;mask=m;for(int i=0;i<4;i++)factor[i]=f[i];sets++;}
 };
+static int observed=0;
+static void observePlayer(ID3D11DeviceContext*) { ++observed; }
 int main() {
  using namespace visual_gpu_depth;
- Context ctx; int calls=0; inVisualDraw=false; draw(&ctx,[&]{++calls;}); assert(calls==1 && ctx.sets==0);
+ Context ctx; int calls=0; inVisualDraw=false; playerObserver.store(&observePlayer);
+ draw(&ctx,[&]{++calls;}); assert(calls==1 && ctx.sets==0 && observed==0);
+ inPlayerCapture=true; draw(&ctx,[&]{++calls;}); assert(calls==2 && ctx.sets==0 && observed==1);
+ inPlayerCapture=false; playerObserver.store(nullptr); calls=1;
  expectedContext=&ctx; expectedDepth=&ctx.view; worldCompare=D3D11_COMPARISON_LESS_EQUAL; opacity=.25f; inVisualDraw=true;
  draw(&ctx,[&]{
   ++calls; D3D11_DEPTH_STENCIL_DESC d{}; ctx.curDepth->GetDesc(&d);

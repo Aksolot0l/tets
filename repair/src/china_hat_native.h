@@ -2,6 +2,8 @@
 #include <windows.h>
 #include "visual_settings.h"
 struct ID3D11DeviceContext;
+// Opt-in read-only GPU skin candidate discovery for the effect editor.
+void SetPlayerSkinPreviewActive(bool enabled);
 void ObserveVisualContext(ID3D11DeviceContext* context);
 int VisualDepthBefore();
 int VisualDepthAfter();

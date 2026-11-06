@@ -36,14 +36,19 @@ state and restores the global shader color. This does not prove private ABI,
 local-player chain or camera semantics. Windows runtime testing is essential.
 
 The separate draggable `Visuals` window offers China Hat and Trail editors.
-The preview is now an independent, stylized Steve-like sample avatar on a
-background, not a camera crop or the player's actual skin. A front-facing head
-shows the hat; an animated example character with a simulated path shows trail.
-The hat uses the same mesh builder, timing, settings and bob as the game, and
-both previews use the same uniform-color animation and opacity settings.
-The GPU material, interpolation, exact head model and actual walking history
-are not replicated; no exact pixel match is promised. Skin extraction from this
-build is not implemented. The new preview still requires Windows testing.
+The separate preview attempts to find a skin-shaped texture bound during the
+original local-player render, while its editor is open. It uses read-only GPU
+resource observation: no CPU readback, file or network transfer. Third-person
+view may be necessary. Candidates are not guaranteed to be skins; the UI labels
+them for verification and allows cycling. If none is found, a Steve-like sample
+is displayed. This is unverified in Minecraft and the texture may not be found.
+
+Even when a skin texture is found, the preview is a separately projected sample,
+not the game's model: its bones, custom geometry and true animation are not
+extracted. A front-facing head shows the hat; a side-facing example character
+with a simulated path shows trail. The hat uses the same mesh builder, timing,
+settings and bob as the game. The GPU material and actual walking history are
+not replicated; no exact pixel match is promised. Windows testing is required.
 
 The user observed that the output-merger had a DSV bound and depth enabled
 after the entity pass, but depth was disabled around the screen/UI pass. The

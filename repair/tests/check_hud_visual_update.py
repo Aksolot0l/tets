@@ -30,8 +30,8 @@ for symbol in ('_ZN5ImGui6ButtonEPKcRK6ImVec2','_ZN5ImGui17GetWindowDrawListEv',
                '_ZN10ImDrawList13AddQuadFilledERK6ImVec2S2_S2_S2_j','_ZN10ImDrawList13AddRectFilledERK6ImVec2S2_jfi',
                '_ZN10ImDrawList23AddRectFilledMultiColorERK6ImVec2S2_jjjj'):
     assert symbol in u and symbol.encode() in exports, symbol
-assert 'Example avatar (Steve style)' in u and 'Game shader may look different' in u
-assert 'visual_avatar_preview::hat(mesh,s,now)' in u and 'drawTrailPreview(d,o,now)' in u
+assert 'Waiting for player; sample avatar' in u and 'Sample model; game shader may differ' in u
+assert 'visual_avatar_preview::hat(mesh,s,now)' in u and 'drawTrailPreview(d,o,now,skin)' in u
 assert 'captureGamePreview' not in u and 'CopyResource(previewTexture' not in u
 assert 'Settings##open_hat' in u and 'Settings##open_trail' in u
 assert 'drawVisualEditor(); return;' in u and 'drawEffectPreview(current)' in u
@@ -47,7 +47,7 @@ assert 'visual_gpu_depth::expectedDepth=dsv' in n and 'submitVisual(t,param(Visu
 assert 'D3D11_DEPTH_WRITE_MASK_ZERO' in gpu and 'D3D11_BLEND_BLEND_FACTOR' in gpu
 assert 'current==expectedDepth' in gpu and 'ctx!=expectedContext' in gpu
 assert 'ctx->OMSetDepthStencilState(oldDepth,stencil)' in gpu and 'ctx->OMSetBlendState(oldBlend,oldFactor,sampleMask)' in gpu
-assert 'if (!inVisualDraw) { call(); return; }' in gpu
+assert 'if (!inVisualDraw)' in gpu and 'if (inPlayerCapture)' in gpu and 'call(); return;' in gpu
 assert 'Old overlay (see-through)' in u and 'SetVisualLegacyMode(legacy)' in u
 
 # The main HUD theme is installed after essential hooks, is limited to known
@@ -66,3 +66,18 @@ for name in ('fps','cps','clock','cpu','ram','resolution','watermark','info','ac
 for symbol in ('_ZN5ImGui5BeginEPKcPbi','_ZN5ImGui8SameLineEff','_ZN5ImGui12PushStyleVarEif','_ZN5ImGui11PopStyleVarEi'):
     assert symbol in u and symbol.encode() in exports
 print('Scoped HUD style and module wiring: static OK; Windows test required')
+
+# The game skin candidate is only observed during the local player's original
+# renderer, uses no readback, and is held through the ImGui render submission.
+skin=(r/'src/visual_player_skin.h').read_text()
+for symbol in ('_ZN10ImDrawList8AddImageEyRK6ImVec2S2_S2_S2_j','_ZN10ImDrawList12AddImageQuadEyRK6ImVec2S2_S2_S2_S2_S2_S2_S2_j'):
+    assert symbol in u and symbol.encode() in exports
+assert 'visual_player_skin::acquire(frameDevice)' in u and 'previewFrameView=skin.view' in u
+assert u.index('release(previewFrameView);',u.index('legacyPresent(chain'))>u.index('legacyPresent(chain')
+assert 'SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options)' in u
+assert 'visual_player_skin::begin(local,captureContext)' in n and 'visual_gpu_depth::inPlayerCapture=capture' in n
+assert n.index('visual_player_skin::begin(local,captureContext)')<n.index('originalPlayer(self,entity,pos,extra,partial)')
+assert 'scopeGeneration==generation' in skin and 'ctx!=scopeContext' in skin
+assert 'PSGetShaderResources(0,4,views)' in skin and 'count<8' in skin
+assert 'CreateFile' not in skin and 'Map(' not in skin and 'CopyResource' not in skin
+print('Read-only skin candidate preview: static OK; Windows test required')

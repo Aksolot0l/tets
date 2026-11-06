@@ -28,6 +28,10 @@ inline std::atomic<unsigned> submitted{0}, rejected{0};
 inline void* installedTargets[7]{};
 inline constexpr std::size_t drawSlots[]={12,13,20,21,38,39,40};
 inline thread_local bool inVisualDraw=false;
+// Optional read-only observer scoped to the local-player renderer.
+using PlayerObserver=void (*)(ID3D11DeviceContext*);
+inline std::atomic<PlayerObserver> playerObserver{nullptr};
+inline thread_local bool inPlayerCapture=false;
 inline thread_local ID3D11DeviceContext* expectedContext=nullptr;
 inline thread_local ID3D11DepthStencilView* expectedDepth=nullptr;
 inline thread_local D3D11_COMPARISON_FUNC worldCompare=D3D11_COMPARISON_LESS_EQUAL;
@@ -85,7 +89,10 @@ struct Guard {
  }
 };
 template<class Call> void draw(ID3D11DeviceContext* ctx,Call call) {
- if (!inVisualDraw) { call(); return; }
+ if (!inVisualDraw) {
+  if (inPlayerCapture) { auto observer=playerObserver.load(std::memory_order_acquire); if (observer) observer(ctx); }
+  call(); return;
+ }
  Guard guard(ctx);
  if (!guard.active) { rejected.fetch_add(1,std::memory_order_relaxed); return; }
  submitted.fetch_add(1,std::memory_order_relaxed); call();

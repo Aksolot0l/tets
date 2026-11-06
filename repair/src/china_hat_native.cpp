@@ -15,6 +15,7 @@
 #include "visual_gradient.h"
 #include "visual_depth_policy.h"
 #include "visual_gpu_depth.h"
+#include "visual_player_skin.h"
 #include <d3d11.h>
 #include "hat_animation.h"
 #include <bcrypt.h>
@@ -255,8 +256,29 @@ void rememberPlayer(void* entity,float partial) {
  frame={{value[0],value[1],value[2]},dims[1],actor,GetTickCount64(),true};
 }
 void drawHatAtPlayer(const PlayerFrame& player);
+ID3D11DeviceContext* sameThreadContext();
 std::intptr_t playerHook(void* self,void* entity,void* pos,void* extra,float partial) {
+ // Only inspect shader resources while this exact local player's original
+ // renderer executes, on the observed immediate-context thread. No second
+ // call to the game renderer and no modification of its GPU state.
+ ID3D11DeviceContext* captureContext=nullptr; bool capture=false;
+ if (visual_player_skin::isRequested() && !visual_gpu_depth::inPlayerCapture) {
+  std::uintptr_t local=0;
+  if (localPlayer(local) && reinterpret_cast<std::uintptr_t>(entity)==local) {
+   captureContext=sameThreadContext();
+   if (captureContext && visual_gpu_depth::matches(captureContext)) {
+    visual_player_skin::begin(local,captureContext);
+    capture=visual_player_skin::scopeContext==captureContext;
+    visual_gpu_depth::inPlayerCapture=capture;
+   }
+  }
+ }
+ struct CaptureScope {
+  ID3D11DeviceContext* ctx; bool active;
+  ~CaptureScope() { if(active) { visual_gpu_depth::inPlayerCapture=false; visual_player_skin::end(); } if(ctx)ctx->Release(); }
+ } captureScope{captureContext,capture};
  const auto result=originalPlayer(self,entity,pos,extra,partial);
+ if (capture) { visual_gpu_depth::inPlayerCapture=false; visual_player_skin::end(); captureScope.active=false; }
  // Do not clear a local-player frame when another player's renderer runs.
  if (anyVisual()) {
   std::uintptr_t local=0;
@@ -584,7 +606,9 @@ bool installHooks() {
   auto* ctx=installed?sameThreadContext():nullptr;
   if (ctx) {
    bool gpu=visual_gpu_depth::install(ctx,createHook,enableHook,disableHook,removeHook);
-   gpuHooksReady.store(gpu,std::memory_order_release); ctx->Release();
+   gpuHooksReady.store(gpu,std::memory_order_release);
+   if (gpu) visual_gpu_depth::playerObserver.store(&visual_player_skin::observe,std::memory_order_release);
+   ctx->Release();
    if (!gpu) log("GPU depth guard unavailable; strict visual draw disabled");
   }
  }
@@ -603,6 +627,11 @@ bool enableVisual() {
   log("failed to enable; overlay remains available"); return false;
  }
 }
+}
+void SetPlayerSkinPreviewActive(bool value) {
+ if (!value) { visual_player_skin::setRequested(false); return; }
+ if (visual_player_skin::isRequested()) return;
+ if (enableVisual() && gpuHooksReady.load(std::memory_order_acquire)) visual_player_skin::setRequested(true);
 }
 void SetChinaHatEnabled(bool value) {
  if (!value) { enabled.store(false,std::memory_order_release); hatStatus.store(0,std::memory_order_relaxed); return; }

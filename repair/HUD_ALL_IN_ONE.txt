@@ -23,6 +23,8 @@ SDK и Dear ImGui сюда не включены. Исходников закр�
    - repair/src/visual_settings.h
    - repair/src/visual_gpu_depth.h
    - repair/src/visual_depth_policy.h
+   - repair/src/visual_player_skin.h
+   - repair/src/visual_skin_policy.h
    - repair/src/visual_avatar_preview.h
    - repair/src/visual_gradient.h
    - repair/src/visual_color.h
@@ -52,6 +54,9 @@ SDK и Dear ImGui сюда не включены. Исходников закр�
    - repair/tests/visual_gpu_depth.cpp
    - repair/tests/visual_gpu_mock_types.h
    - repair/tests/visual_depth_policy.cpp
+   - repair/tests/visual_player_skin.cpp
+   - repair/tests/visual_skin_mock_types.h
+   - repair/tests/visual_skin_policy.cpp
    - repair/tests/visual_hooks.cpp
    - repair/tests/check_hud_visual_update.py
 
@@ -145,17 +150,22 @@ depth test: эффекты должны скрываться за блоками
 
 4. РЕДАКТОР ЭФФЕКТОВ И СИНХРОНИЗАЦИЯ
 
-Visuals содержит отдельные кнопки Settings для China Hat и Trail. Справа —
-настройки, слева — независимый примерный аватар в стиле Стива на фоне, не
-текущий скин из игры. Для шляпы показана голова почти спереди; для трейла —
-персонаж сбоку и демонстрационное движение. Шляпа использует тот же mesh,
-параметры и функцию bob, что в игре; цвет и время рассчитываются одинаково.
-Трейл использует те же настройки, но его путь в окне демонстрационный.
-Материал, градиент и конкретная модель могут отличаться от игры. Редактор
-обновляется при изменении настроек, даже если эффект выключен. Клиентский HUD
-на время редактирования скрывается; игровой чат может остаться. Этот новый
-предпросмотр ещё не проверен на Windows. HUD_PREVIEW.png — старый макет
-плашки списка модулей, не изображение нового аватара.
+Visuals содержит отдельные кнопки Settings для China Hat и Trail. В редакторе
+эксперимент пытается найти текстуру скина при отрисовке локального игрока;
+для поиска может потребоваться вид от третьего лица. `Game texture N/N (verify)`
+означает кандидата, не обязательно скин; `Next texture` переключает кандидаты.
+Пока текстура не найдена, отображается примерный Стив. Нет чтения текстуры на
+CPU, сохранения в файл или отправки в сеть. В Minecraft поиск не проверен.
+
+Даже если найден настоящий скин, модель в предпросмотре упрощённая и создана
+отдельно: из игры не извлечены mesh, кости, нестандартная геометрия и анимация.
+Для шляпы показана голова почти спереди; для трейла — персонаж сбоку и
+демонстрационное движение. Шляпа использует тот же mesh эффекта, параметры и
+функцию bob, что в игре; цвет и время рассчитываются одинаково. Трейл использует
+те же настройки, но его путь демонстрационный. Материал и модель могут
+отличаться от игры. Редактор обновляется при изменении настроек, даже если эффект
+выключен. Клиентский HUD на время редактирования скрывается; игровой чат может
+остаться. HUD_PREVIEW.png — старый макет плашки, не изображение нового аватара.
 
 5. СБОРКА И ПРОВЕРКИ
 
@@ -202,6 +212,7 @@ previousSha256 в repair/install-manifest.json. Для сборки и уста�
 #include "china_hat_native.h"
 #include "visual_avatar_preview.h"
 #include "visual_color.h"
+#include "visual_player_skin.h"
 #include <atomic>
 #include <array>
 #include <cstring>
@@ -258,6 +269,8 @@ using DrawTriangleFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,const Im
 using DrawQuadFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,ImU32);
 using DrawRectFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,ImU32,float,int);
 using DrawGradientRectFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,ImU32,ImU32,ImU32,ImU32);
+using DrawImageFn = void (*)(ImDrawList*,ImTextureID,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,ImU32);
+using DrawImageQuadFn = void (*)(ImDrawList*,ImTextureID,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,ImU32);
 using PushVarFloatFn = void (*)(int,float);
 using PopVarFn = void (*)(int);
 using SameLineFn = void (*)(float,float);
@@ -313,6 +326,8 @@ static DrawTriangleFn drawTriangle = nullptr;
 static DrawQuadFn drawQuad = nullptr;
 static DrawRectFn drawRect = nullptr;
 static DrawGradientRectFn drawGradientRect = nullptr;
+static DrawImageFn drawImage = nullptr;
+static DrawImageQuadFn drawImageQuad = nullptr;
 static PushVarFloatFn guiPushVarFloat = nullptr;
 static PopVarFn guiPopVar = nullptr;
 static SameLineFn guiSameLine = nullptr;
@@ -337,6 +352,8 @@ static thread_local bool pointerInUse = false;
 static thread_local ID3D11Device* frameDevice = nullptr;
 static thread_local ID3D11DeviceContext* frameContext = nullptr;
 static thread_local UINT frameWidth = 0, frameHeight = 0;
+// One SRV reference is retained until the ImGui draw data is submitted.
+static thread_local ID3D11ShaderResourceView* previewFrameView = nullptr;
 static LARGE_INTEGER lastFrame{};
 static LARGE_INTEGER frequency{};
 
@@ -606,7 +623,7 @@ static void popVisualStyle() {
 }
 static bool canVisualPreview() {
     return hudHooksReady && guiButton && guiDrawList && guiCursor && guiDummy &&
-        drawLine && drawTriangle && drawQuad && drawRect && drawGradientRect;
+        drawLine && drawTriangle && drawQuad && drawRect && drawGradientRect && drawImage && drawImageQuad;
 }
 static void drawVisualPanel() {
     guiSetNextPos(ImVec2(548.f,35.f), ImGuiCond_FirstUseEver, ImVec2(0,0));
@@ -630,7 +647,7 @@ static void drawVisualPanel() {
 }
 
 // Example avatar, not an extracted game skin. These calls only draw UI geometry.
-static void drawAvatar(ImDrawList* d,ImVec2 o,float scale) {
+static void drawFallbackAvatar(ImDrawList* d,ImVec2 o,float scale) {
     auto p=[&](float x,float y,float z) { auto v=visual_avatar_preview::project({x,y,z},scale); return ImVec2(o.x+v.x,o.y+v.y); };
     const ImU32 skin=IM_COL32(178,121,88,255), hair=IM_COL32(57,39,31,255);
     // Torso and shoulders. Camera is nearly front-on, with a small angle so
@@ -655,6 +672,33 @@ static void drawAvatar(ImDrawList* d,ImVec2 o,float scale) {
     for (int y=0;y<8;++y) for (int x=0;x<8;++x) if (pattern[y][x])
         drawRect(d,ImVec2(top.x+x*cell,top.y+y*ch),ImVec2(top.x+(x+1)*cell+.2f,top.y+(y+1)*ch+.2f),palette[pattern[y][x]],0.f,0);
 }
+// Candidate texture UVs use the conventional 64x64 / 64x32 skin layout.
+// This is an independently projected sample model, not the game's model.
+static ImVec2 skinUv(const visual_player_skin::Snapshot& s,float x,float y) {
+    return ImVec2(x/64.f,y/64.f*visual_skin_policy::vScale(s.width,s.height));
+}
+static void skinRect(ImDrawList* d,const visual_player_skin::Snapshot& s,ImVec2 a,ImVec2 b,float x0,float y0,float x1,float y1,ImU32 tint=IM_COL32_WHITE) {
+    drawImage(d,static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(s.view)),a,b,skinUv(s,x0,y0),skinUv(s,x1,y1),tint);
+}
+static void skinQuad(ImDrawList* d,const visual_player_skin::Snapshot& s,ImVec2 a,ImVec2 b,ImVec2 c,ImVec2 e,float x0,float y0,float x1,float y1,ImU32 tint=IM_COL32_WHITE) {
+    drawImageQuad(d,static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(s.view)),a,b,c,e,skinUv(s,x0,y0),skinUv(s,x1,y0),skinUv(s,x1,y1),skinUv(s,x0,y1),tint);
+}
+static void drawAvatar(ImDrawList* d,ImVec2 o,float scale,const visual_player_skin::Snapshot& s) {
+    if (!s.view) { drawFallbackAvatar(d,o,scale); return; }
+    auto p=[&](float x,float y,float z) { auto v=visual_avatar_preview::project({x,y,z},scale); return ImVec2(o.x+v.x,o.y+v.y); };
+    // Upper torso and arms with actual sampled texture; preserves the same
+    // near-front view and geometric dimensions as the fallback model.
+    skinQuad(d,s,p(.31f,.02f,-.19f),p(.31f,.02f,.05f),p(.31f,-.35f,.05f),p(.31f,-.35f,-.19f),16,20,20,32,IM_COL32(190,190,190,255));
+    skinRect(d,s,p(-.31f,.02f,.05f),p(.31f,-.35f,.05f),20,20,28,32);
+    skinRect(d,s,p(-.41f,-.02f,.05f),p(-.31f,-.34f,.05f),44,20,48,32);
+    skinRect(d,s,p(.31f,-.02f,.05f),p(.41f,-.34f,.05f),44,20,48,32);
+    // Head top, visible side and front. The outer head layer can carry hair,
+    // glasses, hats etc.; custom Bedrock geometry is not captured.
+    skinQuad(d,s,p(-.27f,.64f,-.27f),p(.27f,.64f,-.27f),p(.27f,.64f,.27f),p(-.27f,.64f,.27f),8,0,16,8,IM_COL32(210,210,210,255));
+    skinQuad(d,s,p(.27f,.64f,-.27f),p(.27f,.64f,.27f),p(.27f,.10f,.27f),p(.27f,.10f,-.27f),16,8,24,16,IM_COL32(190,190,190,255));
+    skinRect(d,s,p(-.27f,.64f,.27f),p(.27f,.10f,.27f),8,8,16,16);
+    skinRect(d,s,p(-.27f,.64f,.27f),p(.27f,.10f,.27f),40,8,48,16);
+}
 static ImU32 previewMaterial(bool hat,std::uint64_t now,china_hat::Color vertex) {
     const bool colors=VisualTintEnabled(), rainbow=hat?HatRainbowEnabled():TrailRainbowEnabled();
     const float opacity=GetVisualParam(hat?VisualParam::HatOpacity:VisualParam::TrailOpacity);
@@ -665,7 +709,7 @@ static ImU32 previewMaterial(bool hat,std::uint64_t now,china_hat::Color vertex)
     if (colors && rainbow && VertexGradientEnabled()) tint={{vertex.r/255.f,vertex.g/255.f,vertex.b/255.f,1.f}};
     return IM_COL32(static_cast<int>(tint[0]*255.f),static_cast<int>(tint[1]*255.f),static_cast<int>(tint[2]*255.f),static_cast<int>(opacity*255.f));
 }
-static void drawHatPreview(ImDrawList* d,ImVec2 o,std::uint64_t now) {
+static void drawHatPreview(ImDrawList* d,ImVec2 o,std::uint64_t now,const visual_player_skin::Snapshot& skin) {
     visual_avatar_preview::HatSettings s{GetVisualParam(VisualParam::HatRadius),GetVisualParam(VisualParam::HatConeHeight),
       GetVisualParam(VisualParam::HatOffset),GetVisualParam(VisualParam::HatBobAmplitude),GetVisualParam(VisualParam::HatBobSpeed),
       GetVisualParam(VisualParam::HatRainbowSpeed),VisualTintEnabled() && HatRainbowEnabled() && VertexGradientEnabled()};
@@ -682,10 +726,10 @@ static void drawHatPreview(ImDrawList* d,ImVec2 o,std::uint64_t now) {
         if (i%4==0) drawLine(d,p(apex.position),p(a.position),color,1.f);
     };
     for (int i=0;i<48;++i) if (mesh.triangles[i*3+1].position.z+mesh.triangles[i*3+2].position.z<0) sector(i);
-    drawAvatar(d,o,scale);
+    drawAvatar(d,o,scale,skin);
     for (int i=0;i<48;++i) if (mesh.triangles[i*3+1].position.z+mesh.triangles[i*3+2].position.z>=0) sector(i);
 }
-static void drawTrailPreview(ImDrawList* d,ImVec2 o,std::uint64_t now) {
+static void drawTrailPreview(ImDrawList* d,ImVec2 o,std::uint64_t now,const visual_player_skin::Snapshot& skin) {
     const float seconds=GetVisualParam(VisualParam::TrailSeconds);
     const float height=visual_avatar_preview::trailHeight(GetVisualParam(VisualParam::TrailHeight));
     const float phase=visual_gradient::phase(now,GetVisualParam(VisualParam::TrailRainbowSpeed));
@@ -702,29 +746,46 @@ static void drawTrailPreview(ImDrawList* d,ImVec2 o,std::uint64_t now) {
     }
     // Side-facing sample player: distinct from the front-facing hat preview.
     const float x=o.x+226.f, foot=o.y+183.f;
-    drawRect(d,ImVec2(x-14,foot-92),ImVec2(x+14,foot-65),IM_COL32(178,121,88,255),1.f,0);
-    drawRect(d,ImVec2(x-14,foot-94),ImVec2(x+14,foot-86),IM_COL32(57,39,31,255),1.f,0);
-    drawRect(d,ImVec2(x+5,foot-83),ImVec2(x+10,foot-79),IM_COL32(58,66,142,255),0.f,0);
-    drawRect(d,ImVec2(x-13,foot-65),ImVec2(x+13,foot-29),IM_COL32(34,144,143,255),1.f,0);
-    drawRect(d,ImVec2(x-6,foot-60),ImVec2(x+7,foot-33),IM_COL32(25,117,119,255),1.f,0);
     const float step=std::sin(static_cast<double>(now)*.006)*5.f;
-    drawRect(d,ImVec2(x-12+step,foot-29),ImVec2(x-1+step,foot),IM_COL32(48,60,120,255),1.f,0);
-    drawRect(d,ImVec2(x+1-step,foot-29),ImVec2(x+12-step,foot),IM_COL32(58,72,139,255),1.f,0);
+    if (skin.view) {
+        skinRect(d,skin,ImVec2(x-14,foot-92),ImVec2(x+14,foot-65),16,8,24,16);
+        skinRect(d,skin,ImVec2(x-14,foot-92),ImVec2(x+14,foot-65),48,8,56,16);
+        skinRect(d,skin,ImVec2(x-13,foot-65),ImVec2(x+13,foot-29),16,20,20,32);
+        skinRect(d,skin,ImVec2(x-6,foot-60),ImVec2(x+7,foot-33),40,20,44,32);
+        skinRect(d,skin,ImVec2(x-12+step,foot-29),ImVec2(x-1+step,foot),0,20,4,32,IM_COL32(190,190,190,255));
+        skinRect(d,skin,ImVec2(x+1-step,foot-29),ImVec2(x+12-step,foot),0,20,4,32);
+    } else {
+        drawRect(d,ImVec2(x-14,foot-92),ImVec2(x+14,foot-65),IM_COL32(178,121,88,255),1.f,0);
+        drawRect(d,ImVec2(x-14,foot-94),ImVec2(x+14,foot-86),IM_COL32(57,39,31,255),1.f,0);
+        drawRect(d,ImVec2(x+5,foot-83),ImVec2(x+10,foot-79),IM_COL32(58,66,142,255),0.f,0);
+        drawRect(d,ImVec2(x-13,foot-65),ImVec2(x+13,foot-29),IM_COL32(34,144,143,255),1.f,0);
+        drawRect(d,ImVec2(x-6,foot-60),ImVec2(x+7,foot-33),IM_COL32(25,117,119,255),1.f,0);
+        drawRect(d,ImVec2(x-12+step,foot-29),ImVec2(x-1+step,foot),IM_COL32(48,60,120,255),1.f,0);
+        drawRect(d,ImVec2(x+1-step,foot-29),ImVec2(x+12-step,foot),IM_COL32(58,72,139,255),1.f,0);
+    }
 }
 static void drawEffectPreview(VisualEditor editor) {
     guiSetNextPos(ImVec2(18.f,90.f),ImGuiCond_Always,ImVec2(0,0));
-    if (guiSetNextSize) guiSetNextSize(ImVec2(310.f,310.f),ImGuiCond_FirstUseEver);
+    if (guiSetNextSize) guiSetNextSize(ImVec2(310.f,360.f),ImGuiCond_FirstUseEver);
     pushVisualStyle();
     if (guiBegin("Preview##effect",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
-        realText("Example avatar (Steve style)",nullptr);
+        // Keep the acquired view alive until the ImGui renderer has consumed
+        // this frame; the candidate list itself can change or be cleared.
+        release(previewFrameView);
+        auto skin=visual_player_skin::acquire(frameDevice); previewFrameView=skin.view;
+        if (skin.view) {
+            char label[96]{}; std::snprintf(label,sizeof(label),"Game texture %u/%u (verify)",skin.index+1,skin.count); realText(label,nullptr);
+        } else realText("Waiting for player; sample avatar",nullptr);
         auto* d=guiDrawList(); const ImVec2 o=guiCursor(); const auto now=GetTickCount64();
         if (d) {
             drawGradientRect(d,o,ImVec2(o.x+280.f,o.y+215.f),IM_COL32(19,33,37,255),IM_COL32(17,26,33,255),IM_COL32(8,14,20,255),IM_COL32(9,18,20,255));
             drawLine(d,ImVec2(o.x+15,o.y+205),ImVec2(o.x+265,o.y+205),IM_COL32(42,85,68,150),1.f);
-            if (editor==VisualEditor::Hat) drawHatPreview(d,o,now); else drawTrailPreview(d,o,now);
+            if (editor==VisualEditor::Hat) drawHatPreview(d,o,now,skin); else drawTrailPreview(d,o,now,skin);
         }
         guiDummy(ImVec2(280.f,215.f));
-        realText("Game shader may look different.",nullptr);
+        realText("Sample model; game shader may differ.",nullptr);
+        if (skin.count>1 && guiButton("Next texture##skin",ImVec2(-1.f,0.f))) visual_player_skin::next();
+        if (!skin.view) realText("Use third person to detect skin.",nullptr);
     }
     guiEnd(); popVisualStyle();
 }
@@ -876,6 +937,7 @@ static void patchedDrawGui(void* runtime) {
         overlayDisabled.store(true, std::memory_order_release);
         SetChinaHatEnabled(false);
         SetTrailEnabled(false);
+        SetPlayerSkinPreviewActive(false);
         if (bridgeActive) bridgeActive(false);
         DisableUwpExtraInput();
         log("overlay disabled by Delete; DLLs remain loaded until game exit");
@@ -884,6 +946,7 @@ static void patchedDrawGui(void* runtime) {
     const bool menuOpen=runtime && *(reinterpret_cast<unsigned char*>(runtime)+0x551);
     if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }
     const bool editingVisual=menuOpen && visualEditor!=VisualEditor::None && canVisualPreview();
+    SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options);
     if (!menuOpen || (!hudEditorOpen && !editingVisual)) realDrawGui(runtime);
     if (editingVisual) { drawVisualEditor(); return; }
     if (menuOpen && hudEditorOpen && hudHooksReady) { drawHudEditor(runtime); return; }
@@ -1007,6 +1070,7 @@ static void draw(IDXGISwapChain* chain, UINT flags) {
                 frameDevice = device; frameContext = context;
                 frameWidth = desc.Width; frameHeight = desc.Height; seenInput = false; pointerInUse = false;
                 legacyPresent(chain, 0, flags);
+                release(previewFrameView);
                 frameDevice = nullptr; frameContext = nullptr;
             }
         }
@@ -1116,6 +1180,8 @@ static DWORD WINAPI bootstrap(void*) {
     drawQuad = symbol<DrawQuadFn>("_ZN10ImDrawList13AddQuadFilledERK6ImVec2S2_S2_S2_j");
     drawRect = symbol<DrawRectFn>("_ZN10ImDrawList13AddRectFilledERK6ImVec2S2_jfi");
     drawGradientRect = symbol<DrawGradientRectFn>("_ZN10ImDrawList23AddRectFilledMultiColorERK6ImVec2S2_jjjj");
+    drawImage = symbol<DrawImageFn>("_ZN10ImDrawList8AddImageEyRK6ImVec2S2_S2_S2_j");
+    drawImageQuad = symbol<DrawImageQuadFn>("_ZN10ImDrawList12AddImageQuadEyRK6ImVec2S2_S2_S2_S2_S2_S2_S2_j");
     guiPushVarFloat = symbol<PushVarFloatFn>("_ZN5ImGui12PushStyleVarEif");
     guiPopVar = symbol<PopVarFn>("_ZN5ImGui11PopStyleVarEi");
     guiSameLine = symbol<SameLineFn>("_ZN5ImGui8SameLineEff");
@@ -1204,9 +1270,9 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID) {
     return TRUE;
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/compat.cpp
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -1233,9 +1299,9 @@ template<class Emit> void labels(const std::array<bool,ag::kModuleCount>& enable
 }
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/hud_module_list.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -1270,9 +1336,9 @@ inline Rgba background(float opacity) { return {.025f,.045f,.038f,alpha(opacity)
 inline Rgba border(float opacity) { return {.28f,.68f,.41f,alpha(opacity)*.46f}; }
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/hud_theme.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -1376,9 +1442,9 @@ struct Settings {
 
 } // namespace ag
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/settings.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -1401,6 +1467,7 @@ struct Settings {
 #include "visual_gradient.h"
 #include "visual_depth_policy.h"
 #include "visual_gpu_depth.h"
+#include "visual_player_skin.h"
 #include <d3d11.h>
 #include "hat_animation.h"
 #include <bcrypt.h>
@@ -1641,8 +1708,29 @@ void rememberPlayer(void* entity,float partial) {
  frame={{value[0],value[1],value[2]},dims[1],actor,GetTickCount64(),true};
 }
 void drawHatAtPlayer(const PlayerFrame& player);
+ID3D11DeviceContext* sameThreadContext();
 std::intptr_t playerHook(void* self,void* entity,void* pos,void* extra,float partial) {
+ // Only inspect shader resources while this exact local player's original
+ // renderer executes, on the observed immediate-context thread. No second
+ // call to the game renderer and no modification of its GPU state.
+ ID3D11DeviceContext* captureContext=nullptr; bool capture=false;
+ if (visual_player_skin::isRequested() && !visual_gpu_depth::inPlayerCapture) {
+  std::uintptr_t local=0;
+  if (localPlayer(local) && reinterpret_cast<std::uintptr_t>(entity)==local) {
+   captureContext=sameThreadContext();
+   if (captureContext && visual_gpu_depth::matches(captureContext)) {
+    visual_player_skin::begin(local,captureContext);
+    capture=visual_player_skin::scopeContext==captureContext;
+    visual_gpu_depth::inPlayerCapture=capture;
+   }
+  }
+ }
+ struct CaptureScope {
+  ID3D11DeviceContext* ctx; bool active;
+  ~CaptureScope() { if(active) { visual_gpu_depth::inPlayerCapture=false; visual_player_skin::end(); } if(ctx)ctx->Release(); }
+ } captureScope{captureContext,capture};
  const auto result=originalPlayer(self,entity,pos,extra,partial);
+ if (capture) { visual_gpu_depth::inPlayerCapture=false; visual_player_skin::end(); captureScope.active=false; }
  // Do not clear a local-player frame when another player's renderer runs.
  if (anyVisual()) {
   std::uintptr_t local=0;
@@ -1970,7 +2058,9 @@ bool installHooks() {
   auto* ctx=installed?sameThreadContext():nullptr;
   if (ctx) {
    bool gpu=visual_gpu_depth::install(ctx,createHook,enableHook,disableHook,removeHook);
-   gpuHooksReady.store(gpu,std::memory_order_release); ctx->Release();
+   gpuHooksReady.store(gpu,std::memory_order_release);
+   if (gpu) visual_gpu_depth::playerObserver.store(&visual_player_skin::observe,std::memory_order_release);
+   ctx->Release();
    if (!gpu) log("GPU depth guard unavailable; strict visual draw disabled");
   }
  }
@@ -1989,6 +2079,11 @@ bool enableVisual() {
   log("failed to enable; overlay remains available"); return false;
  }
 }
+}
+void SetPlayerSkinPreviewActive(bool value) {
+ if (!value) { visual_player_skin::setRequested(false); return; }
+ if (visual_player_skin::isRequested()) return;
+ if (enableVisual() && gpuHooksReady.load(std::memory_order_acquire)) visual_player_skin::setRequested(true);
 }
 void SetChinaHatEnabled(bool value) {
  if (!value) { enabled.store(false,std::memory_order_release); hatStatus.store(0,std::memory_order_relaxed); return; }
@@ -2042,9 +2137,9 @@ bool InitializeChinaHat(HatCreateHook create,HatToggleHook enable,HatToggleHook 
  log("validated; hooks and drawing stay off until enabled in menu"); return true;
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/china_hat_native.cpp
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -2054,6 +2149,8 @@ bool InitializeChinaHat(HatCreateHook create,HatToggleHook enable,HatToggleHook 
 #include <windows.h>
 #include "visual_settings.h"
 struct ID3D11DeviceContext;
+// Opt-in read-only GPU skin candidate discovery for the effect editor.
+void SetPlayerSkinPreviewActive(bool enabled);
 void ObserveVisualContext(ID3D11DeviceContext* context);
 int VisualDepthBefore();
 int VisualDepthAfter();
@@ -2103,9 +2200,9 @@ void SetVertexGradientEnabled(bool enabled);
 int HatFillStatus();
 int TrailFillStatus();
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/china_hat_native.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -2140,9 +2237,9 @@ inline float sanitizeVisualParam(VisualParam param,float value) {
  return std::isfinite(value) ? std::clamp(value,spec.low,spec.high) : spec.value;
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_settings.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -2178,6 +2275,10 @@ inline std::atomic<unsigned> submitted{0}, rejected{0};
 inline void* installedTargets[7]{};
 inline constexpr std::size_t drawSlots[]={12,13,20,21,38,39,40};
 inline thread_local bool inVisualDraw=false;
+// Optional read-only observer scoped to the local-player renderer.
+using PlayerObserver=void (*)(ID3D11DeviceContext*);
+inline std::atomic<PlayerObserver> playerObserver{nullptr};
+inline thread_local bool inPlayerCapture=false;
 inline thread_local ID3D11DeviceContext* expectedContext=nullptr;
 inline thread_local ID3D11DepthStencilView* expectedDepth=nullptr;
 inline thread_local D3D11_COMPARISON_FUNC worldCompare=D3D11_COMPARISON_LESS_EQUAL;
@@ -2235,7 +2336,10 @@ struct Guard {
  }
 };
 template<class Call> void draw(ID3D11DeviceContext* ctx,Call call) {
- if (!inVisualDraw) { call(); return; }
+ if (!inVisualDraw) {
+  if (inPlayerCapture) { auto observer=playerObserver.load(std::memory_order_acquire); if (observer) observer(ctx); }
+  call(); return;
+ }
  Guard guard(ctx);
  if (!guard.active) { rejected.fetch_add(1,std::memory_order_relaxed); return; }
  submitted.fetch_add(1,std::memory_order_relaxed); call();
@@ -2291,9 +2395,9 @@ inline bool matches(ID3D11DeviceContext* ctx) {
 }
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_gpu_depth.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -2314,9 +2418,134 @@ inline bool playerHat(bool strict,bool selected,bool inEntities,bool local,bool 
 inline bool entitiesHat(bool selected) { return !selected; }
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_depth_policy.h
---------------------------------------------------------------------------------
+================================================================================
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/visual_player_skin.h
+================================================================================
+#pragma once
+// Read-only candidate discovery while the original local-player renderer is
+// executing. Does NOT invoke the renderer again, alter D3D state or read pixels
+// back to the CPU. The selected view remains referenced until the UI closes.
+#ifdef VISUAL_PLAYER_SKIN_TEST_TYPES
+#include VISUAL_PLAYER_SKIN_TEST_TYPES
+#else
+#include <windows.h>
+#include <d3d11.h>
+#endif
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include "visual_skin_policy.h"
+namespace visual_player_skin {
+struct Candidate { ID3D11ShaderResourceView* view=nullptr; ID3D11Resource* resource=nullptr; UINT width=0,height=0; };
+struct Snapshot { ID3D11ShaderResourceView* view=nullptr; UINT width=0,height=0,index=0,count=0; };
+inline std::atomic<bool> requested{false};
+inline SRWLOCK lock=SRWLOCK_INIT;
+inline Candidate candidates[8]{};
+inline UINT count=0,selected=0;
+inline std::uintptr_t actor=0;
+inline ID3D11Device* device=nullptr;
+inline std::uint64_t generation=0;
+inline thread_local std::uint64_t scopeGeneration=0;
+inline thread_local ID3D11DeviceContext* scopeContext=nullptr;
+inline void clearLocked() {
+ for (auto& c:candidates) { if(c.view)c.view->Release(); if(c.resource)c.resource->Release(); c={}; }
+ count=selected=0; actor=0; ++generation; if(device)device->Release(); device=nullptr;
+}
+inline void setRequested(bool value) {
+ bool was=requested.exchange(value,std::memory_order_acq_rel);
+ if (was && !value) { AcquireSRWLockExclusive(&lock); clearLocked(); ReleaseSRWLockExclusive(&lock); }
+}
+inline bool isRequested() { return requested.load(std::memory_order_acquire); }
+inline void begin(std::uintptr_t player,ID3D11DeviceContext* ctx) {
+ scopeContext=nullptr;
+ if (!isRequested() || !ctx || !player) return;
+ ID3D11Device* current=nullptr; ctx->GetDevice(&current); if (!current) return;
+ bool accepted=false;
+ AcquireSRWLockExclusive(&lock);
+ if (isRequested()) {
+  if (actor!=player || device!=current) { clearLocked(); actor=player; device=current; current=nullptr; }
+  scopeGeneration=generation; accepted=true;
+ }
+ ReleaseSRWLockExclusive(&lock);
+ if(current)current->Release();
+ if (accepted) scopeContext=ctx;
+}
+inline void end() { scopeContext=nullptr; }
+inline bool colorFormat(DXGI_FORMAT f) {
+ switch (f) {
+ case DXGI_FORMAT_R8G8B8A8_UNORM: case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+ case DXGI_FORMAT_B8G8R8A8_UNORM: case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+ case DXGI_FORMAT_BC1_UNORM: case DXGI_FORMAT_BC1_UNORM_SRGB:
+ case DXGI_FORMAT_BC2_UNORM: case DXGI_FORMAT_BC2_UNORM_SRGB:
+ case DXGI_FORMAT_BC3_UNORM: case DXGI_FORMAT_BC3_UNORM_SRGB: return true;
+ default: return false;
+ }
+}
+inline void observe(ID3D11DeviceContext* ctx) {
+ if (!isRequested() || !ctx || ctx!=scopeContext) return;
+ ID3D11ShaderResourceView* views[4]{}; ctx->PSGetShaderResources(0,4,views);
+ for (auto* view:views) {
+  if (!view) continue;
+  D3D11_SHADER_RESOURCE_VIEW_DESC vd{}; view->GetDesc(&vd);
+  ID3D11Resource* res=nullptr; view->GetResource(&res);
+  ID3D11Texture2D* tex=nullptr;
+  if (res && vd.ViewDimension==D3D11_SRV_DIMENSION_TEXTURE2D && vd.Texture2D.MostDetailedMip==0 && colorFormat(vd.Format))
+   res->QueryInterface(__uuidof(ID3D11Texture2D),reinterpret_cast<void**>(&tex));
+  if (tex) {
+   D3D11_TEXTURE2D_DESC d{}; tex->GetDesc(&d); tex->Release();
+   if (visual_skin_policy::dimensions(d.Width,d.Height,d.SampleDesc.Count,d.ArraySize) && !(d.BindFlags&D3D11_BIND_RENDER_TARGET)) {
+    AcquireSRWLockExclusive(&lock);
+    bool exists=false; for (UINT i=0;i<count;i++) if (candidates[i].resource==res) { exists=true; break; }
+    if (isRequested() && scopeGeneration==generation && !exists && count<8) {
+     view->AddRef(); res->AddRef(); candidates[count++]={view,res,d.Width,d.Height};
+    }
+    ReleaseSRWLockExclusive(&lock);
+   }
+  }
+  if (res) res->Release();
+  view->Release();
+ }
+}
+// Caller must Release snapshot.view after ImGui has rendered the frame.
+inline Snapshot acquire(ID3D11Device* expected) {
+ Snapshot s{}; AcquireSRWLockShared(&lock);
+ if (isRequested() && device && device==expected && count) {
+  const auto& c=candidates[selected%count]; s={c.view,c.width,c.height,selected%count,count};
+  if(s.view)s.view->AddRef();
+ }
+ ReleaseSRWLockShared(&lock); return s;
+}
+inline void next() { AcquireSRWLockExclusive(&lock); if (count) selected=(selected+1)%count; ReleaseSRWLockExclusive(&lock); }
+}
+
+================================================================================
+КОНЕЦ ФАЙЛА: repair/src/visual_player_skin.h
+================================================================================
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/visual_skin_policy.h
+================================================================================
+#pragma once
+#include <cstdint>
+// A filter, NOT proof that a texture is a skin. Candidate views are gathered
+// only during the local player's own renderer and require user verification.
+namespace visual_skin_policy {
+inline bool dimensions(std::uint32_t width,std::uint32_t height,std::uint32_t samples,std::uint32_t arraySize) {
+ if (samples!=1 || arraySize!=1 || width<64 || width>512 || (width&(width-1))!=0) return false;
+ return height==width || height==width/2u;
+}
+inline float vScale(std::uint32_t width,std::uint32_t height) { return height ? static_cast<float>(width)/static_cast<float>(height) : 1.f; }
+}
+
+================================================================================
+КОНЕЦ ФАЙЛА: repair/src/visual_skin_policy.h
+================================================================================
 
 
 ================================================================================
@@ -2362,9 +2591,9 @@ inline Point2 trailPoint(float t,std::uint64_t now,float lifetime) {
 inline float trailHeight(float normalizedHeight) { return std::clamp(normalizedHeight,.3f,1.f)*80.f; }
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_avatar_preview.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -2392,9 +2621,9 @@ inline china_hat::Color trail(std::size_t index, std::size_t count, float timePh
 }
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_gradient.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -2431,9 +2660,9 @@ inline std::array<float,4> animated(bool enabled,bool rainbow,std::array<float,3
 }
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_color.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -2458,9 +2687,9 @@ bool segment(const china_hat::Vertex& a,const china_hat::Vertex& b,float height,
 }
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_ribbon.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -2510,9 +2739,9 @@ private:
 };
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_trail.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -2531,9 +2760,9 @@ inline float bob(std::uint64_t now,float amplitude=.07f,float speed=.3125f) {
 }
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/hat_animation.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -2563,9 +2792,9 @@ template<class Emit> bool emitWireframe(const Mesh& mesh, std::size_t spokes, Em
 }
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/china_hat_lines.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -2593,9 +2822,9 @@ bool fromClient(std::uintptr_t client,std::uint64_t tick,std::uint64_t now,Read 
 }
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/china_hat_player.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -2627,9 +2856,9 @@ inline bool identity(const std::uint8_t* hash, std::uint32_t timestamp, std::siz
 }
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/china_hat_validation.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -2672,9 +2901,9 @@ bool hashHatExecutable(Api& api, const std::uint8_t* bytes, std::size_t size, st
     return api.finishHash(hash,result,32);
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/china_hat_hash.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -2707,9 +2936,9 @@ bool install(Hook* hooks,std::size_t count,Create create,Enable enable,Disable d
 }
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_hooks.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -2790,9 +3019,9 @@ inline bool build(Mesh& out, Point head, float radius, float height,
 }
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/research/china_hat/hat_mesh.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -2817,9 +3046,9 @@ inline bool uwp_client_pointer(float pointerX, float pointerY, float left, float
     return client_pointer(pointerX - left, pointerY - top, width, height, x, y, w, h);
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/pointer_mapping.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -2837,9 +3066,9 @@ void TakeUwpWheel(int& horizontal, int& vertical);
 // Stops sampling and ignores wheel events; handler stays registered until process exit.
 void DisableUwpExtraInput();
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/uwp_extra.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -3015,9 +3244,9 @@ void TakeUwpWheel(int& horizontal, int& vertical) {
     vertical = wheelY.exchange(0, std::memory_order_relaxed);
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/uwp_extra.cpp
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -3046,9 +3275,9 @@ struct PageScrollRepeat {
     }
 };
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/page_scroll.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -3072,9 +3301,9 @@ struct WheelBridge {
 constexpr std::uint32_t kWheelMagic = 0x47574831;
 static_assert(sizeof(WheelBridge) == 16, "wheel bridge ABI");
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/wheel_bridge.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -3103,9 +3332,9 @@ struct WheelCounter {
     }
 };
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/wheel_counter.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -3184,9 +3413,9 @@ template<class Read> bool readPosition115(std::uint64_t base, Read read, Positio
     return true;
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/coordinates_115.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -3214,9 +3443,9 @@ inline bool matches(const unsigned char* image, std::size_t size) {
 inline void apply(unsigned char* image) { std::memset(image + branchRva, 0x90, 6); }
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/mouse_diagnostic_patch.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -3235,9 +3464,9 @@ public:
     }
 };
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/disable_hotkey.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -3256,9 +3485,9 @@ int main() {
  assert(hud_theme::border(0).a==0); assert(hud_theme::background(std::numeric_limits<float>::quiet_NaN()).a==.72f);
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/hud_theme.cpp
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -3279,9 +3508,9 @@ int main() {
  labels(enabled,true,true,add); assert((out==std::vector<std::string>{"FPS","China Hat","Trail"}));
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/hud_module_list.cpp
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -3315,9 +3544,9 @@ int main() {
  assert(trailHeight(.8f)>trailHeight(.3f));
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_avatar_preview.cpp
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -3344,9 +3573,9 @@ int main() {
  for (std::uint64_t t=0;t<10000;t+=83) for (float x:animated(true,true,custom,.15f,t)) assert(std::isfinite(x) && x>=0.f && x<=1.f);
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_color.cpp
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -3372,9 +3601,9 @@ int main() {
  assert(output[0].color.r==a.r && output[1].color.b==b.b && output[2].color.b==b.b);
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_gradient.cpp
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -3418,9 +3647,14 @@ struct Context:ID3D11DeviceContext {
  void OMSetDepthStencilState(ID3D11DepthStencilState* p,UINT r) override {curDepth=p;stencil=r;sets++;}
  void OMSetBlendState(ID3D11BlendState* p,const FLOAT* f,UINT m) override {curBlend=p;mask=m;for(int i=0;i<4;i++)factor[i]=f[i];sets++;}
 };
+static int observed=0;
+static void observePlayer(ID3D11DeviceContext*) { ++observed; }
 int main() {
  using namespace visual_gpu_depth;
- Context ctx; int calls=0; inVisualDraw=false; draw(&ctx,[&]{++calls;}); assert(calls==1 && ctx.sets==0);
+ Context ctx; int calls=0; inVisualDraw=false; playerObserver.store(&observePlayer);
+ draw(&ctx,[&]{++calls;}); assert(calls==1 && ctx.sets==0 && observed==0);
+ inPlayerCapture=true; draw(&ctx,[&]{++calls;}); assert(calls==2 && ctx.sets==0 && observed==1);
+ inPlayerCapture=false; playerObserver.store(nullptr); calls=1;
  expectedContext=&ctx; expectedDepth=&ctx.view; worldCompare=D3D11_COMPARISON_LESS_EQUAL; opacity=.25f; inVisualDraw=true;
  draw(&ctx,[&]{
   ++calls; D3D11_DEPTH_STENCIL_DESC d{}; ctx.curDepth->GetDesc(&d);
@@ -3460,9 +3694,9 @@ int main() {
  assert(!matches(fakeCtx) && !install(fakeCtx,create,enable,disable,remove) && created==0 && enabled==0);
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_gpu_depth.cpp
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -3505,9 +3739,9 @@ struct ID3D11DeviceContext {
 };
 struct ID3D11Buffer {};
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_gpu_mock_types.h
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -3545,9 +3779,118 @@ int main() {
  assert(!playerHat(true,true,true,true,false,false) && !entitiesHat(true) && !overlayDraw(true));
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_depth_policy.cpp
---------------------------------------------------------------------------------
+================================================================================
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/visual_player_skin.cpp
+================================================================================
+#define VISUAL_PLAYER_SKIN_TEST_TYPES "../tests/visual_skin_mock_types.h"
+#include "../src/visual_player_skin.h"
+#include <cassert>
+struct Device:ID3D11Device { int refs=1; ULONG AddRef() override{return ++refs;} ULONG Release() override{return --refs;} };
+struct Texture:ID3D11Texture2D {
+ int refs=1; D3D11_TEXTURE2D_DESC d{};
+ Texture(unsigned w=64,unsigned h=64) {d.Width=w;d.Height=h;d.ArraySize=1;d.SampleDesc.Count=1;}
+ ULONG AddRef() override{return ++refs;} ULONG Release() override{return --refs;}
+ HRESULT QueryInterface(int,void** out) override {AddRef();*out=this;return 0;}
+ void GetDesc(D3D11_TEXTURE2D_DESC* out) override{*out=d;}
+};
+struct View:ID3D11ShaderResourceView {
+ int refs=1; Texture* texture; D3D11_SHADER_RESOURCE_VIEW_DESC d{};
+ explicit View(Texture* t):texture(t) {d.Format=DXGI_FORMAT_R8G8B8A8_UNORM;d.ViewDimension=D3D11_SRV_DIMENSION_TEXTURE2D;}
+ ULONG AddRef() override{return ++refs;} ULONG Release() override{return --refs;}
+ void GetDesc(D3D11_SHADER_RESOURCE_VIEW_DESC* out) override{*out=d;}
+ void GetResource(ID3D11Resource** out) override{texture->AddRef();*out=texture;}
+};
+struct Context:ID3D11DeviceContext {
+ Device* device; View* views[4]{};
+ explicit Context(Device* d):device(d){}
+ void GetDevice(ID3D11Device** out) override {device->AddRef();*out=device;}
+ void PSGetShaderResources(UINT start,UINT count,ID3D11ShaderResourceView** out) override {
+  assert(start==0 && count==4); for(unsigned i=0;i<count;i++){out[i]=views[i];if(out[i])out[i]->AddRef();}
+ }
+};
+int main() {
+ using namespace visual_player_skin;
+ Device d,other; Context ctx(&d),wrong(&other);
+ Texture t1,t2(64,32),invalid(256,128),atlas(1024,1024); invalid.d.BindFlags=D3D11_BIND_RENDER_TARGET;
+ View v1(&t1),v2(&t2),bad(&invalid),big(&atlas); ctx.views[0]=&v1;ctx.views[1]=&v2;ctx.views[2]=&bad;ctx.views[3]=&big;
+ observe(&ctx); assert(count==0);
+ setRequested(true); begin(42,&ctx); assert(scopeContext==&ctx && d.refs==2);
+ observe(&wrong); assert(count==0); observe(&ctx); assert(count==2);
+ assert(v1.refs==2 && t1.refs==2 && v2.refs==2 && t2.refs==2 && bad.refs==1 && invalid.refs==1 && big.refs==1);
+ observe(&ctx); assert(count==2 && v1.refs==2 && t1.refs==2);
+ auto snap=acquire(&d); assert(snap.view==&v1 && snap.width==64 && snap.height==64 && snap.count==2 && v1.refs==3);
+ assert(!acquire(&other).view); next(); auto second=acquire(&d); assert(second.view==&v2 && second.height==32 && second.index==1);
+ second.view->Release(); end();
+ // Changing player clears the old views while the frame-held view stays valid.
+ begin(43,&ctx); assert(count==0 && v1.refs==2 && t1.refs==1 && v2.refs==1 && t2.refs==1);
+ snap.view->Release(); assert(v1.refs==1); observe(&ctx); assert(count==2); end();
+ // Device changes invalidate prior views; they may never be shown to another device.
+ begin(43,&wrong); assert(count==0 && d.refs==1 && other.refs==2 && !acquire(&d).view); end();
+ setRequested(false); assert(other.refs==1 && !isRequested() && count==0);
+ // A capture started before a close/reopen cannot reinsert its old texture.
+ setRequested(true); begin(44,&ctx); setRequested(false); setRequested(true);
+ observe(&ctx); assert(count==0); end(); begin(44,&ctx); observe(&ctx); assert(count==2); end(); setRequested(false);
+ assert(v1.refs==1 && v2.refs==1 && t1.refs==1 && t2.refs==1);
+}
+
+================================================================================
+КОНЕЦ ФАЙЛА: repair/tests/visual_player_skin.cpp
+================================================================================
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/visual_skin_mock_types.h
+================================================================================
+#pragma once
+#include <cstdint>
+using UINT=unsigned; using ULONG=unsigned; using HRESULT=int;
+struct SRWLOCK {}; inline void AcquireSRWLockExclusive(SRWLOCK*) {} inline void ReleaseSRWLockExclusive(SRWLOCK*) {}
+inline void AcquireSRWLockShared(SRWLOCK*) {} inline void ReleaseSRWLockShared(SRWLOCK*) {}
+#define SRWLOCK_INIT {}
+#define __uuidof(x) 0
+enum DXGI_FORMAT { DXGI_FORMAT_UNKNOWN, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+ DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, DXGI_FORMAT_BC1_UNORM, DXGI_FORMAT_BC1_UNORM_SRGB,
+ DXGI_FORMAT_BC2_UNORM, DXGI_FORMAT_BC2_UNORM_SRGB, DXGI_FORMAT_BC3_UNORM, DXGI_FORMAT_BC3_UNORM_SRGB };
+enum { D3D11_SRV_DIMENSION_UNKNOWN, D3D11_SRV_DIMENSION_TEXTURE2D };
+enum { D3D11_BIND_RENDER_TARGET=0x20 };
+struct D3D11_SHADER_RESOURCE_VIEW_DESC { DXGI_FORMAT Format=DXGI_FORMAT_UNKNOWN; int ViewDimension=0; struct { UINT MostDetailedMip=0; } Texture2D; };
+struct D3D11_TEXTURE2D_DESC { UINT Width=0,Height=0,ArraySize=0,BindFlags=0; struct {UINT Count=0;} SampleDesc; };
+struct ID3D11Texture2D;
+struct ID3D11Resource { virtual ULONG AddRef()=0; virtual ULONG Release()=0; virtual HRESULT QueryInterface(int,void**)=0; };
+struct ID3D11Texture2D: ID3D11Resource { virtual void GetDesc(D3D11_TEXTURE2D_DESC*)=0; };
+struct ID3D11ShaderResourceView { virtual ULONG AddRef()=0; virtual ULONG Release()=0; virtual void GetDesc(D3D11_SHADER_RESOURCE_VIEW_DESC*)=0; virtual void GetResource(ID3D11Resource**)=0; };
+struct ID3D11Device { virtual ULONG AddRef()=0; virtual ULONG Release()=0; };
+struct ID3D11DeviceContext { virtual void GetDevice(ID3D11Device**)=0; virtual void PSGetShaderResources(UINT,UINT,ID3D11ShaderResourceView**)=0; };
+
+================================================================================
+КОНЕЦ ФАЙЛА: repair/tests/visual_skin_mock_types.h
+================================================================================
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/visual_skin_policy.cpp
+================================================================================
+#include "../src/visual_skin_policy.h"
+#include <cassert>
+int main() {
+ using namespace visual_skin_policy;
+ assert(dimensions(64,64,1,1) && dimensions(64,32,1,1));
+ assert(dimensions(128,128,1,1) && dimensions(128,64,1,1));
+ assert(dimensions(512,512,1,1) && !dimensions(1024,1024,1,1));
+ assert(!dimensions(32,32,1,1) && !dimensions(65,65,1,1));
+ assert(!dimensions(64,0x80000020u,1,1));
+ assert(!dimensions(64,48,1,1) && !dimensions(64,64,4,1) && !dimensions(64,64,1,6));
+ assert(vScale(64,64)==1.f && vScale(64,32)==2.f && vScale(0,0)==1.f);
+}
+
+================================================================================
+КОНЕЦ ФАЙЛА: repair/tests/visual_skin_policy.cpp
+================================================================================
 
 
 ================================================================================
@@ -3586,9 +3929,9 @@ int main() {
  assert(gpu.created==127 && gpu.enabled==31 && gpu.disabled==31 && gpu.removed==127 && gpu.active==0);
 }
 
---------------------------------------------------------------------------------
+================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_hooks.cpp
---------------------------------------------------------------------------------
+================================================================================
 
 
 ================================================================================
@@ -3626,8 +3969,8 @@ for symbol in ('_ZN5ImGui6ButtonEPKcRK6ImVec2','_ZN5ImGui17GetWindowDrawListEv',
                '_ZN10ImDrawList13AddQuadFilledERK6ImVec2S2_S2_S2_j','_ZN10ImDrawList13AddRectFilledERK6ImVec2S2_jfi',
                '_ZN10ImDrawList23AddRectFilledMultiColorERK6ImVec2S2_jjjj'):
     assert symbol in u and symbol.encode() in exports, symbol
-assert 'Example avatar (Steve style)' in u and 'Game shader may look different' in u
-assert 'visual_avatar_preview::hat(mesh,s,now)' in u and 'drawTrailPreview(d,o,now)' in u
+assert 'Waiting for player; sample avatar' in u and 'Sample model; game shader may differ' in u
+assert 'visual_avatar_preview::hat(mesh,s,now)' in u and 'drawTrailPreview(d,o,now,skin)' in u
 assert 'captureGamePreview' not in u and 'CopyResource(previewTexture' not in u
 assert 'Settings##open_hat' in u and 'Settings##open_trail' in u
 assert 'drawVisualEditor(); return;' in u and 'drawEffectPreview(current)' in u
@@ -3643,7 +3986,7 @@ assert 'visual_gpu_depth::expectedDepth=dsv' in n and 'submitVisual(t,param(Visu
 assert 'D3D11_DEPTH_WRITE_MASK_ZERO' in gpu and 'D3D11_BLEND_BLEND_FACTOR' in gpu
 assert 'current==expectedDepth' in gpu and 'ctx!=expectedContext' in gpu
 assert 'ctx->OMSetDepthStencilState(oldDepth,stencil)' in gpu and 'ctx->OMSetBlendState(oldBlend,oldFactor,sampleMask)' in gpu
-assert 'if (!inVisualDraw) { call(); return; }' in gpu
+assert 'if (!inVisualDraw)' in gpu and 'if (inPlayerCapture)' in gpu and 'call(); return;' in gpu
 assert 'Old overlay (see-through)' in u and 'SetVisualLegacyMode(legacy)' in u
 
 # The main HUD theme is installed after essential hooks, is limited to known
@@ -3663,6 +4006,21 @@ for symbol in ('_ZN5ImGui5BeginEPKcPbi','_ZN5ImGui8SameLineEff','_ZN5ImGui12Push
     assert symbol in u and symbol.encode() in exports
 print('Scoped HUD style and module wiring: static OK; Windows test required')
 
---------------------------------------------------------------------------------
+# The game skin candidate is only observed during the local player's original
+# renderer, uses no readback, and is held through the ImGui render submission.
+skin=(r/'src/visual_player_skin.h').read_text()
+for symbol in ('_ZN10ImDrawList8AddImageEyRK6ImVec2S2_S2_S2_j','_ZN10ImDrawList12AddImageQuadEyRK6ImVec2S2_S2_S2_S2_S2_S2_S2_j'):
+    assert symbol in u and symbol.encode() in exports
+assert 'visual_player_skin::acquire(frameDevice)' in u and 'previewFrameView=skin.view' in u
+assert u.index('release(previewFrameView);',u.index('legacyPresent(chain'))>u.index('legacyPresent(chain')
+assert 'SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options)' in u
+assert 'visual_player_skin::begin(local,captureContext)' in n and 'visual_gpu_depth::inPlayerCapture=capture' in n
+assert n.index('visual_player_skin::begin(local,captureContext)')<n.index('originalPlayer(self,entity,pos,extra,partial)')
+assert 'scopeGeneration==generation' in skin and 'ctx!=scopeContext' in skin
+assert 'PSGetShaderResources(0,4,views)' in skin and 'count<8' in skin
+assert 'CreateFile' not in skin and 'Map(' not in skin and 'CopyResource' not in skin
+print('Read-only skin candidate preview: static OK; Windows test required')
+
+================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_hud_visual_update.py
---------------------------------------------------------------------------------
+================================================================================
