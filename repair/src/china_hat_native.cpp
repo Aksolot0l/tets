@@ -582,15 +582,23 @@ void renderJump(const PlayerFrame& player) {
   const float opacity=param(VisualParam::JumpOpacity)*visual_jump::alpha(p);
   auto tint=visual_color::animated(true,jumpRainbow.load(std::memory_order_acquire),
       {{param(VisualParam::JumpRed),param(VisualParam::JumpGreen),param(VisualParam::JumpBlue)}},param(VisualParam::JumpRainbowSpeed),now);
-  tint[3]=opacity;
-  std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
-  tessBegin(t,2,48*12);
-  visual_jump::ring(c,visual_jump::radius(p,param(VisualParam::JumpRadius)),.075f,[&](china_hat::Point v) {
-   tessColor(t,255,255,255,255); tessVertex(t,v.x,v.y,v.z);
-  });
-  submitVisual(t,opacity);
-  alignas(16) std::uint8_t scratch[0x200]{}; tessEnd(t,scratch,0,0);
-  lastJumpSubmit.store(now,std::memory_order_relaxed); jumpStatus.store(1,std::memory_order_relaxed);
+  const float radius=visual_jump::radius(p,param(VisualParam::JumpRadius));
+  // Two bounded batches per ring: bright detail first, translucent halo
+  // second. Each uses the game's existing material and guarded depth draw;
+  // no per-vertex alpha or post-processing is assumed.
+  for (int layer=0;layer<2;++layer) {
+   if (!tessIdle(tess)) break;
+   const float layerOpacity=opacity*(layer==0 ? 1.f : .22f);
+   tint[3]=layerOpacity;
+   std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
+   tessBegin(t,2,layer==0 ? visual_jump::detailVertices : visual_jump::haloVertices);
+   auto emit=[&](china_hat::Point v) { tessColor(t,255,255,255,255); tessVertex(t,v.x,v.y,v.z); };
+   if (layer==0) visual_jump::detail(c,radius,p,emit);
+   else visual_jump::halo(c,radius,emit);
+   submitVisual(t,layerOpacity);
+   alignas(16) std::uint8_t scratch[0x200]{}; tessEnd(t,scratch,0,0);
+   lastJumpSubmit.store(now,std::memory_order_relaxed); jumpStatus.store(1,std::memory_order_relaxed);
+  }
  }
  std::memcpy(reinterpret_cast<void*>(color),saved,sizeof(saved)); *reinterpret_cast<std::uint8_t*>(flag)=oldFlag;
 }

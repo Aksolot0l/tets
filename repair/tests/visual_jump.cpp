@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cmath>
 #include <limits>
+#include <vector>
 int main() {
  using namespace visual_jump;
  History h; china_hat::Point p{1,64,2};
@@ -54,4 +55,19 @@ int main() {
  assert(std::fabs(radius(0,1.4f)-.2f)<.0001f && std::fabs(radius(1,1.4f)-1.4f)<.0001f);
  assert(alpha(0)==1.f && alpha(1)==0.f);
  int vertices=0; ring({0,0,0},1,.075f,[&](china_hat::Point v){ assert(std::isfinite(v.x) && v.y==0 && std::isfinite(v.z)); ++vertices; }); assert(vertices==48*12);
+ // Exact batch reservation counts, finite bounds, animation and fade.
+ std::vector<china_hat::Point> first,last;
+ for(float phase : {0.f,.25f,.5f,.75f,1.f}) {
+  int haloCount=0,detailCount=0;
+  auto check=[](china_hat::Point v) { assert(std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z)); assert(std::fabs(v.x)<4 && std::fabs(v.y)<1 && std::fabs(v.z)<4); };
+  halo({0,0,0},radius(phase,1.4f),[&](china_hat::Point v) { check(v); ++haloCount; });
+  detail({0,0,0},radius(phase,1.4f),phase,[&](china_hat::Point v) { check(v); ++detailCount; if(phase==0.f) first.push_back(v); if(phase==1.f) last.push_back(v); });
+  assert(haloCount==haloVertices && detailCount==detailVertices);
+  assert(alpha(phase)>=0.f && alpha(phase)<=1.f);
+ }
+ assert(alpha(.5f)>alpha(.75f) && alpha(.75f)>alpha(1.f));
+ assert(first.size()==last.size() && first.size()==static_cast<std::size_t>(detailVertices));
+ assert(first[0].x!=last[0].x); // expanding geometry
+ assert(last.back().y>first.back().y); // drifting sparks
+
 }
