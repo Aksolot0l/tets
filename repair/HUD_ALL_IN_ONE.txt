@@ -1,18 +1,19 @@
-GAYCLIENT — ВСЁ В ОДНОМ: ОПИСАНИЕ HUD И ИСХОДНЫЙ КОД
+GAYCLIENT — ВСЁ В ОДНОМ: ОПИСАНИЕ HUD, ПРОМПТ И ИСХОДНЫЙ КОД
 
-Этот файл содержит описание и исходники HUD, его редактора, Visuals,
-предпросмотра и связанных компонентов из текущей версии ветки.
+Снимок из commit 1386b4d ветки arena/5d11f1ec-tets: весь доступный код
+игрового HUD, редактора, Visuals, предпросмотра и связанных компонентов,
+а также некоторые тесты. Скриншот-референс передаётся отдельно.
 
 ВАЖНО: это материал для чтения и передачи ИИ, а не один компилируемый C++ файл.
 Имена исходных файлов отмечены перед каждым фрагментом. Внешние заголовки Windows
 SDK и Dear ImGui сюда не включены. Исходников закрытого GAYClientCore.dll нет:
 старый штатный HUD нельзя восстановить полностью по этому файлу.
-PNG не вложен в текст. Мировой проход и ограничение глубиной проверены
-пользователем для блоков; новый стиль HUD в игре ещё не проверен.
+Мировой проход и ограничение глубиной проверены пользователем для блоков;
+новый стиль HUD и модель-предпросмотр в игре ещё не проверены.
 
 СОДЕРЖАНИЕ:
-1. Описание модулей и интерфейса
-2. Исходники (пути в проекте):
+1. Описание модулей, промпт и сборка
+2. Исходники и тесты (пути в проекте):
    - repair/src/compat.cpp
    - repair/src/hud_module_list.h
    - repair/src/hud_theme.h
@@ -43,13 +44,24 @@ PNG не вложен в текст. Мировой проход и ограни
    - repair/src/coordinates_115.h
    - repair/src/mouse_diagnostic_patch.h
    - repair/src/disable_hotkey.h
+   - repair/tests/hud_theme.cpp
+   - repair/tests/hud_module_list.cpp
+   - repair/tests/visual_avatar_preview.cpp
+   - repair/tests/visual_color.cpp
+   - repair/tests/visual_gradient.cpp
+   - repair/tests/visual_gpu_depth.cpp
+   - repair/tests/visual_gpu_mock_types.h
+   - repair/tests/visual_depth_policy.cpp
+   - repair/tests/visual_hooks.cpp
+   - repair/tests/check_hud_visual_update.py
 
 ================================================================================
 1. ОПИСАНИЕ МОДУЛЕЙ
 ================================================================================
 GAYClient — описание модулей и визуала для другого ИИ
-Обновление: Module List HUD + Visuals. Это техническое описание и иллюстрация,
-не скриншот из игры: внешний вид зависит от темы и шрифта игрового меню.
+Снимок исходников игрового адаптера из commit 1386b4d ветки
+arena/5d11f1ec-tets. Это техническое описание, а не скриншот из игры.
+Внешний вид зависит от темы, шрифта и версии игрового ядра.
 
 1. HUD — ЧТО ЭТО
 
@@ -94,16 +106,38 @@ GPU состояние на наших draw-вызовах восстанавл�
 но он может просвечивать через блоки и игроков. Статус submitted означает
 только перехваченный вызов, а не гарантию правильной картинки.
 
-3. ПРЕДЛОЖЕНИЕ ДЛЯ ДРУГОГО ИИ
+3. ПРОМПТ ДЛЯ ДРУГОГО ИИ (СКРИНШОТ ПЕРЕДАЁТСЯ ОТДЕЛЬНО)
 
-Можно передать этот TXT и HUD_PREVIEW.png как базу для проектирования дизайна.
-Нужно уточнить желаемый стиль и получить скриншот реального HUD: изображения
-здесь — только схематичный новый список. Придумайте визуальную систему для
-нескольких HUD-модулей, редактора с живым предпросмотром и отдельного Visuals:
-размеры, типографику, цвета, отступы, фоны/границы, поведение при длинных
-названиях, изменение масштаба и позиции, состояния включено/выключено, позиции
-на экранах разного размера. Различайте прозрачность HUD-плашки и прозрачность
-3D-эффекта. Не представляйте эскиз как готовое исправление рендера/depth.
+Передаю скриншот как визуальный референс и этот файл с доступным кодом проекта.
+Нужно доработать именно внутриигровой HUD Minecraft Windows 10 Edition 1.1.5
+и его редактор в стиле скриншота: тёмные полупрозрачные панели, зелёные акценты,
+аккуратные скругления, тонкие рамки, умеренное свечение, понятные переключатели
+и ползунки. Не обязательно копировать каждый пиксель: адаптируй дизайн под игру
+и реальные функции клиента. Скриншот изображает макет редактора лаунчера, а не
+готовый рендер игры. Сам лаунчер без отдельного запроса не переделывай.
+
+Сделай красивыми все доступные HUD-виджеты и их настройки, сохрани настоящие
+значения и работающие действия. При редактировании покажи настройки и соседний
+предпросмотр; остальной клиентский HUD скрывается и возвращается после закрытия
+редактора. Прозрачность фона должна регулироваться; текст должен оставаться
+читаемым. Не рисуй вымышленные FPS/CPS/координаты/инвентарь как реальные и не
+обещай функции, которые не подключены. Не копируй HUD самой игры (хотбар,
+сердца и т. п.) вместо действительного игрового состояния.
+
+Сохрани отдельную вкладку Visuals, реальные настройки China Hat и Trail,
+полупрозрачность, пространственную радугу и проверенный пользователем проход с
+depth test: эффекты должны скрываться за блоками. Настройки эффектов имеют
+собственный предпросмотр и скрывают остальной клиентский HUD. Не заменяй его
+копией игровой камеры и не выдавай демонстрационную модель за реальный скин или
+полностью идентичный игровой шейдер. Текущий код предпросмотра — приближение.
+
+Код ниже — не полноценные исходники закрытого игрового ядра: GAYClientCore.dll
+закрыта. Работай в совместимом C++17/ImGui адаптере; не меняй ABI ag::Settings,
+проверки точной сборки, хуки рендера и D3D-состояния без необходимости. Не ломай
+автозагрузку, мост колеса, управление, закрытие клиента и Del. Верни изменения по
+файлам, объясни интеграцию и явно перечисли неподключённые вещи. Не называй
+предпросмотр или рендер проверенными в Minecraft, если такой проверки не было.
+Не добавляй отдельный экспериментальный режим для нового стиля HUD.
 
 4. РЕДАКТОР ЭФФЕКТОВ И СИНХРОНИЗАЦИЯ
 
@@ -118,6 +152,18 @@ Visuals содержит отдельные кнопки Settings для China H
 на время редактирования скрывается; игровой чат может остаться. Этот новый
 предпросмотр ещё не проверен на Windows. HUD_PREVIEW.png — старый макет
 плашки списка модулей, не изображение нового аватара.
+
+5. СБОРКА И ПРОВЕРКИ
+
+Из корня репозитория (Zig 0.13.0, x86_64-windows-gnu):
+
+zig c++ -target x86_64-windows-gnu -std=c++17 -shared -O2 -Wall -Wextra -Irepair/vendor/imgui repair/src/compat.cpp repair/src/uwp_extra.cpp repair/src/china_hat_native.cpp -o repair/GAYClientInternal.dll -ld3d11 -ldxgi -luser32 -lole32 -lapi-ms-win-core-winrt-l1-1-0 -lapi-ms-win-core-winrt-string-l1-1-0 -luuid -lbcrypt -static
+
+Указанные далее тесты предназначены для g++ -std=c++17 и Python 3. Дополнительно
+следует прогнать все repair/tests/*.cpp и *.py, обновить SHA/размер DLL и
+previousSha256 в repair/install-manifest.json. Для сборки и установки нужен
+остальной репозиторий и закрытое ядро; один этот TXT не является проектом.
+Статические и mock-тесты не заменяют проверки в Windows и Minecraft.
 
 ================================================================================
 2. ИСХОДНЫЙ КОД
@@ -3091,4 +3137,414 @@ public:
 
 --------------------------------------------------------------------------------
 КОНЕЦ ФАЙЛА: repair/src/disable_hotkey.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/hud_theme.cpp
+================================================================================
+#include "../src/hud_theme.h"
+#include <cassert>
+#include <limits>
+int main() {
+ assert(hud_theme::card("##hud_fps")); assert(hud_theme::card("##hud_keystrokes"));
+ assert(hud_theme::card("##hud_coordinates")); assert(!hud_theme::card("HUD"));
+ assert(!hud_theme::card("##hud_editor")); assert(!hud_theme::card("##hud_fps_extra"));
+ assert(!hud_theme::card(nullptr)); assert(hud_theme::card("##notification_12"));
+ assert(!hud_theme::card("##notification_")); assert(!hud_theme::card("##notification_else"));
+ assert(hud_theme::background(0).a==0); assert(hud_theme::background(2).a==1);
+ assert(hud_theme::border(0).a==0); assert(hud_theme::background(std::numeric_limits<float>::quiet_NaN()).a==.72f);
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/tests/hud_theme.cpp
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/hud_module_list.cpp
+================================================================================
+#include "../src/hud_module_list.h"
+#include <cassert>
+#include <string>
+#include <vector>
+int main() {
+ using namespace module_hud;
+ assert(!editing(false,false) && !editing(false,true) && !editing(true,false) && editing(true,true));
+ std::array<bool,ag::kModuleCount> enabled{}; std::vector<std::string> out;
+ auto add=[&](const char* s){out.emplace_back(s);};
+ labels(enabled,false,false,add); assert(out.size()==1 && out[0]=="No active modules"); out.clear();
+ enabled[static_cast<std::size_t>(ag::ModuleId::Fps)]=true;
+ enabled[static_cast<std::size_t>(ag::ModuleId::Session)]=true; // unsupported is not shown
+ labels(enabled,true,true,add); assert((out==std::vector<std::string>{"FPS","China Hat","Trail"}));
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/tests/hud_module_list.cpp
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/visual_avatar_preview.cpp
+================================================================================
+#include "../src/visual_avatar_preview.h"
+#include <cassert>
+#include <cmath>
+#include <limits>
+int main() {
+ using namespace visual_avatar_preview;
+ HatSettings s{.58f,.34f,0.f,.07f,.3125f,.15f,false};
+ china_hat::Mesh m{}; assert(hat(m,s,0));
+ assert(m.triangleVertices==144 && m.outlineVertices==49);
+ float base=.64f+.03f+hat_animation::bob(0,s.bobAmount,s.bobSpeed);
+ assert(std::fabs(m.outline[0].position.y-base)<1e-6f);
+ assert(std::fabs(m.triangles[0].position.y-(base+s.height))<1e-6f);
+ assert(std::fabs(m.outline[0].position.x-s.radius)<1e-6f);
+ auto y=m.outline[0].position.y; assert(hat(m,s,800)); assert(m.outline[0].position.y>y);
+ float defaultScale=hatScale(s,0);
+ s.offset=.2f; s.radius=.9f; s.height=.6f; assert(hat(m,s,0));
+ assert(hatScale(s,0)<defaultScale && hatScale(s,0)>0);
+ assert(std::fabs(m.outline[0].position.y-(base+.2f))<1e-6f);
+ assert(std::fabs(m.outline[0].position.x-.9f)<1e-6f);
+ assert(std::fabs(m.triangles[0].position.y-(base+.2f+.6f))<1e-6f);
+ s.radius=std::numeric_limits<float>::quiet_NaN(); assert(!hat(m,s,0) && m.triangleVertices==0);
+ auto front=project({0,0,.5f}), back=project({0,0,-.5f}); assert(front.y>back.y);
+ assert(trailPoint(1,0,6).x<trailPoint(1,0,1).x);
+ assert(trailPoint(0,0,3).x==trailPoint(0,2000,3).x);
+ assert(trailPoint(.5f,0,3).y!=trailPoint(.5f,1000,3).y);
+ assert(trailHeight(.8f)>trailHeight(.3f));
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/tests/visual_avatar_preview.cpp
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/visual_color.cpp
+================================================================================
+#include "../src/visual_color.h"
+#include <cassert>
+#include <cmath>
+int main() {
+ using namespace visual_color;
+ for (auto effect:{Effect::Hat,Effect::Trail}) {
+  auto original=material(false,effect);
+  for (float x:original) assert(x==1.f);
+  auto color=material(true,effect);
+  for (float x:color) assert(std::isfinite(x) && x>=0.f && x<=1.f);
+  assert(color[3]==1.f && (color[0]<.9f || color[1]<.9f || color[2]<.9f));
+ }
+ assert(material(true,Effect::Hat)!=material(true,Effect::Trail));
+ std::array<float,3> custom{{.4f,.5f,.6f}};
+ auto white=animated(false,true,custom,.2f,1000); assert(white[0]==1.f && white[1]==1.f && white[2]==1.f);
+ auto fixed=animated(true,false,custom,.2f,1000); assert(fixed[0]==.4f && fixed[1]==.5f && fixed[2]==.6f);
+ auto first=animated(true,true,custom,.5f,0), second=animated(true,true,custom,.5f,1000);
+ assert(first!=second && first==animated(true,true,custom,.5f,2000));
+ for (std::uint64_t t=0;t<10000;t+=83) for (float x:animated(true,true,custom,.15f,t)) assert(std::isfinite(x) && x>=0.f && x<=1.f);
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/tests/visual_color.cpp
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/visual_gradient.cpp
+================================================================================
+#include "../src/visual_gradient.h"
+#include "../src/visual_ribbon.h"
+#include <cassert>
+#include <cmath>
+#include <limits>
+#include <vector>
+int main() {
+ using namespace visual_gradient;
+ assert(phase(0,.5f)==0.f && phase(2000,.5f)==0.f);
+ assert(std::fabs(phase(1000,.5f)-.5f)<1e-6);
+ assert(phase(1000,std::numeric_limits<float>::quiet_NaN())==0);
+ auto a=trail(0,11,0,255), b=trail(10,11,0,255), mid=trail(5,11,0,128);
+ assert(a.r!=b.r || a.g!=b.g || a.b!=b.b); assert(mid.a==128);
+ assert(trail(500,11,0,255).r==b.r);
+ china_hat::Vertex x{{0,0,0},a},y{{1,0,0},b};
+ std::vector<china_hat::Vertex> output;
+ assert(visual_ribbon::segment(x,y,1.f,[&](auto v){output.push_back(v);}));
+ assert(output[0].color.r==a.r && output[1].color.b==b.b && output[2].color.b==b.b);
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/tests/visual_gradient.cpp
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/visual_gpu_depth.cpp
+================================================================================
+#define VISUAL_GPU_DEPTH_TEST_TYPES "../tests/visual_gpu_mock_types.h"
+#include "../src/visual_gpu_depth.h"
+#include <cassert>
+#include <cmath>
+struct View:ID3D11DepthStencilView { unsigned refs=1; ULONG AddRef() override{return ++refs;} ULONG Release() override{return --refs;} };
+struct Depth:ID3D11DepthStencilState {
+ unsigned refs=1; D3D11_DEPTH_STENCIL_DESC desc{}; bool owned=false;
+ void GetDesc(D3D11_DEPTH_STENCIL_DESC* d) override {*d=desc;} ULONG AddRef() override{return ++refs;}
+ ULONG Release() override {auto n=--refs; if (!n && owned) delete this; return n;}
+};
+struct Blend:ID3D11BlendState {
+ unsigned refs=1; D3D11_BLEND_DESC desc{}; bool owned=false;
+ void GetDesc(D3D11_BLEND_DESC* d) override {*d=desc;} ULONG AddRef() override{return ++refs;}
+ ULONG Release() override {auto n=--refs; if (!n && owned) delete this; return n;}
+};
+struct Device:ID3D11Device {
+ bool failDepth=false, failBlend=false;
+ HRESULT CreateDepthStencilState(const D3D11_DEPTH_STENCIL_DESC* d,ID3D11DepthStencilState** out) override {
+  if (failDepth) return E_FAIL;
+  auto* p=new Depth; p->desc=*d; p->owned=true; *out=p; return 0;
+ }
+ HRESULT CreateBlendState(const D3D11_BLEND_DESC* d,ID3D11BlendState** out) override {
+  if (failBlend) return E_FAIL;
+  auto* p=new Blend; p->desc=*d; p->owned=true; *out=p; return 0;
+ }
+ ULONG Release() override{return 1;}
+};
+struct Context:ID3D11DeviceContext {
+ View view, other; Depth depth; Blend blend; Device device;
+ ID3D11DepthStencilView* dsv=&view; ID3D11DepthStencilState* curDepth=&depth; ID3D11BlendState* curBlend=&blend;
+ UINT stencil=7,mask=0xfffffffe; FLOAT factor[4]{.2f,.3f,.4f,.5f}; int sets=0; bool hasDevice=true;
+ void OMGetRenderTargets(UINT,void*,ID3D11DepthStencilView** o) override {*o=dsv;if(*o)(*o)->AddRef();}
+ void OMGetDepthStencilState(ID3D11DepthStencilState** o,UINT* r) override {*o=curDepth;if(*o)(*o)->AddRef();*r=stencil;}
+ void OMGetBlendState(ID3D11BlendState** o,FLOAT* f,UINT* m) override {*o=curBlend;if(*o)(*o)->AddRef();for(int i=0;i<4;i++)f[i]=factor[i];*m=mask;}
+ void GetDevice(ID3D11Device** o) override {*o=hasDevice?&device:nullptr;}
+ void OMSetDepthStencilState(ID3D11DepthStencilState* p,UINT r) override {curDepth=p;stencil=r;sets++;}
+ void OMSetBlendState(ID3D11BlendState* p,const FLOAT* f,UINT m) override {curBlend=p;mask=m;for(int i=0;i<4;i++)factor[i]=f[i];sets++;}
+};
+int main() {
+ using namespace visual_gpu_depth;
+ Context ctx; int calls=0; inVisualDraw=false; draw(&ctx,[&]{++calls;}); assert(calls==1 && ctx.sets==0);
+ expectedContext=&ctx; expectedDepth=&ctx.view; worldCompare=D3D11_COMPARISON_LESS_EQUAL; opacity=.25f; inVisualDraw=true;
+ draw(&ctx,[&]{
+  ++calls; D3D11_DEPTH_STENCIL_DESC d{}; ctx.curDepth->GetDesc(&d);
+  assert(d.DepthEnable && d.DepthWriteMask==D3D11_DEPTH_WRITE_MASK_ZERO && d.DepthFunc==D3D11_COMPARISON_LESS_EQUAL && !d.StencilEnable);
+  D3D11_BLEND_DESC b{}; ctx.curBlend->GetDesc(&b); assert(b.RenderTarget[0].BlendEnable && b.RenderTarget[0].SrcBlend==D3D11_BLEND_BLEND_FACTOR);
+  assert(std::fabs(ctx.factor[0]-.25f)<.00001f);
+ });
+ assert(calls==2 && ctx.curDepth==&ctx.depth && ctx.curBlend==&ctx.blend && ctx.stencil==7 && ctx.mask==0xfffffffe);
+ assert(ctx.factor[0]==.2f && ctx.factor[3]==.5f && ctx.depth.refs==1 && ctx.blend.refs==1 && ctx.view.refs==1);
+ int before=ctx.sets; ctx.dsv=&ctx.other; draw(&ctx,[&]{++calls;}); assert(calls==2 && ctx.sets==before && ctx.other.refs==1);
+ ctx.dsv=&ctx.view; ctx.device.failBlend=true; draw(&ctx,[&]{++calls;}); assert(calls==2 && ctx.sets==before);
+ assert(ctx.curDepth==&ctx.depth && ctx.curBlend==&ctx.blend && ctx.depth.refs==1 && ctx.blend.refs==1 && ctx.view.refs==1);
+ ctx.device.failBlend=false; ctx.device.failDepth=true; draw(&ctx,[&]{++calls;}); assert(calls==2 && ctx.sets==before);
+ ctx.device.failDepth=false; ctx.curDepth=nullptr; ctx.curBlend=nullptr;
+ draw(&ctx,[&]{
+  ++calls; D3D11_DEPTH_STENCIL_DESC d{}; ctx.curDepth->GetDesc(&d);
+  assert(d.FrontFace.StencilFunc==D3D11_COMPARISON_ALWAYS && d.BackFace.StencilFunc==D3D11_COMPARISON_ALWAYS);
+  D3D11_BLEND_DESC b{}; ctx.curBlend->GetDesc(&b);
+  assert(b.RenderTarget[0].BlendEnable && b.RenderTarget[1].BlendOp==D3D11_BLEND_OP_ADD);
+ });
+ assert(calls==3 && !ctx.curDepth && !ctx.curBlend && ctx.view.refs==1);
+ Context wrong; draw(&wrong,[&]{++calls;}); assert(calls==3 && wrong.sets==0);
+ ctx.hasDevice=false; int sets=ctx.sets; draw(&ctx,[&]{++calls;}); assert(calls==3 && ctx.sets==sets);
+ inVisualDraw=false; expectedContext=nullptr; expectedDepth=nullptr;
+ // Check all seven expected D3D slots and reject ambiguous aliases before
+ // creating any hooks. No fake COM method is invoked in this test.
+ void* table[41]{};
+ for (std::size_t i=0;i<7;++i) table[drawSlots[i]]=reinterpret_cast<void*>(static_cast<std::uintptr_t>(100+i));
+ struct FakeObject { void** vtable; } fake{table};
+ int created=0,enabled=0;
+ auto create=[&](void*,void*,void** out) { ++created; *out=reinterpret_cast<void*>(123); return 0; };
+ auto enable=[&](void*) {++enabled; return 0;};
+ auto disable=[](void*) {return 0;}; auto remove=[](void*) {return 0;};
+ auto* fakeCtx=reinterpret_cast<ID3D11DeviceContext*>(&fake);
+ assert(install(fakeCtx,create,enable,disable,remove) && created==7 && enabled==7 && matches(fakeCtx));
+ table[drawSlots[1]]=table[drawSlots[0]]; created=0; enabled=0;
+ assert(!matches(fakeCtx) && !install(fakeCtx,create,enable,disable,remove) && created==0 && enabled==0);
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/tests/visual_gpu_depth.cpp
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/visual_gpu_mock_types.h
+================================================================================
+#pragma once
+// Minimal non-Windows COM-shaped API used only by visual_gpu_depth.cpp tests.
+#include <cstdint>
+#define STDMETHODCALLTYPE
+using HRESULT=int; using UINT=unsigned; using INT=int; using FLOAT=float; using ULONG=unsigned;
+constexpr HRESULT E_FAIL=-1;
+#define SUCCEEDED(x) ((x)>=0)
+#define FAILED(x) ((x)<0)
+enum D3D11_COMPARISON_FUNC { D3D11_COMPARISON_NEVER=1,D3D11_COMPARISON_LESS=2,D3D11_COMPARISON_EQUAL=3,D3D11_COMPARISON_LESS_EQUAL=4,D3D11_COMPARISON_GREATER=5,D3D11_COMPARISON_GREATER_EQUAL=7,D3D11_COMPARISON_ALWAYS=8 };
+enum { D3D11_DEPTH_WRITE_MASK_ZERO=0, D3D11_STENCIL_OP_KEEP=1,
+ D3D11_DEFAULT_STENCIL_READ_MASK=255, D3D11_DEFAULT_STENCIL_WRITE_MASK=255,
+ D3D11_BLEND_ZERO=1,D3D11_BLEND_ONE=2,D3D11_BLEND_INV_SRC_ALPHA=6,
+ D3D11_BLEND_BLEND_FACTOR=14,D3D11_BLEND_INV_BLEND_FACTOR=15,D3D11_BLEND_OP_ADD=1,
+ D3D11_COLOR_WRITE_ENABLE_ALL=15 };
+constexpr int TRUE=1, FALSE=0;
+struct D3D11_DEPTH_STENCILOP_DESC { int StencilFailOp,StencilDepthFailOp,StencilPassOp; D3D11_COMPARISON_FUNC StencilFunc; };
+struct D3D11_DEPTH_STENCIL_DESC { int DepthEnable,DepthWriteMask; D3D11_COMPARISON_FUNC DepthFunc; int StencilEnable,StencilReadMask,StencilWriteMask; D3D11_DEPTH_STENCILOP_DESC FrontFace,BackFace; };
+struct D3D11_RENDER_TARGET_BLEND_DESC { int BlendEnable,SrcBlend,DestBlend,BlendOp,SrcBlendAlpha,DestBlendAlpha,BlendOpAlpha,RenderTargetWriteMask; };
+struct D3D11_BLEND_DESC { int AlphaToCoverageEnable,IndependentBlendEnable; D3D11_RENDER_TARGET_BLEND_DESC RenderTarget[8]; };
+struct ID3D11DepthStencilView { virtual ULONG AddRef()=0; virtual ULONG Release()=0; };
+struct ID3D11DepthStencilState { virtual ~ID3D11DepthStencilState() = default; virtual void GetDesc(D3D11_DEPTH_STENCIL_DESC*)=0; virtual ULONG AddRef()=0; virtual ULONG Release()=0; };
+struct ID3D11BlendState { virtual ~ID3D11BlendState() = default; virtual void GetDesc(D3D11_BLEND_DESC*)=0; virtual ULONG AddRef()=0; virtual ULONG Release()=0; };
+struct ID3D11Device {
+ virtual HRESULT CreateDepthStencilState(const D3D11_DEPTH_STENCIL_DESC*,ID3D11DepthStencilState**)=0;
+ virtual HRESULT CreateBlendState(const D3D11_BLEND_DESC*,ID3D11BlendState**)=0;
+ virtual ULONG Release()=0;
+};
+struct ID3D11DeviceContext {
+ virtual void OMGetRenderTargets(UINT,void*,ID3D11DepthStencilView**)=0;
+ virtual void OMGetDepthStencilState(ID3D11DepthStencilState**,UINT*)=0;
+ virtual void OMGetBlendState(ID3D11BlendState**,FLOAT*,UINT*)=0;
+ virtual void GetDevice(ID3D11Device**)=0;
+ virtual void OMSetDepthStencilState(ID3D11DepthStencilState*,UINT)=0;
+ virtual void OMSetBlendState(ID3D11BlendState*,const FLOAT*,UINT)=0;
+};
+struct ID3D11Buffer {};
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/tests/visual_gpu_mock_types.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/visual_depth_policy.cpp
+================================================================================
+#include "../src/visual_depth_policy.h"
+#include <cassert>
+int main() {
+ using namespace visual_depth_policy;
+ assert(!overlayDraw(true) && overlayDraw(false));
+ assert(worldDraw(true,true,true,true,true,true));
+ assert(!worldDraw(false,true,true,true,true,true));
+ assert(!worldDraw(true,false,true,true,true,true));
+ assert(!worldDraw(true,true,false,true,true,true));
+ assert(!worldDraw(true,true,true,false,true,true));
+ assert(!worldDraw(true,true,true,true,false,true));
+ assert(!worldDraw(true,true,true,true,true,false));
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/tests/visual_depth_policy.cpp
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/visual_hooks.cpp
+================================================================================
+#include "../src/visual_hooks.h"
+#include <cassert>
+#include <cstdint>
+using namespace visual_hooks;
+struct Fake {
+ int failCreate=0,failEnable=0,failDisable=0,created=0,enabled=0,disabled=0,removed=0,active=0;
+ static int bit(void* p) { return 1<<static_cast<int>(reinterpret_cast<std::uintptr_t>(p)-1); }
+ int create(void* target,void*,void**) { int b=bit(target); if (failCreate&b) return 1; created|=b; return 0; }
+ int enable(void* target) { int b=bit(target); if (failEnable&b) return 1; enabled|=b; active|=b; return 0; }
+ int disable(void* target) { int b=bit(target); disabled|=b; if (failDisable&b) return 1; active&=~b; return 0; }
+ int remove(void* target) { int b=bit(target); assert(!(active&b)); removed|=b; return 0; }
+};
+bool run(Fake& f) {
+ void* tramp[3]{}; Hook hooks[3]{};
+ for (int i=0;i<3;i++) hooks[i]={reinterpret_cast<void*>(static_cast<std::uintptr_t>(i+1)),reinterpret_cast<void*>(10),&tramp[i]};
+ return install(hooks,3,[&](auto a,auto b,auto c){return f.create(a,b,c);},
+   [&](auto a){return f.enable(a);},[&](auto a){return f.disable(a);},[&](auto a){return f.remove(a);});
+}
+int main() {
+ Fake ok; assert(run(ok)); assert(ok.created==7 && ok.enabled==7 && ok.disabled==0 && ok.removed==0 && ok.active==7);
+ Fake create; create.failCreate=4; assert(!run(create)); assert(create.created==3 && create.enabled==0 && create.removed==3);
+ Fake partial; partial.failEnable=4; assert(!run(partial)); assert(partial.enabled==3 && partial.disabled==3 && partial.removed==7 && partial.active==0);
+ Fake failure; failure.failEnable=4; failure.failDisable=2; assert(!run(failure));
+ assert(failure.enabled==3 && failure.disabled==3 && failure.removed==5 && failure.active==2);
+ // Seven D3D draw targets: a partial enable failure must disable/remove every
+ // earlier active hook and remove every created but inactive hook.
+ Fake gpu; gpu.failEnable=1<<5; void* tramp[7]{}; Hook hooks[7]{};
+ for (int i=0;i<7;i++) hooks[i]={reinterpret_cast<void*>(static_cast<std::uintptr_t>(i+1)),reinterpret_cast<void*>(10),&tramp[i]};
+ assert(!install(hooks,7,[&](auto a,auto b,auto c){return gpu.create(a,b,c);},
+   [&](auto a){return gpu.enable(a);},[&](auto a){return gpu.disable(a);},[&](auto a){return gpu.remove(a);}));
+ assert(gpu.created==127 && gpu.enabled==31 && gpu.disabled==31 && gpu.removed==127 && gpu.active==0);
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/tests/visual_hooks.cpp
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/check_hud_visual_update.py
+================================================================================
+"""Static wiring checks; cannot replace Windows/game/graphics testing."""
+from pathlib import Path
+r=Path(__file__).resolve().parents[1]
+u=(r/'src/compat.cpp').read_text(); n=(r/'src/china_hat_native.cpp').read_text()
+settings=(r/'src/visual_settings.h').read_text(); exports=(r.parent/'GAYClientInternal.dll').read_bytes()
+for symbol in ('_ZN2ag7DrawHudERNS_7RuntimeE','_ZN2ag17NotificationQueue4DrawERKNS_8SettingsE',
+               '_ZN5ImGui14PushStyleColorEiRK6ImVec4','_ZN5ImGui13PopStyleColorEi',
+               '_ZN5ImGui18SetWindowFontScaleEf'):
+    assert symbol in u and symbol.encode() in exports, symbol
+assert 'module_hud::editing(menu,hudEditorOpen || visualEditor!=VisualEditor::None)' in u
+assert 'realDrawHud(runtime)' in u and 'drawModuleHud(runtime,false)' in u
+assert 'drawModuleHud(runtime,true)' in u and 'hudEditorActive.load' in u
+assert 'if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }' in u
+assert 'if (!menuOpen || (!hudEditorOpen && !editingVisual)) realDrawGui(runtime);' in u
+assert u.index('if (hudHookCreated) {') > u.index('mhApply())')
+for name in ('HatOpacity','TrailOpacity'):
+    assert 'VisualParam::'+name in n and 'VisualParam::'+name in u and name in settings
+assert 'vertexGradient{false}' in n and 'Vertex gradient (test)' in u
+assert 'visual_gradient::trail(' in n and 'visual_gradient::phase(' in n
+assert 'sampleOutputMerger(depthWorld)' in n and 'sampleOutputMerger(depthBefore)' in n and 'sampleOutputMerger(depthAfter)' in n
+assert 'OMGetDepthStencilState' in n and 'OMGetBlendState' in n
+assert 'OMSetDepthStencilState' not in n and 'OMSetBlendState' not in n
+assert (r/'HUD_PREVIEW.png').read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
+assert (r/'HUD_ALL_IN_ONE.txt').exists()
+print('HUD, gradient and read-only depth diagnostics: static checks OK; Windows test required')
+
+for symbol in ('_ZN5ImGui6ButtonEPKcRK6ImVec2','_ZN5ImGui17GetWindowDrawListEv',
+               '_ZN5ImGui18GetCursorScreenPosEv','_ZN5ImGui5DummyERK6ImVec2',
+               '_ZN10ImDrawList7AddLineERK6ImVec2S2_jf','_ZN10ImDrawList17AddTriangleFilledERK6ImVec2S2_S2_j',
+               '_ZN10ImDrawList13AddQuadFilledERK6ImVec2S2_S2_S2_j','_ZN10ImDrawList13AddRectFilledERK6ImVec2S2_jfi',
+               '_ZN10ImDrawList23AddRectFilledMultiColorERK6ImVec2S2_jjjj'):
+    assert symbol in u and symbol.encode() in exports, symbol
+assert 'Example avatar (Steve style)' in u and 'Game shader may look different' in u
+assert 'visual_avatar_preview::hat(mesh,s,now)' in u and 'drawTrailPreview(d,o,now)' in u
+assert 'captureGamePreview' not in u and 'CopyResource(previewTexture' not in u
+assert 'Settings##open_hat' in u and 'Settings##open_trail' in u
+assert 'drawVisualEditor(); return;' in u and 'drawEffectPreview(current)' in u
+assert u.index('drawHatSettings();',u.index('static void drawVisualEditor')) < u.index('drawEffectPreview(current)',u.index('static void drawVisualEditor'))
+assert 'realText(label,end)' in u and 'guiPushWidth(-1.f)' in u
+assert 'worldEntitiesRva=0x5ae250' in n and 'entitiesDiagnosticHook' in n
+assert 'visual_hooks::install(world,1' in n
+
+gpu=(r/'src/visual_gpu_depth.h').read_text()
+assert 'strictDepth{true}' in n and 'visual_depth_policy::overlayDraw' in n
+assert 'visual_depth_policy::worldDraw' in n and 'visual_gpu_depth::matches(ctx)' in n
+assert 'visual_gpu_depth::expectedDepth=dsv' in n and 'submitVisual(t,param(VisualParam::HatOpacity))' in n
+assert 'D3D11_DEPTH_WRITE_MASK_ZERO' in gpu and 'D3D11_BLEND_BLEND_FACTOR' in gpu
+assert 'current==expectedDepth' in gpu and 'ctx!=expectedContext' in gpu
+assert 'ctx->OMSetDepthStencilState(oldDepth,stencil)' in gpu and 'ctx->OMSetBlendState(oldBlend,oldFactor,sampleMask)' in gpu
+assert 'if (!inVisualDraw) { call(); return; }' in gpu
+assert 'Old overlay (see-through)' in u and 'SetVisualLegacyMode(legacy)' in u
+
+# The main HUD theme is installed after essential hooks, is limited to known
+# core windows during actual HUD/notification drawing, and falls back safely.
+theme=(r/'src/hud_theme.h').read_text()
+assert 'insideLegacyHud || !hud_theme::card(name)' in u
+assert 'hud_theme::background(widgetOpacity*legacyOpacity)' in u
+assert 'insideLegacyHud=true; realDrawHud(runtime)' in u
+assert 'realNotificationDraw(queue,s)' in u and 'insideLegacyHud=previous; legacyOpacity=oldOpacity' in u
+assert 'mhRemove(reinterpret_cast<void*>(guiBegin))' in u
+assert u.index('mhCreate(reinterpret_cast<void*>(guiBegin)') > u.index('mhApply())')
+assert 'Widget background opacity' in u and 'for (const auto& entry:module_hud::entries)' in u
+assert 'setModule(runtime,entry.id,enabled)' in u
+for name in ('fps','cps','clock','cpu','ram','resolution','watermark','info','active','hotkeys','coordinates','keystrokes'):
+    assert '##hud_'+name in theme
+for symbol in ('_ZN5ImGui5BeginEPKcPbi','_ZN5ImGui8SameLineEff','_ZN5ImGui12PushStyleVarEif','_ZN5ImGui11PopStyleVarEi'):
+    assert symbol in u and symbol.encode() in exports
+print('Scoped HUD style and module wiring: static OK; Windows test required')
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/tests/check_hud_visual_update.py
 --------------------------------------------------------------------------------
