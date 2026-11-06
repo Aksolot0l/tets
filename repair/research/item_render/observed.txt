@@ -145,3 +145,20 @@ the item's draw state. Also the third-person cached call returns at 0x56cd8e,
 which heldDrawHook currently excludes; no runtime proof of the exact third-person
 path yet. Do not suppress vanilla based on an observed Draw alone as if visibility
 was verified. No fix or Windows validation is claimed.
+
+Later user screenshot image-46: after switch-on in third-person view all flags
+are zero: F:0 V:0 S1:0 S3:0 R:0 B:0 C:0 D:0. Since toggling resets flags, it
+is a different accumulation period from image-45. S3:0 says the guarded third
+streaming path did not match during that period; the cached third-person path
+is not instrumented by C. Image-47 shows the checkbox off while the pause menu
+is open, not whether the first-person hand and sword returned.
+
+The disassembly of 0x5d1840 shows the custom draw goes through 0x7308c0 with
+its second argument, currently the generic contextRva. At 0x59f200 the original
+instead selects an item renderer field based on item flags and mode, sometimes
+calling 0x730bd0 or 0x730cd0, which invoke additional 0x72f100 calls before
+0x7308c0. This establishes a difference in the arguments and operation order,
+not what exact combination would render the GLB correctly. In light of the
+confirmed invisible first-person result, the production toggle now refuses to
+start this unverified replacement before installing its hooks; its UI reports
+that it is paused. This is a safety guard, not a solution or Windows validation.

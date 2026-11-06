@@ -27,3 +27,11 @@ assert 'streaming!=1 || !tessIdle(t)' in n
 
 assert 'katanaEvents.fetch_or' in n and 'KatanaEvidence()' in ui
 assert 'Seen F:%u V:%u S1:%u S3:%u' in ui
+
+# The unverified renderer must not be enabled by the shipped build: the
+# observed draw did not imply visibility and could hide the held sword.
+set_enable=n[n.index('void SetKatanaEnabled(bool value)'):]
+assert 'constexpr bool katanaReplacementVerified=false;' in set_enable
+assert set_enable.index('if (!katanaReplacementVerified)') < set_enable.index('if (!enableVisual())')
+assert 'katanaEnabled.store(false,std::memory_order_release);' in set_enable
+assert 'Katana paused: unverified' in ui

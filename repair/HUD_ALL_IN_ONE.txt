@@ -848,7 +848,7 @@ static void drawVisualPanel() {
                 std::snprintf(line,sizeof(line),"R:%u B:%u C:%u D:%u",unsigned(!!(e&16)),unsigned(!!(e&32)),unsigned(!!(e&64)),unsigned(!!(e&128))); realText(line,nullptr);
             } else {
                 const int ks=KatanaStatus();
-                if (ks>=3) realText(ks==3?"Katana: game hooks unavailable":ks==4?"Katana: GPU hooks unavailable":
+                if (ks>=3) realText(ks==14?"Katana paused: unverified":ks==3?"Katana: game hooks unavailable":ks==4?"Katana: GPU hooks unavailable":
                     ks==5?"Katana: game check failed":ks==6?"Katana: item code changed":
                     ks==7?"Katana: model invalid":"Katana: hook install failed",nullptr);
             }
@@ -3262,6 +3262,15 @@ int KatanaStatus() {
 void SetKatanaEnabled(bool value) {
  if (!value) { katanaEnabled.store(false,std::memory_order_release); katanaStatus.store(0,std::memory_order_relaxed); katanaEvents.store(0,std::memory_order_relaxed); return; }
  katanaEvents.store(0,std::memory_order_relaxed); katanaStatus.store(0,std::memory_order_relaxed);
+ // The tested path suppressed the held sword after a GPU submission even when
+ // no katana was visible. Do not install or enable it in production until a
+ // replacement has actually been verified visible in both game perspectives.
+ constexpr bool katanaReplacementVerified=false;
+ if (!katanaReplacementVerified) {
+  katanaEnabled.store(false,std::memory_order_release);
+  katanaStatus.store(14,std::memory_order_relaxed);
+  return;
+ }
  if (!enableVisual()) { katanaStatus.store(3,std::memory_order_relaxed); return; }
  if (!gpuHooksReady.load(std::memory_order_acquire)) { katanaStatus.store(4,std::memory_order_relaxed); return; }
  int state=katanaHookState.load(std::memory_order_acquire);
@@ -14036,6 +14045,14 @@ assert 'streaming!=1 || !tessIdle(t)' in n
 
 assert 'katanaEvents.fetch_or' in n and 'KatanaEvidence()' in ui
 assert 'Seen F:%u V:%u S1:%u S3:%u' in ui
+
+# The unverified renderer must not be enabled by the shipped build: the
+# observed draw did not imply visibility and could hide the held sword.
+set_enable=n[n.index('void SetKatanaEnabled(bool value)'):]
+assert 'constexpr bool katanaReplacementVerified=false;' in set_enable
+assert set_enable.index('if (!katanaReplacementVerified)') < set_enable.index('if (!enableVisual())')
+assert 'katanaEnabled.store(false,std::memory_order_release);' in set_enable
+assert 'Katana paused: unverified' in ui
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_katana_integration.py
 ================================================================================

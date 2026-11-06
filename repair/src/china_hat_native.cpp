@@ -908,6 +908,15 @@ int KatanaStatus() {
 void SetKatanaEnabled(bool value) {
  if (!value) { katanaEnabled.store(false,std::memory_order_release); katanaStatus.store(0,std::memory_order_relaxed); katanaEvents.store(0,std::memory_order_relaxed); return; }
  katanaEvents.store(0,std::memory_order_relaxed); katanaStatus.store(0,std::memory_order_relaxed);
+ // The tested path suppressed the held sword after a GPU submission even when
+ // no katana was visible. Do not install or enable it in production until a
+ // replacement has actually been verified visible in both game perspectives.
+ constexpr bool katanaReplacementVerified=false;
+ if (!katanaReplacementVerified) {
+  katanaEnabled.store(false,std::memory_order_release);
+  katanaStatus.store(14,std::memory_order_relaxed);
+  return;
+ }
  if (!enableVisual()) { katanaStatus.store(3,std::memory_order_relaxed); return; }
  if (!gpuHooksReady.load(std::memory_order_acquire)) { katanaStatus.store(4,std::memory_order_relaxed); return; }
  int state=katanaHookState.load(std::memory_order_acquire);

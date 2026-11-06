@@ -587,7 +587,7 @@ static void drawVisualPanel() {
                 std::snprintf(line,sizeof(line),"R:%u B:%u C:%u D:%u",unsigned(!!(e&16)),unsigned(!!(e&32)),unsigned(!!(e&64)),unsigned(!!(e&128))); realText(line,nullptr);
             } else {
                 const int ks=KatanaStatus();
-                if (ks>=3) realText(ks==3?"Katana: game hooks unavailable":ks==4?"Katana: GPU hooks unavailable":
+                if (ks>=3) realText(ks==14?"Katana paused: unverified":ks==3?"Katana: game hooks unavailable":ks==4?"Katana: GPU hooks unavailable":
                     ks==5?"Katana: game check failed":ks==6?"Katana: item code changed":
                     ks==7?"Katana: model invalid":"Katana: hook install failed",nullptr);
             }
