@@ -144,8 +144,26 @@ It saves/restores render targets, viewport and scissor; rejects predication,
 stream output, output UAVs, stencil and unsupported depth/multiple viewports,
 checks that its render target is not already bound, limits draws, and disables
 itself with the editor. The actual game's world camera remains in use; the image
-may be cropped, invisible or incorrect. It is not a front-facing custom camera
-and does not include the preview hat/trail. Some GPU queries can still be
+may be cropped, invisible or incorrect. It is not a front-facing custom camera.
+The world hat's guarded draw calls can also be replayed into the player target;
+the user has seen both model and hat, but trail is not included. Some GPU queries can still be
 affected by extra draws; there can be performance issues, visual corruption or
 a crash. These precautions and mock tests do not prove safety. Windows/Minecraft
 runtime validation is required; never enable this experimental path implicitly.
+
+### Camera diagnostic, 2026-11-06
+The supplied offline `PREVIEW_CAMERA_DIAG.txt` reports the exact expected EXE
+SHA-256 and contains the four requested bounded code windows. The apparent
+perspective getter at `0x488420` traverses a global tree at `0x19209f0`, selects
+key `2` and reads a value at offset `0x98`. The apparent setter at `0x4883a0`
+looks up the same key and, on a change, calls `0x496a90`, writes the result to
+that field and jumps to `0x494580`. Its side effects, persistence, threading
+and safe restoration are not established; do not call it just from this clue.
+
+In the candidate move-camera code starting `0x5ba7e0`, instructions near
+`0x5baa34` inline the tree lookup and read the same key/value directly instead
+of calling `0x488420`. This explains why intercepting the getter could affect
+other code without switching the actual camera. That interceptor was removed.
+The user reports manual F5 switching works after that change. Do not restore
+the old getter override or patch these inline instructions. The getter/setting
+code is not evidence for the unrelated cursor-grab/input-blocking lifecycle.
