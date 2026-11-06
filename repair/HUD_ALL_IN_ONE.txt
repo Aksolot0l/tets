@@ -7,8 +7,8 @@ Visuals, предпросмотра и связанных компонентов
 Имена исходных файлов отмечены перед каждым фрагментом. Внешние заголовки Windows
 SDK и Dear ImGui сюда не включены. Исходников закрытого GAYClientCore.dll нет:
 старый штатный HUD нельзя восстановить полностью по этому файлу.
-PNG не вложен в текст; описание макета есть ниже. Прозрачность и градиент 3D
-эффектов экспериментальные; просвечивание сквозь объекты не исправлено.
+PNG не вложен в текст. Мировой проход, непрозрачность и ограничение глубиной
+экспериментальны и ещё требуют проверки в игре на Windows.
 
 СОДЕРЖАНИЕ:
 1. Описание модулей и интерфейса
@@ -19,7 +19,9 @@ PNG не вложен в текст; описание макета есть ни
    - repair/src/china_hat_native.cpp
    - repair/src/china_hat_native.h
    - repair/src/visual_settings.h
-   - repair/src/visual_preview.h
+   - repair/src/visual_gpu_depth.h
+   - repair/src/visual_depth_policy.h
+   - repair/src/visual_capture_policy.h
    - repair/src/visual_gradient.h
    - repair/src/visual_color.h
    - repair/src/visual_ribbon.h
@@ -95,25 +97,19 @@ Trail — лента за игроком, с линией и заполнени�
 время жизни, цвет или переливание и скорость. История ограничена 128 точками,
 сбрасывается при смене игрока, телепорте и выходе из актуального состояния.
 
-Для каждого эффекта добавлен Opacity (test): 1 — исходная непрозрачность,
-0 — запрашиваемая прозрачность. Изменяется альфа материала, но результат
-зависит от шейдера и blending игры. Если материал не применяет альфу, слайдер
-визуально ничего не изменит. Эта версия не проверена на Windows.
+Opacity (test): в экспериментальном мировом проходе используется как blend
+factor для GPU-вызова. Цвет вершин и Vertex gradient (test) по-прежнему зависят
+от игрового материала. Если градиент не работает, отключите эту опцию.
 
-Visuals -> Options -> Vertex gradient (test) пробует использовать разные цвета
-вершин: шляпа — по окружности конуса; след — вдоль истории от старых точек
-к новым. Время сдвигает цвета, скорость берётся из настройки Rainbow speed.
-Требуются включённые цвета и Rainbow у соответствующего эффекта. Если материал
-игры игнорирует цвет вершин, градиент не появится или станет белым: отключить
-Vertex gradient (test), чтобы вернуться к подтверждённому общему переливанию.
-
-Окклюзия на текущем этапе НЕ исправлена: эффекты могут быть видны сквозь блоки
-и игроков, в том числе своего. Версия не включает принудительное вмешательство
-в depth buffer. В Options показаны диагностические данные после прохода
-сущностей и до/после экрана игры: DSV bound/none, depth on/off, blend on/off.
-Значение может быть no context/data; это диагностика, а не доказательство, что буфер
-содержит корректную глубину сцены. Состояние материала внутри draw может
-отличаться. Нужны реальные данные из игры для безопасного исправления.
+По скриншоту пользователя DSV был подключён и depth включён после прохода
+сущностей, но выключен вокруг интерфейса. Экспериментальная отрисовка теперь
+по умолчанию выполняется после сущностей с проверкой глубины и без записи в неё.
+GPU состояние на наших draw-вызовах восстанавливается. Требуется проверить
+эффекты в игре: правильность перекрытия, прозрачность и стабильность не доказаны.
+Если нужный контекст/DSV или хуки недоступны, мировой рендер пропускается;
+в Options можно выбрать Old overlay (see-through), возвращающий старый путь,
+но он может просвечивать через блоки и игроков. Статус submitted означает
+только перехваченный вызов, а не гарантию правильной картинки.
 
 3. ПРЕДЛОЖЕНИЕ ДЛЯ ДРУГОГО ИИ
 
@@ -126,14 +122,17 @@ Vertex gradient (test), чтобы вернуться к подтверждён�
 на экранах разного размера. Различайте прозрачность HUD-плашки и прозрачность
 3D-эффекта. Не представляйте эскиз как готовое исправление рендера/depth.
 
-4. НОВЫЙ РЕДАКТОР ЭФФЕКТОВ
+4. РЕДАКТОР ЭФФЕКТОВ И СИНХРОНИЗАЦИЯ
 
-Панель Visuals стилизована под Home/HUD; для China Hat и Trail есть отдельные
-кнопки Settings. В редакторе слева анимированный 2D-макет, справа настройки.
-Клиентский HUD, уведомления и меню на это время скрываются, игровой чат — нет.
-Макет реагирует на настройки, но не гарантирует тот же рендер в Minecraft.
-Добавлена read-only диагностика состояния GPU после прохода сущностей.
-Окклюзия за игроками и блоками всё ещё не исправлена.
+Visuals содержит отдельные кнопки Settings для China Hat и Trail. Справа —
+настройки. Слева — центральная часть последнего реального кадра игры до
+клиентского интерфейса; никакая независимая 2D-анимация не рисуется. Кадр
+копируется только на GPU и не записывается в файл. Выберите вид от третьего
+лица и наведите камеру на игрока до открытия настроек. Показ зависит от того,
+отрисовывает ли игра кадры в меню; изменения появляются в следующем игровом
+кадре. Если копирование недоступно, отображается сообщение об этом. Клиентский
+HUD скрывается, игровой чат может остаться. Новый рендер и preview не проверены
+в реальной игре на Windows. Файл HUD_PREVIEW.png — старый макет HUD-плашки.
 
 ================================================================================
 2. ИСХОДНЫЙ КОД
@@ -165,8 +164,7 @@ Vertex gradient (test), чтобы вернуться к подтверждён�
 #include "mouse_diagnostic_patch.h"
 #include "disable_hotkey.h"
 #include "china_hat_native.h"
-#include "visual_preview.h"
-#include "visual_color.h"
+#include "visual_capture_policy.h"
 #include <atomic>
 #include <array>
 #include <cstring>
@@ -215,13 +213,7 @@ using NotificationDrawFn = void (*)(void*, const ag::Settings&);
 using ButtonFn = bool (*)(const char*,const ImVec2&);
 using PushWidthFn = void (*)(float);
 using PopWidthFn = void (*)();
-using GetDrawListFn = ImDrawList* (*)();
-using GetCursorFn = ImVec2 (*)();
-using DummyFn = void (*)(const ImVec2&);
-using DrawLineFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,ImU32,float);
-using DrawTriangleFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,const ImVec2&,ImU32);
-using DrawQuadFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,ImU32);
-using DrawRectFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,ImU32,float,int);
+using ImageFn = void (*)(ImTextureID,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec4&,const ImVec4&);
 using PushVarFloatFn = void (*)(int,float);
 using PopVarFn = void (*)(int);
 
@@ -268,17 +260,11 @@ static NotificationDrawFn realNotificationDraw = nullptr;
 static ButtonFn guiButton = nullptr;
 static PushWidthFn guiPushWidth = nullptr;
 static PopWidthFn guiPopWidth = nullptr;
-static GetDrawListFn guiDrawList = nullptr;
-static GetCursorFn guiCursor = nullptr;
-static DummyFn guiDummy = nullptr;
-static DrawLineFn drawLine = nullptr;
-static DrawTriangleFn drawTriangle = nullptr;
-static DrawQuadFn drawQuad = nullptr;
-static DrawRectFn drawRect = nullptr;
+static ImageFn guiImage = nullptr;
 static PushVarFloatFn guiPushVarFloat = nullptr;
 static PopVarFn guiPopVar = nullptr;
 enum class VisualEditor { None, Hat, Trail, Options };
-static VisualEditor visualEditor=VisualEditor::None;
+static std::atomic<VisualEditor> visualEditor{VisualEditor::None};
 static std::atomic<bool> hudHooksReady{false}, notificationHookReady{false};
 static bool hudEditorOpen = false, moduleHudEnabled = false;
 static std::atomic<bool> hudEditorActive{false};
@@ -294,6 +280,13 @@ static thread_local bool pointerInUse = false;
 static thread_local ID3D11Device* frameDevice = nullptr;
 static thread_local ID3D11DeviceContext* frameContext = nullptr;
 static thread_local UINT frameWidth = 0, frameHeight = 0;
+// The preview is a GPU-only copy of the game's frame before the client overlay.
+// It never leaves the process or touches disk, and is recreated on resize/device change.
+static thread_local ID3D11Texture2D* previewTexture = nullptr;
+static thread_local ID3D11ShaderResourceView* previewView = nullptr;
+static thread_local ID3D11Device* previewDevice = nullptr; // owned indirectly by texture
+static thread_local D3D11_TEXTURE2D_DESC previewSourceDesc{};
+static thread_local bool previewReady = false;
 static LARGE_INTEGER lastFrame{};
 static LARGE_INTEGER frequency{};
 
@@ -494,6 +487,12 @@ static void drawTrailSettings() {
 static void drawVisualOptions() {
     bool tint=VisualTintEnabled();
     if (guiCheckbox("Enable colors",&tint)) SetVisualTintEnabled(tint);
+    bool legacy=VisualLegacyMode();
+    if (guiCheckbox("Old overlay (see-through)",&legacy)) SetVisualLegacyMode(legacy);
+    if (!legacy) {
+        const int status=VisualOcclusionStatus();
+        realText(status==1?"World draw: submitted":status==2?"World draw: no depth":status==3?"World draw: hooks unavailable":status==4?"World draw: blocked":status==5?"World draw: no GPU draw":"World draw: waiting",nullptr);
+    } else realText("Old overlay can show through walls.",nullptr);
     bool gradient=VertexGradientEnabled();
     if (guiCheckbox("Vertex gradient (test)",&gradient)) SetVertexGradientEnabled(gradient);
     realText("Gradient/opacity depend on material.",nullptr);
@@ -538,7 +537,7 @@ static void popVisualStyle() {
     }
 }
 static bool canVisualPreview() {
-    return hudHooksReady && guiButton && guiDrawList && guiCursor && guiDummy && drawLine && drawTriangle && drawQuad && drawRect;
+    return hudHooksReady && guiButton;
 }
 static void drawVisualPanel() {
     guiSetNextPos(ImVec2(548.f,35.f), ImGuiCond_FirstUseEver, ImVec2(0,0));
@@ -561,64 +560,32 @@ static void drawVisualPanel() {
     guiEnd(); popVisualStyle();
 }
 
-static ImU32 previewColor(bool hat,float phase,float turn,std::uint64_t now) {
-    const bool tint=VisualTintEnabled(), rainbow=hat?HatRainbowEnabled():TrailRainbowEnabled();
-    const float opacity=GetVisualParam(hat?VisualParam::HatOpacity:VisualParam::TrailOpacity);
-    auto rgb=visual_color::animated(tint,rainbow,
-      hat?std::array<float,3>{{GetVisualParam(VisualParam::HatRed),GetVisualParam(VisualParam::HatGreen),GetVisualParam(VisualParam::HatBlue)}}:
-          std::array<float,3>{{GetVisualParam(VisualParam::TrailRed),GetVisualParam(VisualParam::TrailGreen),GetVisualParam(VisualParam::TrailBlue)}},
-      GetVisualParam(hat?VisualParam::HatRainbowSpeed:VisualParam::TrailRainbowSpeed),now);
-    if (tint && rainbow && VertexGradientEnabled()) {
-        auto c=china_hat::rainbow(phase+turn*.8f,255); rgb={{c.r/255.f,c.g/255.f,c.b/255.f,1.f}};
-    }
-    return IM_COL32(static_cast<int>(rgb[0]*255),static_cast<int>(rgb[1]*255),static_cast<int>(rgb[2]*255),static_cast<int>(opacity*255));
-}
-static void drawEffectPreview(VisualEditor editor) {
-    if (!canVisualPreview()) return;
+// Show the actual game frame captured before our overlay. It is a centered crop,
+// not a separate player render; the player must be visible in the game camera.
+static void drawEffectPreview(VisualEditor) {
     guiSetNextPos(ImVec2(18.f,90.f),ImGuiCond_Always,ImVec2(0,0));
     if (guiSetNextSize) guiSetNextSize(ImVec2(310.f,310.f),ImGuiCond_FirstUseEver);
     pushVisualStyle();
     if (guiBegin("Preview##effect",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
-        realText("Animated illustration",nullptr);
-        auto* d=guiDrawList(); ImVec2 o=guiCursor(); const auto now=GetTickCount64();
-        auto point=[&](float x,float y) { return ImVec2(o.x+x,o.y+y); };
-        if (d) {
-            // Stylized player; not an in-game screenshot or the game's shader.
-            drawRect(d,point(116,145),point(164,205),IM_COL32(105,112,117,255),4.f,0);
-            drawRect(d,point(123,105),point(157,140),IM_COL32(170,176,177,255),4.f,0);
-            if (editor==VisualEditor::Hat) {
-                const float y=visual_preview::hatY(now,GetVisualParam(VisualParam::HatOffset),GetVisualParam(VisualParam::HatBobAmplitude),GetVisualParam(VisualParam::HatBobSpeed));
-                const float r=GetVisualParam(VisualParam::HatRadius), h=GetVisualParam(VisualParam::HatConeHeight);
-                const float phase=visual_gradient::phase(now,GetVisualParam(VisualParam::HatRainbowSpeed));
-                const ImVec2 apex=point(140.f,y-h*95.f);
-                for (int i=0;i<48;++i) {
-                    auto a=visual_preview::hatRim(i/48.f,r,y), b=visual_preview::hatRim((i+1)/48.f,r,y);
-                    const ImU32 c=previewColor(true,phase,i/48.f,now);
-                    if (HatFillEnabled()) drawTriangle(d,apex,point(a.x,a.y),point(b.x,b.y),c);
-                    drawLine(d,point(a.x,a.y),point(b.x,b.y),c,1.5f);
-                    if (i%4==0) drawLine(d,apex,point(a.x,a.y),c,1.f);
-                }
-            } else if (editor==VisualEditor::Trail) {
-                const float phase=visual_gradient::phase(now,GetVisualParam(VisualParam::TrailRainbowSpeed));
-                const float h=GetVisualParam(VisualParam::TrailHeight)*82.f;
-                for (int i=0;i<24;++i) {
-                    float t=i/24.f, t2=(i+1)/24.f;
-                    auto a=visual_preview::trailPoint(t,now,GetVisualParam(VisualParam::TrailSeconds));
-                    auto b=visual_preview::trailPoint(t2,now,GetVisualParam(VisualParam::TrailSeconds));
-                    ImU32 c=previewColor(false,phase,t,now);
-                    if (TrailFillEnabled()) drawQuad(d,point(a.x,a.y),point(b.x,b.y),point(b.x,b.y-h),point(a.x,a.y-h),c);
-                    drawLine(d,point(a.x,a.y),point(b.x,b.y),c,2.f);
-                }
-            }
+        realText("Live game view (center)",nullptr);
+        if (guiImage && previewReady && previewView && frameWidth && frameHeight) {
+            const float maxW=280.f, maxH=220.f;
+            float w=maxW, h=w*static_cast<float>(frameHeight)/static_cast<float>(frameWidth);
+            if (h>maxH) { h=maxH; w=h*static_cast<float>(frameWidth)/static_cast<float>(frameHeight); }
+            guiImage(static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(previewView)),ImVec2(w,h),
+                     ImVec2(.20f,.20f),ImVec2(.80f,.80f),ImVec4(1,1,1,1),ImVec4(0,0,0,0));
+        } else {
+            realText("Game view unavailable.",nullptr);
+            realText("Use the game behind this window.",nullptr);
         }
-        guiDummy(ImVec2(280.f,220.f));
-        realText("Game material may look different.",nullptr);
+        realText("Use third-person view first.",nullptr);
     }
     guiEnd(); popVisualStyle();
 }
 static void drawVisualEditor() {
     const VisualEditor current=visualEditor;
-    // Draw settings before the preview so edits are reflected in the same frame.
+    // The preview is the latest actual game frame; settings take effect when
+    // the game renders its next frame, not via a separately animated model.
     guiSetNextPos(ImVec2(350.f,90.f),ImGuiCond_Always,ImVec2(0,0));
     if (guiSetNextSize) guiSetNextSize(ImVec2(310.f,430.f),ImGuiCond_FirstUseEver);
     pushVisualStyle();
@@ -825,8 +792,44 @@ static void patchedSettingsCtor(ag::Settings* settings) {
     settings->uiScale = 1.20f;
 }
 
+static void clearGamePreview() {
+    previewReady=false; release(previewView); release(previewTexture);
+    previewDevice=nullptr; previewSourceDesc={};
+}
+static void captureGamePreview(ID3D11Device* device, ID3D11DeviceContext* context,
+                               ID3D11Texture2D* back, const D3D11_TEXTURE2D_DESC& desc) {
+    previewReady=false;
+    if (visualEditor!=VisualEditor::Hat && visualEditor!=VisualEditor::Trail) { clearGamePreview(); return; }
+    if (!guiImage || !device || !context || !back ||
+        !desc.SampleDesc.Count || !visual_capture_policy::supported(desc.Width,desc.Height,desc.ArraySize,desc.MipLevels)) {
+        clearGamePreview(); return;
+    }
+    if (!previewTexture || !previewView || previewDevice!=device ||
+        previewSourceDesc.Width!=desc.Width || previewSourceDesc.Height!=desc.Height ||
+        previewSourceDesc.Format!=desc.Format || previewSourceDesc.SampleDesc.Count!=desc.SampleDesc.Count) {
+        clearGamePreview();
+        D3D11_TEXTURE2D_DESC copy=desc;
+        copy.Usage=D3D11_USAGE_DEFAULT; copy.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+        copy.CPUAccessFlags=0; copy.MiscFlags=0; copy.SampleDesc.Count=1; copy.SampleDesc.Quality=0;
+        if (FAILED(device->CreateTexture2D(&copy,nullptr,&previewTexture)) || !previewTexture ||
+            FAILED(device->CreateShaderResourceView(previewTexture,nullptr,&previewView)) || !previewView) {
+            clearGamePreview(); return;
+        }
+        previewDevice=device; previewSourceDesc=desc;
+    }
+    if (desc.SampleDesc.Count>1) {
+        UINT support=0;
+        if (FAILED(device->CheckFormatSupport(desc.Format,&support)) || !(support&D3D11_FORMAT_SUPPORT_MULTISAMPLE_RESOLVE)) {
+            clearGamePreview(); return;
+        }
+        context->ResolveSubresource(previewTexture,0,back,0,desc.Format);
+    } else context->CopyResource(previewTexture,back);
+    previewReady=true;
+}
+
 static void draw(IDXGISwapChain* chain, UINT flags) {
-    if (overlayDisabled.load(std::memory_order_acquire) || !chain || (flags & DXGI_PRESENT_TEST)) return;
+    if (overlayDisabled.load(std::memory_order_acquire)) { clearGamePreview(); return; }
+    if (!chain || (flags & DXGI_PRESENT_TEST)) return;
     ID3D11Device* device = nullptr;
     ID3D11DeviceContext* context = nullptr;
     ID3D11Texture2D* back = nullptr;
@@ -840,6 +843,7 @@ static void draw(IDXGISwapChain* chain, UINT flags) {
                 ObserveVisualContext(context);
                 frameDevice = device; frameContext = context;
                 frameWidth = desc.Width; frameHeight = desc.Height; seenInput = false; pointerInUse = false;
+                captureGamePreview(device,context,back,desc);
                 legacyPresent(chain, 0, flags);
                 frameDevice = nullptr; frameContext = nullptr;
             }
@@ -942,13 +946,7 @@ static DWORD WINAPI bootstrap(void*) {
     guiButton = symbol<ButtonFn>("_ZN5ImGui6ButtonEPKcRK6ImVec2");
     guiPushWidth = symbol<PushWidthFn>("_ZN5ImGui13PushItemWidthEf");
     guiPopWidth = symbol<PopWidthFn>("_ZN5ImGui12PopItemWidthEv");
-    guiDrawList = symbol<GetDrawListFn>("_ZN5ImGui17GetWindowDrawListEv");
-    guiCursor = symbol<GetCursorFn>("_ZN5ImGui18GetCursorScreenPosEv");
-    guiDummy = symbol<DummyFn>("_ZN5ImGui5DummyERK6ImVec2");
-    drawLine = symbol<DrawLineFn>("_ZN10ImDrawList7AddLineERK6ImVec2S2_jf");
-    drawTriangle = symbol<DrawTriangleFn>("_ZN10ImDrawList17AddTriangleFilledERK6ImVec2S2_S2_j");
-    drawQuad = symbol<DrawQuadFn>("_ZN10ImDrawList13AddQuadFilledERK6ImVec2S2_S2_S2_j");
-    drawRect = symbol<DrawRectFn>("_ZN10ImDrawList13AddRectFilledERK6ImVec2S2_jfi");
+    guiImage = symbol<ImageFn>("_ZN5ImGui5ImageEyRK6ImVec2S2_S2_RK6ImVec4S5_");
     guiPushVarFloat = symbol<PushVarFloatFn>("_ZN5ImGui12PushStyleVarEif");
     guiPopVar = symbol<PopVarFn>("_ZN5ImGui11PopStyleVarEi");
     guiSetNextPos = symbol<SetNextPosFn>("_ZN5ImGui16SetNextWindowPosERK6ImVec2iS2_");
@@ -1189,6 +1187,8 @@ struct Settings {
 #include "visual_color.h"
 #include "visual_ribbon.h"
 #include "visual_gradient.h"
+#include "visual_depth_policy.h"
+#include "visual_gpu_depth.h"
 #include <d3d11.h>
 #include "hat_animation.h"
 #include <bcrypt.h>
@@ -1217,6 +1217,12 @@ std::atomic<bool> available{false}, enabled{false};
 // the requested filled/rainbow appearance, with a wireframe fallback in Visuals.
 std::atomic<bool> trailEnabled{false}, materialTint{true}, hatFill{true}, trailFill{true};
 std::atomic<bool> hatRainbow{true}, trailRainbow{true}, vertexGradient{false};
+// Default to fail-closed world rendering. Legacy screen rendering is a manual
+// fallback only and may show through walls.
+std::atomic<bool> strictDepth{true}, worldHookReady{false}, gpuHooksReady{false};
+// 0 waiting, 1 guarded GPU draw, 2 no scene depth, 3 hooks unavailable,
+// 4 draw blocked, 5 no GPU draw observed (e.g. waiting/busy).
+std::atomic<int> occlusionStatus{0};
 struct ParamStorage {
  std::atomic<float> values[static_cast<std::size_t>(VisualParam::Count)]{};
  ParamStorage() { for (std::size_t i=0;i<static_cast<std::size_t>(VisualParam::Count);++i) values[i].store(visualParamSpecs[i].value); }
@@ -1425,12 +1431,68 @@ std::intptr_t playerHook(void* self,void* entity,void* pos,void* extra,float par
  }
  return result;
 }
-// Read-only observation after the game's entity pass. This candidate has a
-// validated build/prologue but its semantics still need a real game test.
+void renderHat(const PlayerFrame& player);
+void renderTrail(const PlayerFrame& player);
+ID3D11DeviceContext* sameThreadContext() {
+ ID3D11DeviceContext* ctx=nullptr;
+ AcquireSRWLockShared(&contextLock);
+ if (observedContext && observedThread==GetCurrentThreadId()) { ctx=observedContext; ctx->AddRef(); }
+ ReleaseSRWLockShared(&contextLock);
+ return ctx;
+}
+bool validDepthCompare(D3D11_COMPARISON_FUNC fn) {
+ return fn==D3D11_COMPARISON_LESS || fn==D3D11_COMPARISON_LESS_EQUAL ||
+        fn==D3D11_COMPARISON_GREATER || fn==D3D11_COMPARISON_GREATER_EQUAL;
+}
+// Candidate entity pass, verified against this game's SHA/prologue. World
+// depth state was observed bound/enabled by the user; actual content, material
+// matrices and transparency must still be tested on Windows.
 std::intptr_t entitiesDiagnosticHook(void* self,float partial) {
  auto result=originalEntities(self,partial);
- if (anyVisual()) sampleOutputMerger(depthWorld);
+ if (!anyVisual()) return result;
+ sampleOutputMerger(depthWorld);
+ if (!strictDepth.load(std::memory_order_acquire)) return result;
+ auto* ctx=sameThreadContext(); ID3D11DepthStencilView* dsv=nullptr;
+ ID3D11DepthStencilState* state=nullptr; UINT ref=0;
+ D3D11_COMPARISON_FUNC compare=D3D11_COMPARISON_LESS;
+ bool enabledDepth=false;
+ if (ctx) {
+  ctx->OMGetRenderTargets(0,nullptr,&dsv); ctx->OMGetDepthStencilState(&state,&ref);
+  if (state) { D3D11_DEPTH_STENCIL_DESC desc{}; state->GetDesc(&desc); enabledDepth=desc.DepthEnable; compare=desc.DepthFunc; }
+  else enabledDepth=true; // D3D11 default null state: depth enabled, LESS.
+ }
+ const bool worldReady=worldHookReady.load(std::memory_order_acquire);
+ const bool gpuReady=gpuHooksReady.load(std::memory_order_acquire) && visual_gpu_depth::matches(ctx);
+ if (!visual_depth_policy::worldDraw(true,worldReady,gpuReady,ctx!=nullptr,dsv!=nullptr,enabledDepth && validDepthCompare(compare))) {
+  occlusionStatus.store(!worldReady || !gpuReady ? 3 : 2,std::memory_order_relaxed);
+ } else {
+  PlayerFrame visible=frame; frame.valid=false; PlayerFrame local=visible;
+  if (trailEnabled.load(std::memory_order_acquire) && !local.valid) {
+   std::uintptr_t actor=0;
+   if (localPlayer(actor)) { rememberPlayer(reinterpret_cast<void*>(actor),partial); local=frame; frame.valid=false; }
+  }
+  visual_gpu_depth::expectedContext=ctx; visual_gpu_depth::expectedDepth=dsv; visual_gpu_depth::worldCompare=compare;
+  auto rejected=visual_gpu_depth::rejected.load(std::memory_order_relaxed);
+  auto submitted=visual_gpu_depth::submitted.load(std::memory_order_relaxed);
+  renderHat(visible); renderTrail(local);
+  visual_gpu_depth::expectedContext=nullptr; visual_gpu_depth::expectedDepth=nullptr;
+  const bool blocked=visual_gpu_depth::rejected.load(std::memory_order_relaxed)!=rejected;
+  const bool drew=visual_gpu_depth::submitted.load(std::memory_order_relaxed)!=submitted;
+  occlusionStatus.store(blocked?4:drew?1:5,std::memory_order_relaxed);
+ }
+ if (state) state->Release(); if (dsv) dsv->Release(); if (ctx) ctx->Release();
  return result;
+}
+// Activate D3D guards only while this adapter calls the game's tessDraw. Other
+// game and ImGui draws pass through untouched. No write to the scene depth.
+void submitVisual(void* tess,float alpha) {
+ const bool guarded=visual_gpu_depth::expectedContext!=nullptr;
+ struct DrawScope {
+  bool active;
+  explicit DrawScope(bool a,float opacity):active(a) { if (active) { visual_gpu_depth::opacity=opacity; visual_gpu_depth::inVisualDraw=true; } }
+  ~DrawScope() { if (active) visual_gpu_depth::inVisualDraw=false; }
+ } scope(guarded,alpha);
+ tessDraw(tess,reinterpret_cast<void*>(base+contextRva),0);
 }
 // Keep the previously user-verified wireframe draw path isolated from the
 // experimental trail. Preserve the tested depth, topology and draw sequence.
@@ -1469,7 +1531,7 @@ void renderHat(const PlayerFrame& player) {
  tessBegin(t,4,2*(segments+spokes));
  auto vertex=[&](const china_hat::Vertex& v) { tessColor(t,v.color.r,v.color.g,v.color.b,v.color.a); tessVertex(t,v.position.x,v.position.y,v.position.z); };
  china_hat::emitWireframe(mesh,spokes,vertex);
- tessDraw(t,reinterpret_cast<void*>(base+contextRva),0);
+ submitVisual(t,param(VisualParam::HatOpacity));
  lastHatSubmit.store(GetTickCount64(),std::memory_order_relaxed);
  hatStatus.store(1,std::memory_order_relaxed);
  // The researched renderer releases its temporary tessellation at this point.
@@ -1485,7 +1547,7 @@ void renderHat(const PlayerFrame& player) {
   // Keep the proven wireframe as the first, separate batch.
   tessBegin(t,2,static_cast<int>(mesh.triangleVertices*2));
   china_hat::emitDoubleSidedSurface(mesh,vertex);
-  tessDraw(t,reinterpret_cast<void*>(base+contextRva),0);
+  submitVisual(t,param(VisualParam::HatOpacity));
   hatFillStatus.store(1,std::memory_order_relaxed);
   alignas(16) std::uint8_t surfaceScratch[0x200]{}; tessEnd(t,surfaceScratch,0,0);
   }
@@ -1537,7 +1599,7 @@ void renderTrail(const PlayerFrame& player) {
  tessBegin(t,4,segments*2);
  auto vertex=[&](const china_hat::Vertex& v) { tessColor(t,v.color.r,v.color.g,v.color.b,v.color.a); tessVertex(t,v.position.x,v.position.y,v.position.z); };
  for (std::size_t i=1;i<trail.size();++i) if (valid[i] && valid[i-1]) { vertex(points[i-1]); vertex(points[i]); }
- tessDraw(t,reinterpret_cast<void*>(base+contextRva),0);
+ submitVisual(t,param(VisualParam::TrailOpacity));
  lastTrailSubmit.store(GetTickCount64(),std::memory_order_relaxed);
  trailStatus.store(1,std::memory_order_relaxed);
  alignas(16) std::uint8_t scratch[0x200]{}; tessEnd(t,scratch,0,0);
@@ -1551,7 +1613,7 @@ void renderTrail(const PlayerFrame& player) {
   tessBegin(t,2,segments*12);
   for (std::size_t i=1;i<trail.size();++i)
    if (valid[i] && valid[i-1]) visual_ribbon::segment(points[i-1],points[i],height,vertex);
-  tessDraw(t,reinterpret_cast<void*>(base+contextRva),0);
+  submitVisual(t,param(VisualParam::TrailOpacity));
   trailFillStatus.store(1,std::memory_order_relaxed);
   alignas(16) std::uint8_t ribbonScratch[0x200]{}; tessEnd(t,ribbonScratch,0,0);
   }
@@ -1564,6 +1626,7 @@ void screenHook(void* self,void* ctx) {
  if (anyVisual()) sampleOutputMerger(depthBefore);
  originalScreen(self,ctx);
  if (anyVisual()) sampleOutputMerger(depthAfter);
+ if (!visual_depth_policy::overlayDraw(strictDepth.load(std::memory_order_acquire))) { inScreen=false; return; }
  PlayerFrame visible=frame; frame.valid=false;
  // Submit the verified hat before collecting/drawing the experimental trail.
  renderHat(visible);
@@ -1588,6 +1651,13 @@ void ObserveVisualContext(ID3D11DeviceContext* context) {
 int VisualDepthBefore() { return depthBefore.load(std::memory_order_relaxed); }
 int VisualDepthAfter() { return depthAfter.load(std::memory_order_relaxed); }
 int VisualDepthWorld() { return depthWorld.load(std::memory_order_relaxed); }
+int VisualOcclusionStatus() {
+ if (hookState.load(std::memory_order_acquire)==2 &&
+     (!worldHookReady.load(std::memory_order_acquire) || !gpuHooksReady.load(std::memory_order_acquire))) return 3;
+ return occlusionStatus.load(std::memory_order_relaxed);
+}
+bool VisualLegacyMode() { return !strictDepth.load(std::memory_order_acquire); }
+void SetVisualLegacyMode(bool value) { strictDepth.store(!value,std::memory_order_release); occlusionStatus.store(0,std::memory_order_relaxed); }
 bool ChinaHatAvailable() { return available.load(std::memory_order_acquire); }
 bool ChinaHatEnabled() { return enabled.load(std::memory_order_acquire); }
 namespace {
@@ -1616,7 +1686,15 @@ bool installHooks() {
  if (success) {
   // Optional diagnostics cannot disable the previously working visual hooks.
   visual_hooks::Hook world[]={{reinterpret_cast<void*>(base+worldEntitiesRva),reinterpret_cast<void*>(&entitiesDiagnosticHook),reinterpret_cast<void**>(&originalEntities)}};
-  if (!visual_hooks::install(world,1,createHook,enableHook,disableHook,removeHook)) log("world-depth diagnostic unavailable");
+  const bool installed=visual_hooks::install(world,1,createHook,enableHook,disableHook,removeHook);
+  worldHookReady.store(installed,std::memory_order_release);
+  if (!installed) log("world render unavailable");
+  auto* ctx=installed?sameThreadContext():nullptr;
+  if (ctx) {
+   bool gpu=visual_gpu_depth::install(ctx,createHook,enableHook,disableHook,removeHook);
+   gpuHooksReady.store(gpu,std::memory_order_release); ctx->Release();
+   if (!gpu) log("GPU depth guard unavailable; strict visual draw disabled");
+  }
  }
  if (!success) available.store(false,std::memory_order_release);
  hookState.store(success?2:3,std::memory_order_release);
@@ -1702,6 +1780,9 @@ void ObserveVisualContext(ID3D11DeviceContext* context);
 int VisualDepthBefore();
 int VisualDepthAfter();
 int VisualDepthWorld();
+int VisualOcclusionStatus();
+bool VisualLegacyMode();
+void SetVisualLegacyMode(bool enabled);
 
 using HatCreateHook = int (WINAPI*)(void*, void*, void**);
 using HatToggleHook = int (WINAPI*)(void*);
@@ -1781,37 +1862,188 @@ inline float sanitizeVisualParam(VisualParam param,float value) {
 
 
 ================================================================================
-НАЧАЛО ФАЙЛА: repair/src/visual_preview.h
+НАЧАЛО ФАЙЛА: repair/src/visual_gpu_depth.h
 ================================================================================
 #pragma once
-#include <algorithm>
-#include <cmath>
-#include <cstdint>
-#include "hat_animation.h"
-#include "visual_gradient.h"
+// Experimental D3D11 gate. Draw hooks are global but touch state ONLY during
+// the adapter's scoped tessDraw on the same immediate context. Missing or
+// mismatched world depth fails closed. Original depth/blend is restored after
+// each draw. This still requires validation in the actual game.
+#ifdef VISUAL_GPU_DEPTH_TEST_TYPES
+#include VISUAL_GPU_DEPTH_TEST_TYPES
+#else
+#include <windows.h>
+#include <d3d11.h>
+#endif
+#include <atomic>
+#include "visual_hooks.h"
+namespace visual_gpu_depth {
+using Draw = void (STDMETHODCALLTYPE*)(ID3D11DeviceContext*,UINT,UINT);
+using DrawIndexed = void (STDMETHODCALLTYPE*)(ID3D11DeviceContext*,UINT,UINT,INT);
+using DrawInstanced = void (STDMETHODCALLTYPE*)(ID3D11DeviceContext*,UINT,UINT,UINT,UINT);
+using DrawIndexedInstanced = void (STDMETHODCALLTYPE*)(ID3D11DeviceContext*,UINT,UINT,UINT,INT,UINT);
+using DrawAuto = void (STDMETHODCALLTYPE*)(ID3D11DeviceContext*);
+using DrawIndirect = void (STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Buffer*,UINT);
+inline Draw originalDraw=nullptr;
+inline DrawIndexed originalIndexed=nullptr;
+inline DrawInstanced originalInstanced=nullptr;
+inline DrawIndexedInstanced originalIndexedInstanced=nullptr;
+inline DrawAuto originalAuto=nullptr;
+inline DrawIndirect originalIndirect=nullptr, originalIndexedIndirect=nullptr;
+inline std::atomic<unsigned> submitted{0}, rejected{0};
+inline void* installedTargets[7]{};
+inline constexpr std::size_t drawSlots[]={12,13,20,21,38,39,40};
+inline thread_local bool inVisualDraw=false;
+inline thread_local ID3D11DeviceContext* expectedContext=nullptr;
+inline thread_local ID3D11DepthStencilView* expectedDepth=nullptr;
+inline thread_local D3D11_COMPARISON_FUNC worldCompare=D3D11_COMPARISON_LESS_EQUAL;
+inline thread_local float opacity=1.f;
 
-// Screen-space illustration only. It shares the same settings/time base but
-// intentionally does not claim to replicate the game's material or depth.
-namespace visual_preview {
-struct Point { float x,y; };
-inline Point hatRim(float turn,float radius,float y) {
- constexpr float tau=6.28318530718f;
- const float a=turn*tau;
- return {140.f+std::cos(a)*radius*105.f,y+std::sin(a)*radius*27.f};
+template<class T> void release(T*& p) { if (p) { p->Release(); p=nullptr; } }
+struct Guard {
+ ID3D11DeviceContext* ctx=nullptr;
+ ID3D11DepthStencilState* oldDepth=nullptr; ID3D11DepthStencilState* newDepth=nullptr;
+ ID3D11BlendState* oldBlend=nullptr; ID3D11BlendState* newBlend=nullptr;
+ UINT stencil=0, sampleMask=0xffffffffu; FLOAT oldFactor[4]{};
+ bool active=false;
+ explicit Guard(ID3D11DeviceContext* c) : ctx(c) {
+  if (!ctx || ctx!=expectedContext || !expectedDepth) return;
+  ID3D11DepthStencilView* current=nullptr; ctx->OMGetRenderTargets(0,nullptr,&current);
+  bool same=current && current==expectedDepth; release(current); if (!same) return;
+  ctx->OMGetDepthStencilState(&oldDepth,&stencil);
+  ctx->OMGetBlendState(&oldBlend,oldFactor,&sampleMask);
+  D3D11_DEPTH_STENCIL_DESC depth{};
+  if (oldDepth) oldDepth->GetDesc(&depth);
+  else {
+   depth.StencilReadMask=D3D11_DEFAULT_STENCIL_READ_MASK; depth.StencilWriteMask=D3D11_DEFAULT_STENCIL_WRITE_MASK;
+   depth.FrontFace={D3D11_STENCIL_OP_KEEP,D3D11_STENCIL_OP_KEEP,D3D11_STENCIL_OP_KEEP,D3D11_COMPARISON_ALWAYS};
+   depth.BackFace=depth.FrontFace;
+  }
+  depth.DepthEnable=TRUE; depth.DepthWriteMask=D3D11_DEPTH_WRITE_MASK_ZERO;
+  depth.DepthFunc=worldCompare; depth.StencilEnable=FALSE;
+  D3D11_BLEND_DESC blend{};
+  if (oldBlend) oldBlend->GetDesc(&blend);
+  else for (auto& target:blend.RenderTarget) {
+   target.SrcBlend=D3D11_BLEND_ONE; target.DestBlend=D3D11_BLEND_ZERO; target.BlendOp=D3D11_BLEND_OP_ADD;
+   target.SrcBlendAlpha=D3D11_BLEND_ONE; target.DestBlendAlpha=D3D11_BLEND_ZERO; target.BlendOpAlpha=D3D11_BLEND_OP_ADD;
+   target.RenderTargetWriteMask=D3D11_COLOR_WRITE_ENABLE_ALL;
+  }
+  auto& target=blend.RenderTarget[0]; target.BlendEnable=TRUE;
+  target.SrcBlend=D3D11_BLEND_BLEND_FACTOR; target.DestBlend=D3D11_BLEND_INV_BLEND_FACTOR;
+  target.BlendOp=D3D11_BLEND_OP_ADD; target.SrcBlendAlpha=D3D11_BLEND_ONE;
+  target.DestBlendAlpha=D3D11_BLEND_INV_SRC_ALPHA; target.BlendOpAlpha=D3D11_BLEND_OP_ADD;
+  ID3D11Device* device=nullptr; ctx->GetDevice(&device);
+  if (device) {
+   HRESULT d=device->CreateDepthStencilState(&depth,&newDepth);
+   HRESULT b=SUCCEEDED(d) ? device->CreateBlendState(&blend,&newBlend) : E_FAIL;
+   release(device);
+   if (SUCCEEDED(d) && SUCCEEDED(b) && newDepth && newBlend) {
+    const FLOAT factor[4]={opacity,opacity,opacity,opacity};
+    ctx->OMSetDepthStencilState(newDepth,stencil);
+    ctx->OMSetBlendState(newBlend,factor,sampleMask);
+    active=true;
+   }
+  }
+ }
+ ~Guard() {
+  if (active) { ctx->OMSetDepthStencilState(oldDepth,stencil); ctx->OMSetBlendState(oldBlend,oldFactor,sampleMask); }
+  release(newBlend); release(oldBlend); release(newDepth); release(oldDepth);
+ }
+};
+template<class Call> void draw(ID3D11DeviceContext* ctx,Call call) {
+ if (!inVisualDraw) { call(); return; }
+ Guard guard(ctx);
+ if (!guard.active) { rejected.fetch_add(1,std::memory_order_relaxed); return; }
+ submitted.fetch_add(1,std::memory_order_relaxed); call();
 }
-inline float hatY(std::uint64_t now,float offset,float amplitude,float speed) {
- return 145.f-offset*55.f-hat_animation::bob(now,amplitude,speed)*55.f;
+inline void STDMETHODCALLTYPE onDraw(ID3D11DeviceContext* c,UINT n,UINT start) {
+ draw(c,[&]{ originalDraw(c,n,start); });
 }
-inline Point trailPoint(float t,std::uint64_t now,float lifetime) {
- // A repeating stylised ribbon. Duration changes its displayed length.
- const float phase=visual_gradient::phase(now,.25f)*6.28318530718f;
- const float len=std::clamp(lifetime/6.f,1.f/6.f,1.f);
- return {240.f-t*(80.f+140.f*len),165.f+std::sin(t*4.0f+phase)*12.f};
+inline void STDMETHODCALLTYPE onIndexed(ID3D11DeviceContext* c,UINT n,UINT start,INT base) {
+ draw(c,[&]{ originalIndexed(c,n,start,base); });
+}
+inline void STDMETHODCALLTYPE onInstanced(ID3D11DeviceContext* c,UINT n,UINT instances,UINT start,UINT first) {
+ draw(c,[&]{ originalInstanced(c,n,instances,start,first); });
+}
+inline void STDMETHODCALLTYPE onIndexedInstanced(ID3D11DeviceContext* c,UINT n,UINT instances,UINT start,INT base,UINT first) {
+ draw(c,[&]{ originalIndexedInstanced(c,n,instances,start,base,first); });
+}
+inline void STDMETHODCALLTYPE onAuto(ID3D11DeviceContext* c) { draw(c,[&]{ originalAuto(c); }); }
+inline void STDMETHODCALLTYPE onIndirect(ID3D11DeviceContext* c,ID3D11Buffer* b,UINT off) {
+ draw(c,[&]{ originalIndirect(c,b,off); });
+}
+inline void STDMETHODCALLTYPE onIndexedIndirect(ID3D11DeviceContext* c,ID3D11Buffer* b,UINT off) {
+ draw(c,[&]{ originalIndexedIndirect(c,b,off); });
+}
+template<class Create,class Enable,class Disable,class Remove>
+bool install(ID3D11DeviceContext* ctx,Create create,Enable enable,Disable disable,Remove remove) {
+ if (!ctx) return false;
+ auto** vtable=*reinterpret_cast<void***>(ctx);
+ if (!vtable) return false;
+ // ID3D11DeviceContext vtable indices from the D3D11 interface declaration.
+ visual_hooks::Hook hooks[]={
+  {vtable[12],reinterpret_cast<void*>(&onIndexed),reinterpret_cast<void**>(&originalIndexed)},
+  {vtable[13],reinterpret_cast<void*>(&onDraw),reinterpret_cast<void**>(&originalDraw)},
+  {vtable[20],reinterpret_cast<void*>(&onIndexedInstanced),reinterpret_cast<void**>(&originalIndexedInstanced)},
+  {vtable[21],reinterpret_cast<void*>(&onInstanced),reinterpret_cast<void**>(&originalInstanced)},
+  {vtable[38],reinterpret_cast<void*>(&onAuto),reinterpret_cast<void**>(&originalAuto)},
+  {vtable[39],reinterpret_cast<void*>(&onIndexedIndirect),reinterpret_cast<void**>(&originalIndexedIndirect)},
+  {vtable[40],reinterpret_cast<void*>(&onIndirect),reinterpret_cast<void**>(&originalIndirect)}
+ };
+ for (std::size_t i=0;i<7;++i) {
+  if (!hooks[i].target) return false;
+  for (std::size_t j=0;j<i;++j) if (hooks[i].target==hooks[j].target) return false;
+ }
+ if (!visual_hooks::install(hooks,7,create,enable,disable,remove)) return false;
+ for (std::size_t i=0;i<7;++i) installedTargets[i]=hooks[i].target;
+ return true;
+}
+inline bool matches(ID3D11DeviceContext* ctx) {
+ if (!ctx) return false;
+ auto** vtable=*reinterpret_cast<void***>(ctx);
+ if (!vtable) return false;
+ for (std::size_t i=0;i<7;++i) if (!installedTargets[i] || vtable[drawSlots[i]]!=installedTargets[i]) return false;
+ return true;
 }
 }
 
 --------------------------------------------------------------------------------
-КОНЕЦ ФАЙЛА: repair/src/visual_preview.h
+КОНЕЦ ФАЙЛА: repair/src/visual_gpu_depth.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/visual_depth_policy.h
+================================================================================
+#pragma once
+namespace visual_depth_policy {
+// Strict mode fails closed if the world pass or scoped draw hooks are missing.
+inline bool worldDraw(bool strict,bool worldHook,bool gpuHooks,bool context,bool depthView,bool validCompare) {
+ return strict && worldHook && gpuHooks && context && depthView && validCompare;
+}
+inline bool overlayDraw(bool strict) { return !strict; }
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/visual_depth_policy.h
+--------------------------------------------------------------------------------
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/visual_capture_policy.h
+================================================================================
+#pragma once
+#include <cstdint>
+namespace visual_capture_policy {
+// Bound GPU memory usage and reject array/mip layouts that cannot be safely
+// copied into the single-sample preview resource.
+inline bool supported(std::uint32_t width,std::uint32_t height,std::uint32_t arraySize,std::uint32_t mips) {
+ return width && height && static_cast<std::uint64_t>(width)*height<=16000000ULL && arraySize==1 && mips==1;
+}
+}
+
+--------------------------------------------------------------------------------
+КОНЕЦ ФАЙЛА: repair/src/visual_capture_policy.h
 --------------------------------------------------------------------------------
 
 

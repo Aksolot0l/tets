@@ -24,14 +24,26 @@ assert (r/'HUD_PREVIEW.png').read_bytes().startswith(b'\x89PNG\r\n\x1a\n')
 assert (r/'HUD_ALL_IN_ONE.txt').exists()
 print('HUD, gradient and read-only depth diagnostics: static checks OK; Windows test required')
 
-for symbol in ('_ZN5ImGui6ButtonEPKcRK6ImVec2','_ZN5ImGui17GetWindowDrawListEv',
-               '_ZN5ImGui18GetCursorScreenPosEv','_ZN5ImGui5DummyERK6ImVec2',
-               '_ZN10ImDrawList7AddLineERK6ImVec2S2_jf','_ZN10ImDrawList17AddTriangleFilledERK6ImVec2S2_S2_j',
-               '_ZN10ImDrawList13AddQuadFilledERK6ImVec2S2_S2_S2_j','_ZN10ImDrawList13AddRectFilledERK6ImVec2S2_jfi'):
+for symbol in ('_ZN5ImGui6ButtonEPKcRK6ImVec2','_ZN5ImGui5ImageEyRK6ImVec2S2_S2_RK6ImVec4S5_'):
     assert symbol in u and symbol.encode() in exports, symbol
+assert 'captureGamePreview(device,context,back,desc)' in u
+assert u.index('captureGamePreview(device,context,back,desc)') < u.index('legacyPresent(chain, 0, flags)')
+assert 'CopyResource(previewTexture,back)' in u and 'ResolveSubresource(previewTexture,0,back,0,desc.Format)' in u
+assert 'previewReady=false; release(previewView); release(previewTexture);' in u
+assert 'Live game view (center)' in u and 'Animated illustration' not in u
 assert 'Settings##open_hat' in u and 'Settings##open_trail' in u
 assert 'drawVisualEditor(); return;' in u and 'drawEffectPreview(current)' in u
 assert u.index('drawHatSettings();',u.index('static void drawVisualEditor')) < u.index('drawEffectPreview(current)',u.index('static void drawVisualEditor'))
 assert 'realText(label,end)' in u and 'guiPushWidth(-1.f)' in u
 assert 'worldEntitiesRva=0x5ae250' in n and 'entitiesDiagnosticHook' in n
 assert 'visual_hooks::install(world,1' in n
+
+gpu=(r/'src/visual_gpu_depth.h').read_text()
+assert 'strictDepth{true}' in n and 'visual_depth_policy::overlayDraw' in n
+assert 'visual_depth_policy::worldDraw' in n and 'visual_gpu_depth::matches(ctx)' in n
+assert 'visual_gpu_depth::expectedDepth=dsv' in n and 'submitVisual(t,param(VisualParam::HatOpacity))' in n
+assert 'D3D11_DEPTH_WRITE_MASK_ZERO' in gpu and 'D3D11_BLEND_BLEND_FACTOR' in gpu
+assert 'current==expectedDepth' in gpu and 'ctx!=expectedContext' in gpu
+assert 'ctx->OMSetDepthStencilState(oldDepth,stencil)' in gpu and 'ctx->OMSetBlendState(oldBlend,oldFactor,sampleMask)' in gpu
+assert 'if (!inVisualDraw) { call(); return; }' in gpu
+assert 'Old overlay (see-through)' in u and 'SetVisualLegacyMode(legacy)' in u

@@ -6,6 +6,9 @@ void ObserveVisualContext(ID3D11DeviceContext* context);
 int VisualDepthBefore();
 int VisualDepthAfter();
 int VisualDepthWorld();
+int VisualOcclusionStatus();
+bool VisualLegacyMode();
+void SetVisualLegacyMode(bool enabled);
 
 using HatCreateHook = int (WINAPI*)(void*, void*, void**);
 using HatToggleHook = int (WINAPI*)(void*);

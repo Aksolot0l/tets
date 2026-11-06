@@ -22,4 +22,11 @@ int main() {
  Fake partial; partial.failEnable=4; assert(!run(partial)); assert(partial.enabled==3 && partial.disabled==3 && partial.removed==7 && partial.active==0);
  Fake failure; failure.failEnable=4; failure.failDisable=2; assert(!run(failure));
  assert(failure.enabled==3 && failure.disabled==3 && failure.removed==5 && failure.active==2);
+ // Seven D3D draw targets: a partial enable failure must disable/remove every
+ // earlier active hook and remove every created but inactive hook.
+ Fake gpu; gpu.failEnable=1<<5; void* tramp[7]{}; Hook hooks[7]{};
+ for (int i=0;i<7;i++) hooks[i]={reinterpret_cast<void*>(static_cast<std::uintptr_t>(i+1)),reinterpret_cast<void*>(10),&tramp[i]};
+ assert(!install(hooks,7,[&](auto a,auto b,auto c){return gpu.create(a,b,c);},
+   [&](auto a){return gpu.enable(a);},[&](auto a){return gpu.disable(a);},[&](auto a){return gpu.remove(a);}));
+ assert(gpu.created==127 && gpu.enabled==31 && gpu.disabled==31 && gpu.removed==127 && gpu.active==0);
 }

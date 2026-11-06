@@ -17,8 +17,8 @@ older wireframe build in game. After a subsequent surface/depth/trail update
 caused both effects to disappear for the user, this build restores the old
 wireframe draw sequence (with an optional vertical offset) and separates the
 experimental trail into its own batch. That earlier surface/depth attempt was
-removed. New optional surface batches are documented below; no forced depth
-state is used. Actual head-bone attachment and correct occlusion are not done.
+removed. The newer world-pass depth experiment is documented below; actual
+head-bone attachment and correct occlusion remain unverified.
 Both effects are opt-in, and new changes still require testing on Windows.
 A subsequent user screenshot showed the old coordinate chain identifying an
 unrelated character on a server. The visual effects no longer use that chain:
@@ -35,41 +35,38 @@ Before drawing, it checks player identity, position, dimensions and tessellator
 state and restores the global shader color. This does not prove private ABI,
 local-player chain or camera semantics. Windows runtime testing is essential.
 
-The separate draggable `Visuals` window has controls for `China Hat`, `Trail`,
-and `Options`, styled to resemble the existing Home/HUD panels. Effect settings
-hide the client HUD/menu and show a live 2D illustration on the left. It is not
-an in-game material or occlusion preview. Both modules are off by default; their per-session controls
-include fill, animated whole-material rainbow or fixed color, rainbow speed,
-shape/position/bob for the hat, and ribbon height/lifetime for the trail.
-Settings are not persisted. The material tint and simple local-player lines were
-confirmed by the user; the new UI, animated colors and controls are untested on
-Windows. Del disables both features and the overlay; hooks remain installed.
+The separate draggable `Visuals` window offers China Hat and Trail editors.
+Instead of the inaccurate independent illustration, the preview now displays
+a GPU-only centered crop of the latest game frame before the client overlay.
+It depends on the game camera and can be unavailable; this is not a separate
+3D model or a guarantee the game continues rendering while a menu is open.
 
-Fill is on by default for each module once enabled, but can be turned off in
-the UI before enabling the module. It uses a candidate mode-2 triangle batch
-after the known line batch and checks the tessellator is idle first. There is
-no proof mode 2 or this material works in the user's game: the result may be
-invisible, cause corruption, or crash. `Fill: submitted` means only that the
-batch was sent, not that it was visible. The game controls depth and blending;
-correct occlusion and opacity are not guaranteed. The hat still follows player
-position and hitbox rather than the head bone. When fill is disabled the known
-line rendering remains available. All new behavior requires Windows testing.
+The user observed that the output-merger had a DSV bound and depth enabled
+after the entity pass, but depth was disabled around the screen/UI pass. The
+experimental default moves the existing effects to the end of the candidate
+entity pass. Scoped D3D11 draw detours enforce depth testing using the observed
+DSV and comparison, disable depth writes, apply a constant opacity blend factor,
+then restore the original depth/blend state. Draws outside our tessDraw scope
+pass through. Missing context, a changed context vtable, unavailable hooks, an
+invalid depth comparison, missing/mismatched DSV or state creation failure cause
+the guarded path to skip work. Hook installation is deferred until the user
+enables a visual; partial hook failures are rolled back where possible. The
+`Old overlay (see-through)` switch opts back into the previous screen path.
+
+This is experimental: the user has not tested the new hook, game matrices,
+depth content, opacity, resource changes, or actual occlusion on Windows.
+A bound DSV does not prove it contains correct depth for every object, and
+`World draw: submitted` is not proof of visibility or correct occlusion.
+Private ABI mismatch, driver behaviour, unobserved GPU paths, device changes,
+performance issues, artifacts or crashes remain possible. The existing exact
+SHA/PE/prologue validation and previous-hash installer path are retained.
+The earlier screenshots confirmed a filled surface, but per-vertex gradient
+and game blending are not guaranteed. User testing in a new world is advised.
 
 `DIAG_RENDER.ps1` is optional, read-only research. It prints the game EXE hash
 (if Windows permits access), PE timestamp/size, and 16 machine-code bytes from
 each of eight executable-section candidate offsets. It prints no process paths,
 addresses, player state, or names, does not transmit anything, and does not
 modify or inject into the game. Candidate bytes alone do not prove compatibility.
-See `repair/tests/china_hat_mesh.cpp` for portable geometry tests. The geometry is compiled into the adapter; the separate diagnostic is not part
-of the installed client bundle.
-
-The user later reported that the filled visuals worked in the prior build but
-are visible through blocks and players. The opacity sliders pass an alpha
-uniform, and an opt-in vertex-gradient mode supplies varying vertex colors;
-these depend on the game's material/blending and are unverified. Default is
-opacity 1 and vertex gradient off, preserving the previous working appearance.
-Depth occlusion is not fixed. Output-merger observations in Options are read-only,
-only from a previously observed same-thread swap-chain context. An optional
-validated hook also reports output-merger state after the entity pass. These
-states are not proof of depth content or state inside tessDraw; the new hook
-and preview require Windows testing.
+See `repair/tests/china_hat_mesh.cpp` for portable geometry tests. The geometry
+is compiled into the adapter; the diagnostic is not part of the installed bundle.

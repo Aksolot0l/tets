@@ -13,6 +13,8 @@
 #include "visual_color.h"
 #include "visual_ribbon.h"
 #include "visual_gradient.h"
+#include "visual_depth_policy.h"
+#include "visual_gpu_depth.h"
 #include <d3d11.h>
 #include "hat_animation.h"
 #include <bcrypt.h>
@@ -41,6 +43,12 @@ std::atomic<bool> available{false}, enabled{false};
 // the requested filled/rainbow appearance, with a wireframe fallback in Visuals.
 std::atomic<bool> trailEnabled{false}, materialTint{true}, hatFill{true}, trailFill{true};
 std::atomic<bool> hatRainbow{true}, trailRainbow{true}, vertexGradient{false};
+// Default to fail-closed world rendering. Legacy screen rendering is a manual
+// fallback only and may show through walls.
+std::atomic<bool> strictDepth{true}, worldHookReady{false}, gpuHooksReady{false};
+// 0 waiting, 1 guarded GPU draw, 2 no scene depth, 3 hooks unavailable,
+// 4 draw blocked, 5 no GPU draw observed (e.g. waiting/busy).
+std::atomic<int> occlusionStatus{0};
 struct ParamStorage {
  std::atomic<float> values[static_cast<std::size_t>(VisualParam::Count)]{};
  ParamStorage() { for (std::size_t i=0;i<static_cast<std::size_t>(VisualParam::Count);++i) values[i].store(visualParamSpecs[i].value); }
@@ -249,12 +257,68 @@ std::intptr_t playerHook(void* self,void* entity,void* pos,void* extra,float par
  }
  return result;
 }
-// Read-only observation after the game's entity pass. This candidate has a
-// validated build/prologue but its semantics still need a real game test.
+void renderHat(const PlayerFrame& player);
+void renderTrail(const PlayerFrame& player);
+ID3D11DeviceContext* sameThreadContext() {
+ ID3D11DeviceContext* ctx=nullptr;
+ AcquireSRWLockShared(&contextLock);
+ if (observedContext && observedThread==GetCurrentThreadId()) { ctx=observedContext; ctx->AddRef(); }
+ ReleaseSRWLockShared(&contextLock);
+ return ctx;
+}
+bool validDepthCompare(D3D11_COMPARISON_FUNC fn) {
+ return fn==D3D11_COMPARISON_LESS || fn==D3D11_COMPARISON_LESS_EQUAL ||
+        fn==D3D11_COMPARISON_GREATER || fn==D3D11_COMPARISON_GREATER_EQUAL;
+}
+// Candidate entity pass, verified against this game's SHA/prologue. World
+// depth state was observed bound/enabled by the user; actual content, material
+// matrices and transparency must still be tested on Windows.
 std::intptr_t entitiesDiagnosticHook(void* self,float partial) {
  auto result=originalEntities(self,partial);
- if (anyVisual()) sampleOutputMerger(depthWorld);
+ if (!anyVisual()) return result;
+ sampleOutputMerger(depthWorld);
+ if (!strictDepth.load(std::memory_order_acquire)) return result;
+ auto* ctx=sameThreadContext(); ID3D11DepthStencilView* dsv=nullptr;
+ ID3D11DepthStencilState* state=nullptr; UINT ref=0;
+ D3D11_COMPARISON_FUNC compare=D3D11_COMPARISON_LESS;
+ bool enabledDepth=false;
+ if (ctx) {
+  ctx->OMGetRenderTargets(0,nullptr,&dsv); ctx->OMGetDepthStencilState(&state,&ref);
+  if (state) { D3D11_DEPTH_STENCIL_DESC desc{}; state->GetDesc(&desc); enabledDepth=desc.DepthEnable; compare=desc.DepthFunc; }
+  else enabledDepth=true; // D3D11 default null state: depth enabled, LESS.
+ }
+ const bool worldReady=worldHookReady.load(std::memory_order_acquire);
+ const bool gpuReady=gpuHooksReady.load(std::memory_order_acquire) && visual_gpu_depth::matches(ctx);
+ if (!visual_depth_policy::worldDraw(true,worldReady,gpuReady,ctx!=nullptr,dsv!=nullptr,enabledDepth && validDepthCompare(compare))) {
+  occlusionStatus.store(!worldReady || !gpuReady ? 3 : 2,std::memory_order_relaxed);
+ } else {
+  PlayerFrame visible=frame; frame.valid=false; PlayerFrame local=visible;
+  if (trailEnabled.load(std::memory_order_acquire) && !local.valid) {
+   std::uintptr_t actor=0;
+   if (localPlayer(actor)) { rememberPlayer(reinterpret_cast<void*>(actor),partial); local=frame; frame.valid=false; }
+  }
+  visual_gpu_depth::expectedContext=ctx; visual_gpu_depth::expectedDepth=dsv; visual_gpu_depth::worldCompare=compare;
+  auto rejected=visual_gpu_depth::rejected.load(std::memory_order_relaxed);
+  auto submitted=visual_gpu_depth::submitted.load(std::memory_order_relaxed);
+  renderHat(visible); renderTrail(local);
+  visual_gpu_depth::expectedContext=nullptr; visual_gpu_depth::expectedDepth=nullptr;
+  const bool blocked=visual_gpu_depth::rejected.load(std::memory_order_relaxed)!=rejected;
+  const bool drew=visual_gpu_depth::submitted.load(std::memory_order_relaxed)!=submitted;
+  occlusionStatus.store(blocked?4:drew?1:5,std::memory_order_relaxed);
+ }
+ if (state) state->Release(); if (dsv) dsv->Release(); if (ctx) ctx->Release();
  return result;
+}
+// Activate D3D guards only while this adapter calls the game's tessDraw. Other
+// game and ImGui draws pass through untouched. No write to the scene depth.
+void submitVisual(void* tess,float alpha) {
+ const bool guarded=visual_gpu_depth::expectedContext!=nullptr;
+ struct DrawScope {
+  bool active;
+  explicit DrawScope(bool a,float opacity):active(a) { if (active) { visual_gpu_depth::opacity=opacity; visual_gpu_depth::inVisualDraw=true; } }
+  ~DrawScope() { if (active) visual_gpu_depth::inVisualDraw=false; }
+ } scope(guarded,alpha);
+ tessDraw(tess,reinterpret_cast<void*>(base+contextRva),0);
 }
 // Keep the previously user-verified wireframe draw path isolated from the
 // experimental trail. Preserve the tested depth, topology and draw sequence.
@@ -293,7 +357,7 @@ void renderHat(const PlayerFrame& player) {
  tessBegin(t,4,2*(segments+spokes));
  auto vertex=[&](const china_hat::Vertex& v) { tessColor(t,v.color.r,v.color.g,v.color.b,v.color.a); tessVertex(t,v.position.x,v.position.y,v.position.z); };
  china_hat::emitWireframe(mesh,spokes,vertex);
- tessDraw(t,reinterpret_cast<void*>(base+contextRva),0);
+ submitVisual(t,param(VisualParam::HatOpacity));
  lastHatSubmit.store(GetTickCount64(),std::memory_order_relaxed);
  hatStatus.store(1,std::memory_order_relaxed);
  // The researched renderer releases its temporary tessellation at this point.
@@ -309,7 +373,7 @@ void renderHat(const PlayerFrame& player) {
   // Keep the proven wireframe as the first, separate batch.
   tessBegin(t,2,static_cast<int>(mesh.triangleVertices*2));
   china_hat::emitDoubleSidedSurface(mesh,vertex);
-  tessDraw(t,reinterpret_cast<void*>(base+contextRva),0);
+  submitVisual(t,param(VisualParam::HatOpacity));
   hatFillStatus.store(1,std::memory_order_relaxed);
   alignas(16) std::uint8_t surfaceScratch[0x200]{}; tessEnd(t,surfaceScratch,0,0);
   }
@@ -361,7 +425,7 @@ void renderTrail(const PlayerFrame& player) {
  tessBegin(t,4,segments*2);
  auto vertex=[&](const china_hat::Vertex& v) { tessColor(t,v.color.r,v.color.g,v.color.b,v.color.a); tessVertex(t,v.position.x,v.position.y,v.position.z); };
  for (std::size_t i=1;i<trail.size();++i) if (valid[i] && valid[i-1]) { vertex(points[i-1]); vertex(points[i]); }
- tessDraw(t,reinterpret_cast<void*>(base+contextRva),0);
+ submitVisual(t,param(VisualParam::TrailOpacity));
  lastTrailSubmit.store(GetTickCount64(),std::memory_order_relaxed);
  trailStatus.store(1,std::memory_order_relaxed);
  alignas(16) std::uint8_t scratch[0x200]{}; tessEnd(t,scratch,0,0);
@@ -375,7 +439,7 @@ void renderTrail(const PlayerFrame& player) {
   tessBegin(t,2,segments*12);
   for (std::size_t i=1;i<trail.size();++i)
    if (valid[i] && valid[i-1]) visual_ribbon::segment(points[i-1],points[i],height,vertex);
-  tessDraw(t,reinterpret_cast<void*>(base+contextRva),0);
+  submitVisual(t,param(VisualParam::TrailOpacity));
   trailFillStatus.store(1,std::memory_order_relaxed);
   alignas(16) std::uint8_t ribbonScratch[0x200]{}; tessEnd(t,ribbonScratch,0,0);
   }
@@ -388,6 +452,7 @@ void screenHook(void* self,void* ctx) {
  if (anyVisual()) sampleOutputMerger(depthBefore);
  originalScreen(self,ctx);
  if (anyVisual()) sampleOutputMerger(depthAfter);
+ if (!visual_depth_policy::overlayDraw(strictDepth.load(std::memory_order_acquire))) { inScreen=false; return; }
  PlayerFrame visible=frame; frame.valid=false;
  // Submit the verified hat before collecting/drawing the experimental trail.
  renderHat(visible);
@@ -412,6 +477,13 @@ void ObserveVisualContext(ID3D11DeviceContext* context) {
 int VisualDepthBefore() { return depthBefore.load(std::memory_order_relaxed); }
 int VisualDepthAfter() { return depthAfter.load(std::memory_order_relaxed); }
 int VisualDepthWorld() { return depthWorld.load(std::memory_order_relaxed); }
+int VisualOcclusionStatus() {
+ if (hookState.load(std::memory_order_acquire)==2 &&
+     (!worldHookReady.load(std::memory_order_acquire) || !gpuHooksReady.load(std::memory_order_acquire))) return 3;
+ return occlusionStatus.load(std::memory_order_relaxed);
+}
+bool VisualLegacyMode() { return !strictDepth.load(std::memory_order_acquire); }
+void SetVisualLegacyMode(bool value) { strictDepth.store(!value,std::memory_order_release); occlusionStatus.store(0,std::memory_order_relaxed); }
 bool ChinaHatAvailable() { return available.load(std::memory_order_acquire); }
 bool ChinaHatEnabled() { return enabled.load(std::memory_order_acquire); }
 namespace {
@@ -440,7 +512,15 @@ bool installHooks() {
  if (success) {
   // Optional diagnostics cannot disable the previously working visual hooks.
   visual_hooks::Hook world[]={{reinterpret_cast<void*>(base+worldEntitiesRva),reinterpret_cast<void*>(&entitiesDiagnosticHook),reinterpret_cast<void**>(&originalEntities)}};
-  if (!visual_hooks::install(world,1,createHook,enableHook,disableHook,removeHook)) log("world-depth diagnostic unavailable");
+  const bool installed=visual_hooks::install(world,1,createHook,enableHook,disableHook,removeHook);
+  worldHookReady.store(installed,std::memory_order_release);
+  if (!installed) log("world render unavailable");
+  auto* ctx=installed?sameThreadContext():nullptr;
+  if (ctx) {
+   bool gpu=visual_gpu_depth::install(ctx,createHook,enableHook,disableHook,removeHook);
+   gpuHooksReady.store(gpu,std::memory_order_release); ctx->Release();
+   if (!gpu) log("GPU depth guard unavailable; strict visual draw disabled");
+  }
  }
  if (!success) available.store(false,std::memory_order_release);
  hookState.store(success?2:3,std::memory_order_release);

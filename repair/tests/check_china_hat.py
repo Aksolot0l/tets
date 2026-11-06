@@ -24,11 +24,11 @@ assert n.index('installHooks()') < n.index('bool InitializeChinaHat(')
 assert 'China Hat (test)' in u and 'SetChinaHatEnabled(false)' in u
 assert 'Trail (test)' in u and 'SetTrailEnabled(false)' in u
 assert 'Hat height' in u and 'Hat: submitted' in u and 'Trail: submitted' in u
-assert 'CaptureVisualContext' not in u and 'DepthScope' not in n
-assert 'OMSetDepthStencilState' not in n
+assert 'ObserveVisualContext(context)' in u
+assert 'OMSetDepthStencilState' not in n  # scoped guard owns and restores GPU state
 assert 'trailGeneration' in n and 'trail.clear()' in n
 assert 'tessBegin(t,4,segments*2)' in n
-hat=n[n.index('void renderHat('):n.index('void renderTrail(')]
+hat=n[n.index('void renderHat(const PlayerFrame& player) {'):n.index('void renderTrail(const PlayerFrame& player) {')]
 assert 'visual_color::animated(materialTint.load' in hat and 'hatRainbow.load' in hat
 assert 'Enable colors' in u and 'materialTint{true}' in n
 assert 'Filled hat (test)' in u and 'Filled trail (test)' in u
@@ -43,12 +43,12 @@ for symbol in ('_ZN5ImGui11BeginTabBarEPKci','_ZN5ImGui9EndTabBarEv',
                '_ZN5ImGui10ColorEdit3EPKcPfi','_ZN5ImGui17SetNextWindowSizeERK6ImVec2i'):
     assert symbol in u and symbol.encode() in (r.parent/'GAYClientInternal.dll').read_bytes(), symbol
 assert 'drawVisualEditor(); return;' in u and 'drawEffectPreview(current)' in u
-trail=n[n.index('void renderTrail('):n.index('void screenHook(')]
+trail=n[n.index('void renderTrail(const PlayerFrame& player) {'):n.index('void screenHook(')]
 assert 'visual_color::animated(materialTint.load' in trail and 'trailRainbow.load' in trail
 assert 'saved,sizeof(saved)' in hat and 'saved,sizeof(saved)' in trail
 assert 'constexpr int segments=48, spokes=12' in hat
 assert 'tessBegin(t,4,2*(segments+spokes))' in hat and 'china_hat::emitWireframe' in hat
-assert hat.index('tessDraw(') < hat.index('tessEnd(')
+assert hat.index('submitVisual(') < hat.index('tessEnd(')
 assert 'hat_animation::bob(' in hat
 assert 'if (hatFill.load(std::memory_order_acquire))' in hat and 'if (!tessIdle(tess))' in hat
 assert 'if (trailFill.load(std::memory_order_acquire))' in trail and 'if (!tessIdle(tess))' in trail
