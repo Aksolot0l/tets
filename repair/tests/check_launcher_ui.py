@@ -19,6 +19,10 @@ assert 'detectMinecraftAppId' in ui and 'loadLauncherProfiles' in ui
 assert 'Старый интерфейс' not in ui
 assert 'client-autoload.log' in ui
 assert 'WS_TABSTOP' in ui and 'IsDialogMessageW' in ui
+assert 'WS_MAXIMIZEBOX' in ui and 'WS_THICKFRAME' in ui
+assert 'case WM_SIZE:' in ui and 'case WM_GETMINMAXINFO:' in ui
+assert 'LBS_OWNERDRAWFIXED' in ui and 'drawProfileItem' in ui
+assert 'GAYCLIENT  /  МАСКОТ' not in ui
 assert 'Aogiri Green Launcher' in ui and 'SW_HIDE' in ui
 assert 'PostMessageW(classicWindow,WM_CLOSE' in ui
 assert 'CreateProcess' not in ui and 'WinExec' not in ui
