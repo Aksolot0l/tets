@@ -95,3 +95,17 @@ post-entities hat draw. It does not change trail or legacy overlay, always
 requires the observed context/DSV/depth and restores blend/depth state. Current
 status and depth comparison function are exposed; this path has not been
 tested in Minecraft, and `submitted` does not mean it is visually correct.
+
+### Player model investigation (read-only executable fragments)
+The user supplied a small on-disk code diagnostic for the same SHA-256-verified
+1.1.5 build; no player data or full game executable was supplied. The dispatcher
+at RVA `0x55d640` chooses a renderer and calls virtual methods with the fourth
+argument in `xmm3` and a fifth float on the stack. The known player entry point
+at `0x581910` obtains a model-related object via `0x580ee0`, changes fields on
+that object, calls a virtual method, and then calls `0x5695d0`. These observations
+identify leads, not a proven model ABI, render target interface, camera setup or
+safe way to invoke the renderer a second time. The hook now forwards the fourth
+argument as a float so the observer cannot clobber it; this still needs testing
+in the game. The follow-up offline diagnostic collects only fixed executable
+code windows around those callees and the matrix stack, with exact build hash
+checking. It does not capture dynamic memory or guarantee a viable render path.

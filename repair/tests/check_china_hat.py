@@ -93,3 +93,10 @@ assert 'visual_gpu_depth::expectedDepth=dsv' in alt and 'visual_gpu_depth::expec
 assert 'renderHat(player)' in alt and 'renderTrail(' not in alt
 assert 'Hat at player pass (test)' in u and 'Player compare:' in u and 'World compare:' in u
 print('Alternative player timing, mutual exclusion and depth gate: static OK; Windows test required')
+
+# On this build's observed dispatcher the fourth argument is in XMM3 (float).
+# Do not let the observer clobber it before forwarding to the game renderer.
+assert 'using PlayerRender = std::intptr_t (*)(void*,void*,void*,float,float);' in n
+assert 'playerHook(void* self,void* entity,void* pos,float renderValue,float partial)' in n
+assert 'originalPlayer(self,entity,pos,renderValue,partial)' in n
+print('Player renderer float argument forwarding: static OK; Windows test required')

@@ -76,7 +76,7 @@ assert 'visual_player_skin::acquire(frameDevice)' in u and 'previewFrameView=ski
 assert u.index('release(previewFrameView);',u.index('legacyPresent(chain'))>u.index('legacyPresent(chain')
 assert 'SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options)' in u
 assert 'visual_player_skin::begin(local,captureContext)' in n and 'visual_gpu_depth::inPlayerCapture=capture' in n
-assert n.index('visual_player_skin::begin(local,captureContext)')<n.index('originalPlayer(self,entity,pos,extra,partial)')
+assert n.index('visual_player_skin::begin(local,captureContext)')<n.index('originalPlayer(self,entity,pos,renderValue,partial)')
 assert 'scopeGeneration==generation' in skin and 'ctx!=scopeContext' in skin
 assert 'PSGetShaderResources(0,4,views)' in skin and 'count<8' in skin
 assert 'CreateFile' not in skin and 'Map(' not in skin and 'CopyResource' not in skin

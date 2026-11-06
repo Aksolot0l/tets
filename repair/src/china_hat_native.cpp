@@ -27,7 +27,9 @@
 
 namespace {
 using ClientTick = void (*)(void*,int,int);
-using PlayerRender = std::intptr_t (*)(void*,void*,void*,void*,float);
+// In the recorded x64 dispatcher, the fourth parameter is passed in XMM3;
+// preserve it as float even though this wrapper's exact meaning is unknown.
+using PlayerRender = std::intptr_t (*)(void*,void*,void*,float,float);
 using ScreenRender = void (*)(void*,void*);
 using EntitiesRender = std::intptr_t (*)(void*,float);
 using TessBegin = void (*)(void*,std::uint8_t,int);
@@ -257,7 +259,7 @@ void rememberPlayer(void* entity,float partial) {
 }
 void drawHatAtPlayer(const PlayerFrame& player);
 ID3D11DeviceContext* sameThreadContext();
-std::intptr_t playerHook(void* self,void* entity,void* pos,void* extra,float partial) {
+std::intptr_t playerHook(void* self,void* entity,void* pos,float renderValue,float partial) {
  // Only inspect shader resources while this exact local player's original
  // renderer executes, on the observed immediate-context thread. No second
  // call to the game renderer and no modification of its GPU state.
@@ -277,7 +279,7 @@ std::intptr_t playerHook(void* self,void* entity,void* pos,void* extra,float par
   ID3D11DeviceContext* ctx; bool active;
   ~CaptureScope() { if(active) { visual_gpu_depth::inPlayerCapture=false; visual_player_skin::end(); } if(ctx)ctx->Release(); }
  } captureScope{captureContext,capture};
- const auto result=originalPlayer(self,entity,pos,extra,partial);
+ const auto result=originalPlayer(self,entity,pos,renderValue,partial);
  if (capture) { visual_gpu_depth::inPlayerCapture=false; visual_player_skin::end(); captureScope.active=false; }
  // Do not clear a local-player frame when another player's renderer runs.
  if (anyVisual()) {
