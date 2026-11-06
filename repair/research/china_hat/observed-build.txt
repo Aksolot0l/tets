@@ -1,0 +1,15 @@
+User-provided read-only diagnostic, Minecraft Windows 10 Edition 1.1.5.
+These bytes establish an observed build identity, not the semantic correctness
+of the proposed functions or safety of calling them. Windows runtime testing
+and validation of the render path remain required. No user paths or player data.
+
+EXE SHA256: 2883b72a3579d95bfec73330c5e06f2463253b7ca530dd59f50885a71a724732
+PE timestamp: 5976da7b; image size: 1a91000
+player-render: 48895c2408488974241048897c241841
+entity-render: 48895c240848896c2410488974241857
+render-entities: 48895c2408574883ec504c8b81900600
+render-level: 48895c2408488974241048897c24184c
+tess-begin: 4883ec6880b97001000000458bd04c8b
+tess-color: 80b924010000007569440fb654242841
+tess-vertex: 4c8bdc574881ecb00000008b816c0100
+tess-draw: 488bc455488d68a14881ece000000048

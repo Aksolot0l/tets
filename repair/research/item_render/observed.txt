@@ -1,0 +1,211 @@
+Minecraft Windows 10 Edition 1.1.5, user-supplied ITEM_RENDER_DIAG.txt.
+EXE SHA256: 2883b72a3579d95bfec73330c5e06f2463253b7ca530dd59f50885a71a724732
+
+This is an offline file scan, not runtime data. Candidate RTTI names:
+  ItemInHandRenderer substring RVA 0x0186352c
+  ItemRenderer substring RVA 0x01862c94 (also other substrings)
+The string diamond_sword is at RVA 0x011eab78. A code reference at
+0x00aa8d14 is inside a function beginning at 0x00aa8ce0 that passes this
+string to a constructor/helper and stores a returned pointer in an indexed
+global table. It looks like item registration; no rendering semantics, item
+identity ABI, calling convention or safe interception point are proven.
+The iteminhand strings at 0x011e8a40 are referenced from code around
+0x00a32ae3 and 0x00a32d1b, likely name/data lookup, but this is unverified.
+
+Do not hook, replace, suppress, or replay any draw on the basis of these
+strings and candidate windows. Follow-up RTTI file scan may identify vtables
+and candidate method bodies, but only targeted runtime observation can establish
+whether a function corresponds to held items and which stack is a diamond sword.
+
+Follow-up user-supplied ITEM_RENDER_DIAG_2.txt, same SHA:
+ItemInHandRenderer type descriptor 0x01863518, vtables 0x01729ee8 and
+0x01729f00. The primary slot 0 at 0x59e870 is a deleting destructor;
+the secondary slot 0 at 0x5a3dc4 is a thunk to that destructor. Neither is
+an item-rendering method. ItemRenderer slot 5 is a large function 0x56fcc0
+but its actual semantics and ABI remain unverified.
+
+Existing player-render diagnostics contain a direct call at 0x56cd2a to
+0x5a22f0 with the fourth argument in R9, followed by calls at 0x56cd4c and
+0x56cd89 to 0x59f2c0/0x59f200 and candidate tessellator operations. At
+0x5a22f0, the fourth argument's +0x10/+0x18 pointers and apparent renderer
+state lead into tessellator setup. A helper at 0x5a23f0 reads a +0x10 item
+pointer and its +0x36 short field; registration at 0xaa8d2b also reads that
+field. This is a candidate identity relationship only: no stack layout,
+first-person path, diamond identity, thread affinity, transform or safe
+suppression behavior is confirmed. Do not skip/call/hook these functions on
+this evidence alone; the code can modify renderer/tessellator state.
+
+User-supplied ITEM_RENDER_DIAG_3.txt, same executable SHA. In candidate
+0x59f300 the third parameter is used as an item-stack-like object, with
+pointers at +0x10/+0x18. Code in 0x5a10a5 likewise selects that object's
++0x10 pointer and reads a short at +0x36; this resembles the field used by the
+item registration sequence. 0x59f200 is not a no-side-effect draw: it calls
+0x7308c0/0x730bd0/0x730cd0 based on flags in its second parameter. Skipping or
+replacing it based only on a file scan could break setup/cleanup and hand or
+other item draws. 0x509640 is arithmetic on floats/shorts, not verified item
+identity. Which path corresponds to first-person diamond sword, where to place
+custom geometry and whether the current material honors colors remain unknown.
+
+The supplied katana contains 4572 vertices, 7866 triangle indices and five
+materials; no images, skinning or animation. The offline converter produces a
+bounded GCM1 model retaining positions, normals and base colors. This is only
+asset preparation; GCM1 is not yet loaded or displayed by the game client.
+
+Further offline analysis (no new runtime report): at 0x59fcb1 the candidate
+stack saved from the third parameter of 0x59f300 is passed in R9 to 0x5a22f0,
+followed by a call to tessellator method 0x5d1790. Inside 0x5a22f0 one branch
+calls the known tessellator begin at 0x5d0660 and another calls 0x5a0de0. This
+is evidence of geometry preparation, not proof that replacing the function is
+safe. The alternate branch at 0x59fcf6 bypasses it and calls 0x59f200 instead;
+a hook there would not automatically cover all render paths. Material and
+state setup occurs before this sequence, while cleanup follows it. The exact
+meaning of parameters, mode, vertex layout and color/material binding remain
+unverified. Do not ship a render hook from this observation alone.
+
+The sequence 0xaa8d14-0xaa8d4a associates the diamond_sword string with an item
+pointer and places it in the array at 0x190afa0, indexed by a signed short read
+from item +0x36. Independently, published 1.1.0.1 Win10/MCPE item ID listings
+identify diamond_sword as 276 (https://gist.github.com/jocopa3/f8c9f9158ede0e9d057781188ba440f5).
+A mock-tested, unused candidate check in src/diamond_sword_candidate.h requires
+a stack's active byte, candidate item pointer, 276 field and matching registry
+slot simultaneously. 1.1.0.1 documentation is not runtime proof for this exact
+1.1.5 build, nor does the check establish which player or render pass is active.
+
+Subsequent opt-in experiment: the built DLL now tries the one direct
+0x5a1d28 -> 0x59f300 -> 0x59fd19 -> 0x59f200 first-person chain. It uses
+candidate identity, same local player, expected return addresses, validated
+EXE/prologues, idle tessellator and same GPU context. After a custom GPU draw
+is observed it runs the original CPU method while suppressing that method's
+GPU draws, and falls back to the original if preparation fails. This is NOT a
+proof of visibility, ABI, safe render state, shader/material or hand placement;
+Windows game testing remains mandatory. The alternative branch and third person
+are unimplemented. Switch is off by default and this note supersedes earlier
+historical statements that these components are not connected to the DLL.
+
+User screenshot after initial integration: "Katana: unsupported or hooks
+unavailable", switch did not stay enabled. Confirmed logic defect: the katana
+installer called validateGame() after installHooks() had already installed and
+patched the player/screen/tick (and possibly world) entry points. That strict
+comparison would reject the adapter's own changed bytes. Validation now still
+checks the disk identity and signatures, while selectively accepting only its
+already installed visual hook sites; katana entry points and call sites have
+separate in-memory checks. The original screenshot also grouped unrelated GPU
+and hook errors, so the exact runtime failing stage cannot be proven solely
+from that screenshot. UI now distinguishes these cases. No game test here.
+
+User screenshot after previous update: "Katana: waiting for draw path" with a
+selected sword and enabled toggle; user says invisible in first and third
+person. This proves the UI displayed the matching-candidate state at that
+instant, not which branch ran or that geometry was drawn. Third person was
+explicitly unimplemented in that version. The already collected tessellator
+window shows 0x5d1790 uses a streaming sink (+0x160) when +0x126 is nonzero and
+then resets tessellator state, while 0x5d14f0 takes a different path in that
+mode. The existing submitKatana/0x59f200 approach did not support the alternate
+0x5a22f0 -> 0x5d1790 branch.
+
+A new opt-in experiment adds guarded streaming geometry preparation at the
+first-person 0x59fcba call and the 0x56cd2a call within a local-player render
+scope. The game performs its own subsequent 0x5d1790 flush. Before touching
+state it checks EXE/call sites, candidate sword identity, sink, executable sink
+method, streaming mode and idle tessellator; other calls use the original.
+The material, vertex layout, behavior of bypassing original preparation,
+visibility, calibration and game state are still unverified in Minecraft. A
+prepared vertex batch is not evidence of a successful visible replacement.
+
+User screenshot after streaming experiment again shows "waiting for draw
+path"; user reports no visible katana. Important correction: this status was
+written at the start of every matching first-person invocation and can overwrite
+an earlier prepared/blocked/submitted result. Thus neither screenshot proves
+that the inner callbacks never ran; claims to that effect were too strong.
+
+A diagnostic-only UI revision aggregates booleans since enable (no new game
+hooks or output files): F = matching first-person outer call; V = stack byte 0
+was observed nonzero; S1/S3 = eligible streaming preparation reached for local
+first/third person; R = batch prepared; B = preparation blocked; C = cached
+draw hook reached; D = cached custom GPU submission observed. They do not prove
+which events were in one frame, visible pixels, good placement, correct material,
+or that the original remains visible. Clearing the switch resets the flags.
+No rendering fix is claimed by this change. Windows runtime still unavailable.
+
+User screenshots after diagnostic build: image-43/image-45 show F:1 V:1 S1:0
+S3:0 R:0 B:0 C:1 D:1. This establishes that, at least once since enabling,
+the matching first-person cached hook ran, its own tessellator draw generated
+an observed D3D draw, and the code proceeded to suppress the original held-item
+GPU calls. It does not establish visible pixels or a correct material, pose,
+vertex layout, texture, and shader. User reports nothing visible in first person.
+In image-44 the normal diamond sword is visible in third person. The evidence
+screenshot appears before the third-person screenshot, so S3:0 cannot establish
+that the third-person streaming path was absent after switching view.
+
+Static follow-up: cached submitKatana() issues its tessDraw before calling the
+original 0x59f200 method; the latter selects item resources and invokes one of
+0x7308c0/0x730cd0/0x730bd0. Whether those calls bind material/shader/mesh is
+unconfirmed, but this ordering is a concrete reason the custom draw may not have
+the item's draw state. Also the third-person cached call returns at 0x56cd8e,
+which heldDrawHook currently excludes; no runtime proof of the exact third-person
+path yet. Do not suppress vanilla based on an observed Draw alone as if visibility
+was verified. No fix or Windows validation is claimed.
+
+Later user screenshot image-46: after switch-on in third-person view all flags
+are zero: F:0 V:0 S1:0 S3:0 R:0 B:0 C:0 D:0. Since toggling resets flags, it
+is a different accumulation period from image-45. S3:0 says the guarded third
+streaming path did not match during that period; the cached third-person path
+is not instrumented by C. Image-47 shows the checkbox off while the pause menu
+is open, not whether the first-person hand and sword returned.
+
+The disassembly of 0x5d1840 shows the custom draw goes through 0x7308c0 with
+its second argument, currently the generic contextRva. At 0x59f200 the original
+instead selects an item renderer field based on item flags and mode, sometimes
+calling 0x730bd0 or 0x730cd0, which invoke additional 0x72f100 calls before
+0x7308c0. This establishes a difference in the arguments and operation order,
+not what exact combination would render the GLB correctly. In light of the
+confirmed invisible first-person result, the production toggle now refuses to
+start this unverified replacement before installing its hooks; its UI reports
+that it is paused. This is a safety guard, not a solution or Windows validation.
+
+User confirms that both first-person hand and sword return after the option is
+turned off. Further offline disassembly identifies the exact 0x59f200 branch
+selection recorded by cached_material.h and exercised for every combination in
+katana_cached_material_research.cpp. For third person, 0x56cbc3 calls the key
+helper 0x5a23f0 with the local stack copy in r8, and cached item draw is called
+at 0x56cd89. That suggests a possible identity scope but does not establish its
+runtime ABI or handle nesting. The candidate approach would need to preserve
+native resource/texture bindings and mesh lifetime, determine matching vertex
+attributes and transforms, identify only the local player's diamond sword in
+both paths, and restore the original on failure. No such complete renderer has
+been verified or enabled. This offline plan is not hooked into the application.
+
+Design change, 2026-11-07 (offline; no new runtime report). The previous
+approach is retired: submitKatana issued its own tessDraw before the original
+0x59f200 selected item resources, and katanaSuppress then hid the vanilla sword
+even though no katana pixels existed (user-confirmed invisible first person).
+The replacement now draws through the only render path this adapter has ever
+produced visible, user-approved geometry with: the shared tessellator +
+shaderColor/flag globals + guarded submitVisual draw in the world entity pass
+(the China Hat / Trail / Jump Rings pipeline), anchored to the local player.
+
+- Position/orientation come from the local player's look rotation, read via
+  three validated chains for this exact EXE (ClientInstance+0x58 holder; the
+  published 0x1921DF8/+0x18/+0x58 and 0x1921888/+0x10/+0x58 chains whose
+  velocity siblings agree with the adapter-proven player layout). The yaw sign
+  is confirmed or flipped once by majority vote against actual movement.
+  First person anchors at the render camera, third person at the player's
+  hand; the mode is discriminated by camera-eye distance with hysteresis.
+- The vanilla sword is suppressed ONLY while a D3D11 occlusion query wrapped
+  around the katana batches counted real rasterised samples in the last
+  second. A draw call alone is no longer treated as visibility.
+- Third-person item identity: the 0x5a22f0 hook is now a pure observer (never
+  skips the original), and the cached 0x56cd8e return of 0x59f200 is matched
+  against the item-context texture pointer learned from a verified
+  first-person draw. A one-second bridge after an F5 switch covers the view
+  transition; it never lingers. The earlier S1/S3 zeros are consistent with
+  the user's build using the cached branch, not the streaming branch.
+- Vertex budget: the full double-sided model (15,732 vertices) is submitted in
+  2,048-vertex tessBegin/tessDraw/tessEnd batches with tessIdle checks between
+  them, mirroring the proven multi-batch hat wireframe+fill pattern.
+- No camera hooks, no input changes, no new game-code hooks beyond the three
+  already signature-verified entry points (0x59f300, 0x59f200, 0x5a22f0).
+
+This remains unverified in game: occlusion-verified pixels prove visibility,
+not orientation, grip or colour fidelity. One final user check in both views
+is still required before calling the replacement working.

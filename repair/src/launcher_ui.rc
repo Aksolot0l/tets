@@ -1,0 +1,4 @@
+101 RCDATA "repair/assets/launcher-world.jpg"
+102 RCDATA "repair/assets/mascot.png"
+103 ICON "repair/assets/mascot.ico"
+104 RCDATA "repair/launcher-web/dist/index.html"

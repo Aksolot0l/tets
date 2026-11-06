@@ -1,0 +1,8 @@
+# First 16 bytes of the exact x64 executable, from the user's offline report.
+# These are code signatures for validation, not executable code or an API.
+mouse-queue: 4889542410574883ec3048c7442420fe
+input-tick: 488bc45557415441564157488bec4883
+mouse-factory: 48895c2410488974241848897c242041
+cursor-command-read: 8b437483f8017510807b7200750a488b
+grab-method: 4053565741564883ec3848c7442420fe
+release-method: 4053565741564883ec3848c7442420fe

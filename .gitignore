@@ -1,0 +1,15 @@
+# Machine-specific security descriptors, created by ENABLE_ACCESS.cmd
+DACL_BACKUP.local.txt
+repair/*.acl.local.txt
+
+# Optional compiler intermediates for the adapter
+repair/*.pdb
+repair/*.lib
+repair/*.res
+
+# React launcher build dependencies and generated single-file bundle
+repair/launcher-web/node_modules/
+repair/launcher-web/dist/
+
+# Python test and utility caches
+__pycache__/
