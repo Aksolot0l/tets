@@ -62,7 +62,10 @@ assert 'worldEntitiesRva' not in u
 assert 'OMSetDepthStencilState' not in u
 
 # 5. Scoped style survives through actual widgets, and restores on return.
-assert 'if (menuOpen) { VisualStyleScope style; realDrawGui(runtime); }' in u
+# The legacy click GUI keeps its scoped style whenever it is drawn; the
+# embedded new menu can replace it (see check_menu_embed.py) without removing
+# this path for the not-replaced case and any embed failure fallback.
+assert 'if (menuOpen && !replaced) { VisualStyleScope style; realDrawGui(runtime); }' in u
 assert '~VisualStyleScope()' in u and 'guiPopColor(pushedColors)' in u and 'guiPopVar(pushedVars)' in u
 assert 'insideLegacyHud || !hud_theme::card(name)' in u
 assert 'hud_theme::background(widgetOpacity*legacyOpacity,hudPalette)' in u

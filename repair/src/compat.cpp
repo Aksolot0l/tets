@@ -23,6 +23,7 @@
 #include "disable_hotkey.h"
 #include "china_hat_native.h"
 #include "menu_mouse_native.h"
+#include "menu_embed.h"
 #include "visual_avatar_preview.h"
 #include "visual_color.h"
 #include "visual_player_skin.h"
@@ -1093,7 +1094,24 @@ static void drawHudEntry() {
     guiEnd();
 }
 
+// The embedded menu forwards HUD-module toggles through this drain target;
+// it runs on the same thread as patchedDrawGui, where setModule is already
+// used, and reads the runtime observed by that hook.
+static void* menuEmbedRuntime = nullptr;
+static void toggleGameModule(int moduleId, bool enable) {
+    if (!menuEmbedRuntime || !setModule) return;
+    setModule(menuEmbedRuntime, static_cast<ag::ModuleId>(static_cast<std::size_t>(moduleId)), enable);
+}
+static bool readGameModule(int moduleId) {
+    if (!menuEmbedRuntime) return false;
+    const std::size_t index = static_cast<std::size_t>(moduleId);
+    if (index >= ag::kModuleCount) return false;
+    auto* settings = reinterpret_cast<ag::Settings*>(reinterpret_cast<unsigned char*>(menuEmbedRuntime) + 0x48);
+    return settings->enabled[index];
+}
+
 static void patchedDrawGui(void* runtime) {
+    menuEmbedRuntime = runtime;
     // The old loop never calls RequestUnload for Delete. This is an explicit
     // one-way overlay stop, NOT a DLL unload: callbacks and hooks remain pinned.
     bool down = pageKeysReady && keyDown && keyDown(VK_DELETE);
@@ -1117,16 +1135,24 @@ static void patchedDrawGui(void* runtime) {
     const bool menuOpen=runtime && *(reinterpret_cast<unsigned char*>(runtime)+0x551);
     SetMenuMouseOpen(menuOpen);
     if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }
+    menu_embed::SetGameMenuOpen(menuOpen);
+    // While the embedded new menu is alive it replaces the legacy click GUI
+    // and the old test panels; if its initialization ever failed, everything
+    // below falls back to the previous interface unchanged.
+    const bool replaced=menuOpen && menu_embed::ReplacesLegacyMenu();
+    if (menuOpen && menu_embed::ConsumeHudEditorRequest()) hudEditorOpen=true;
+    menu_embed::DrainModuleToggles(&toggleGameModule);
     const bool editingVisual=menuOpen && visualEditor!=VisualEditor::None && canVisualPreview();
     SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory && visualEditor!=VisualEditor::Katana);
     SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory && visualEditor!=VisualEditor::Katana && previewGameModelTest);
     SetPlayerPreviewHatActive(editingVisual && visualEditor==VisualEditor::Hat && previewGameModelTest);
     if (!menuOpen || (!hudEditorOpen && !editingVisual)) {
-        if (menuOpen) { VisualStyleScope style; realDrawGui(runtime); }
-        else realDrawGui(runtime);
+        if (menuOpen && !replaced) { VisualStyleScope style; realDrawGui(runtime); }
+        else if (!menuOpen) realDrawGui(runtime);
     }
     if (editingVisual) { drawVisualEditor(); return; }
     if (menuOpen && hudEditorOpen && hudHooksReady) { drawHudEditor(runtime); return; }
+    if (replaced) return;  // the embedded menu owns the screen
     // Exact legacy build layout, verified against the original binary.
     if (!runtime || !*(reinterpret_cast<unsigned char*>(runtime) + 0x551)) return;
     auto* settings = reinterpret_cast<ag::Settings*>(reinterpret_cast<unsigned char*>(runtime) + 0x48);
@@ -1163,7 +1189,10 @@ static void patchedNewFrame() {
     // Prefer the external wheel-only bridge when connected; otherwise use UWP.
     // Do not add both, or one physical wheel movement could scroll twice.
     takeExternalWheel(wheelX, wheelY);
-    if (pointerInUse && (wheelX || wheelY)) addWheel(&io, wheelX / 120.0f, wheelY / 120.0f);
+    if (pointerInUse && (wheelX || wheelY)) {
+        addWheel(&io, wheelX / 120.0f, wheelY / 120.0f);
+        menu_embed::AddWheel(wheelX / 120.0f, wheelY / 120.0f);
+    }
     const float pageWheel = pageScroll.step(pointerInUse && pageKeysReady,
         pageKeysReady && keyDown(VK_PRIOR), pageKeysReady && keyDown(VK_NEXT), GetTickCount64());
     if (pageWheel != 0.0f) addWheel(&io, 0.0f, pageWheel);
@@ -1200,7 +1229,7 @@ static void patchedWatchedKeys(const std::array<bool, 256>& requested) {
 // non-client origin. All Win32 values are obtained on the same thread, so
 // Windows DPI virtualization affects cursor and client rectangle consistently.
 // If these APIs are unavailable in AppContainer, retain the legacy UWP input.
-static bool patchedPointer(float& x, float& y, float& w, float& h) {
+static bool patchedPointerImpl(float& x, float& y, float& w, float& h) {
     pointerInUse = true;
     // CoreWindow bounds describe the non-client origin in DIPs. Subtract it
     // on the dispatcher thread's consistent sample before scaling to DXGI pixels.
@@ -1215,6 +1244,12 @@ static bool patchedPointer(float& x, float& y, float& w, float& h) {
                        static_cast<float>(client.right - client.left),
                        static_cast<float>(client.bottom - client.top), x, y, w, h)) return true;
     return realPointer(x, y, w, h);
+}
+// The same cursor sample also feeds the embedded new menu overlay.
+static bool patchedPointer(float& x, float& y, float& w, float& h) {
+    const bool ok = patchedPointerImpl(x, y, w, h);
+    if (ok) menu_embed::SetPointer(x, y, w, h);
+    return ok;
 }
 
 // The legacy bridge already dispatches this tick on the CoreWindow UI thread.
@@ -1248,6 +1283,15 @@ static void draw(IDXGISwapChain* chain, UINT flags) {
                 frameDevice = device; frameContext = context;
                 frameWidth = desc.Width; frameHeight = desc.Height; seenInput = false; pointerInUse = false;
                 legacyPresent(chain, 0, flags);
+                // The embedded new menu renders after the legacy overlay with
+                // its own ImGui context; the back buffer is bound explicitly
+                // because the ImGui renderer never sets targets itself.
+                ID3D11RenderTargetView* overlayTarget = nullptr;
+                if (SUCCEEDED(device->CreateRenderTargetView(back, nullptr, &overlayTarget)) && overlayTarget) {
+                    context->OMSetRenderTargets(1, &overlayTarget, nullptr);
+                    overlayTarget->Release();
+                }
+                menu_embed::RenderOverlay(device, context, desc.Width, desc.Height);
                 release(previewFrameView);
                 frameDevice = nullptr; frameContext = nullptr;
             }
@@ -1378,6 +1422,10 @@ static DWORD WINAPI bootstrap(void*) {
     legacyPresent = symbol<LegacyPresentFn>("_Z11PresentHookP14IDXGISwapChainjj");
     rendererInit = symbol<RendererInitFn>("_Z19ImGui_ImplDX11_InitP12ID3D11DeviceP19ID3D11DeviceContext");
     getIO = symbol<GetIOFn>("_ZN5ImGui5GetIOEv");
+    // The embedded new menu shares the resolved key state and the HUD module
+    // flags observed by patchedDrawGui; it never resolves symbols itself.
+    menu_embed::SetKeyQuery(keyDown);
+    menu_embed::SetModuleStateReader(&readGameModule);
     if (!mhInit || !mhCreate || !mhQueueEnable || !mhApply || !mhDisable || !bridgeInit || !bridgeActive || !newFrameTarget || !updateTarget || !pointerTarget || !settingsTarget || !findGameWindow || !addFont || !addWheel || !legacyPresent || !rendererInit || !getIO) { log("legacy DLL exports do not match expected version"); return 1; }
     log(suppressMouseDiagnostic() ? "mouse diagnostic suppressed" : "mouse diagnostic patch skipped: core mismatch or protection failure");
     void* present = nullptr; void* present1 = nullptr;

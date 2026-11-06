@@ -22,6 +22,7 @@ SDK и Dear ImGui сюда не включены. Исходников закр�
    - repair/src/hud_module_list.h
    - repair/src/hud_theme.h
    - repair/tests/check_hud_visual_style.py
+   - repair/tests/check_menu_embed.py
    - repair/tests/hud_visual_kit.cpp
    - repair/src/hud_visual_kit.h
    - repair/src/settings.h
@@ -79,6 +80,8 @@ SDK и Dear ImGui сюда не включены. Исходников закр�
    - repair/src/menu_mouse_policy.h
    - repair/src/menu_mouse_native.cpp
    - repair/src/menu_mouse_native.h
+   - repair/src/menu_embed.h
+   - repair/src/menu_embed.cpp
    - repair/src/page_scroll.h
    - repair/src/wheel_bridge.h
    - repair/src/wheel_counter.h
@@ -286,6 +289,7 @@ UPDATE: HUD redesign — visual layer
 #include "disable_hotkey.h"
 #include "china_hat_native.h"
 #include "menu_mouse_native.h"
+#include "menu_embed.h"
 #include "visual_avatar_preview.h"
 #include "visual_color.h"
 #include "visual_player_skin.h"
@@ -1356,7 +1360,24 @@ static void drawHudEntry() {
     guiEnd();
 }
 
+// The embedded menu forwards HUD-module toggles through this drain target;
+// it runs on the same thread as patchedDrawGui, where setModule is already
+// used, and reads the runtime observed by that hook.
+static void* menuEmbedRuntime = nullptr;
+static void toggleGameModule(int moduleId, bool enable) {
+    if (!menuEmbedRuntime || !setModule) return;
+    setModule(menuEmbedRuntime, static_cast<ag::ModuleId>(static_cast<std::size_t>(moduleId)), enable);
+}
+static bool readGameModule(int moduleId) {
+    if (!menuEmbedRuntime) return false;
+    const std::size_t index = static_cast<std::size_t>(moduleId);
+    if (index >= ag::kModuleCount) return false;
+    auto* settings = reinterpret_cast<ag::Settings*>(reinterpret_cast<unsigned char*>(menuEmbedRuntime) + 0x48);
+    return settings->enabled[index];
+}
+
 static void patchedDrawGui(void* runtime) {
+    menuEmbedRuntime = runtime;
     // The old loop never calls RequestUnload for Delete. This is an explicit
     // one-way overlay stop, NOT a DLL unload: callbacks and hooks remain pinned.
     bool down = pageKeysReady && keyDown && keyDown(VK_DELETE);
@@ -1380,16 +1401,24 @@ static void patchedDrawGui(void* runtime) {
     const bool menuOpen=runtime && *(reinterpret_cast<unsigned char*>(runtime)+0x551);
     SetMenuMouseOpen(menuOpen);
     if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }
+    menu_embed::SetGameMenuOpen(menuOpen);
+    // While the embedded new menu is alive it replaces the legacy click GUI
+    // and the old test panels; if its initialization ever failed, everything
+    // below falls back to the previous interface unchanged.
+    const bool replaced=menuOpen && menu_embed::ReplacesLegacyMenu();
+    if (menuOpen && menu_embed::ConsumeHudEditorRequest()) hudEditorOpen=true;
+    menu_embed::DrainModuleToggles(&toggleGameModule);
     const bool editingVisual=menuOpen && visualEditor!=VisualEditor::None && canVisualPreview();
     SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory && visualEditor!=VisualEditor::Katana);
     SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory && visualEditor!=VisualEditor::Katana && previewGameModelTest);
     SetPlayerPreviewHatActive(editingVisual && visualEditor==VisualEditor::Hat && previewGameModelTest);
     if (!menuOpen || (!hudEditorOpen && !editingVisual)) {
-        if (menuOpen) { VisualStyleScope style; realDrawGui(runtime); }
-        else realDrawGui(runtime);
+        if (menuOpen && !replaced) { VisualStyleScope style; realDrawGui(runtime); }
+        else if (!menuOpen) realDrawGui(runtime);
     }
     if (editingVisual) { drawVisualEditor(); return; }
     if (menuOpen && hudEditorOpen && hudHooksReady) { drawHudEditor(runtime); return; }
+    if (replaced) return;  // the embedded menu owns the screen
     // Exact legacy build layout, verified against the original binary.
     if (!runtime || !*(reinterpret_cast<unsigned char*>(runtime) + 0x551)) return;
     auto* settings = reinterpret_cast<ag::Settings*>(reinterpret_cast<unsigned char*>(runtime) + 0x48);
@@ -1426,7 +1455,10 @@ static void patchedNewFrame() {
     // Prefer the external wheel-only bridge when connected; otherwise use UWP.
     // Do not add both, or one physical wheel movement could scroll twice.
     takeExternalWheel(wheelX, wheelY);
-    if (pointerInUse && (wheelX || wheelY)) addWheel(&io, wheelX / 120.0f, wheelY / 120.0f);
+    if (pointerInUse && (wheelX || wheelY)) {
+        addWheel(&io, wheelX / 120.0f, wheelY / 120.0f);
+        menu_embed::AddWheel(wheelX / 120.0f, wheelY / 120.0f);
+    }
     const float pageWheel = pageScroll.step(pointerInUse && pageKeysReady,
         pageKeysReady && keyDown(VK_PRIOR), pageKeysReady && keyDown(VK_NEXT), GetTickCount64());
     if (pageWheel != 0.0f) addWheel(&io, 0.0f, pageWheel);
@@ -1463,7 +1495,7 @@ static void patchedWatchedKeys(const std::array<bool, 256>& requested) {
 // non-client origin. All Win32 values are obtained on the same thread, so
 // Windows DPI virtualization affects cursor and client rectangle consistently.
 // If these APIs are unavailable in AppContainer, retain the legacy UWP input.
-static bool patchedPointer(float& x, float& y, float& w, float& h) {
+static bool patchedPointerImpl(float& x, float& y, float& w, float& h) {
     pointerInUse = true;
     // CoreWindow bounds describe the non-client origin in DIPs. Subtract it
     // on the dispatcher thread's consistent sample before scaling to DXGI pixels.
@@ -1478,6 +1510,12 @@ static bool patchedPointer(float& x, float& y, float& w, float& h) {
                        static_cast<float>(client.right - client.left),
                        static_cast<float>(client.bottom - client.top), x, y, w, h)) return true;
     return realPointer(x, y, w, h);
+}
+// The same cursor sample also feeds the embedded new menu overlay.
+static bool patchedPointer(float& x, float& y, float& w, float& h) {
+    const bool ok = patchedPointerImpl(x, y, w, h);
+    if (ok) menu_embed::SetPointer(x, y, w, h);
+    return ok;
 }
 
 // The legacy bridge already dispatches this tick on the CoreWindow UI thread.
@@ -1511,6 +1549,15 @@ static void draw(IDXGISwapChain* chain, UINT flags) {
                 frameDevice = device; frameContext = context;
                 frameWidth = desc.Width; frameHeight = desc.Height; seenInput = false; pointerInUse = false;
                 legacyPresent(chain, 0, flags);
+                // The embedded new menu renders after the legacy overlay with
+                // its own ImGui context; the back buffer is bound explicitly
+                // because the ImGui renderer never sets targets itself.
+                ID3D11RenderTargetView* overlayTarget = nullptr;
+                if (SUCCEEDED(device->CreateRenderTargetView(back, nullptr, &overlayTarget)) && overlayTarget) {
+                    context->OMSetRenderTargets(1, &overlayTarget, nullptr);
+                    overlayTarget->Release();
+                }
+                menu_embed::RenderOverlay(device, context, desc.Width, desc.Height);
                 release(previewFrameView);
                 frameDevice = nullptr; frameContext = nullptr;
             }
@@ -1641,6 +1688,10 @@ static DWORD WINAPI bootstrap(void*) {
     legacyPresent = symbol<LegacyPresentFn>("_Z11PresentHookP14IDXGISwapChainjj");
     rendererInit = symbol<RendererInitFn>("_Z19ImGui_ImplDX11_InitP12ID3D11DeviceP19ID3D11DeviceContext");
     getIO = symbol<GetIOFn>("_ZN5ImGui5GetIOEv");
+    // The embedded new menu shares the resolved key state and the HUD module
+    // flags observed by patchedDrawGui; it never resolves symbols itself.
+    menu_embed::SetKeyQuery(keyDown);
+    menu_embed::SetModuleStateReader(&readGameModule);
     if (!mhInit || !mhCreate || !mhQueueEnable || !mhApply || !mhDisable || !bridgeInit || !bridgeActive || !newFrameTarget || !updateTarget || !pointerTarget || !settingsTarget || !findGameWindow || !addFont || !addWheel || !legacyPresent || !rendererInit || !getIO) { log("legacy DLL exports do not match expected version"); return 1; }
     log(suppressMouseDiagnostic() ? "mouse diagnostic suppressed" : "mouse diagnostic patch skipped: core mismatch or protection failure");
     void* present = nullptr; void* present1 = nullptr;
@@ -2092,7 +2143,10 @@ assert 'worldEntitiesRva' not in u
 assert 'OMSetDepthStencilState' not in u
 
 # 5. Scoped style survives through actual widgets, and restores on return.
-assert 'if (menuOpen) { VisualStyleScope style; realDrawGui(runtime); }' in u
+# The legacy click GUI keeps its scoped style whenever it is drawn; the
+# embedded new menu can replace it (see check_menu_embed.py) without removing
+# this path for the not-replaced case and any embed failure fallback.
+assert 'if (menuOpen && !replaced) { VisualStyleScope style; realDrawGui(runtime); }' in u
 assert '~VisualStyleScope()' in u and 'guiPopColor(pushedColors)' in u and 'guiPopVar(pushedVars)' in u
 assert 'insideLegacyHud || !hud_theme::card(name)' in u
 assert 'hud_theme::background(widgetOpacity*legacyOpacity,hudPalette)' in u
@@ -2119,6 +2173,90 @@ assert 'hud_visual_kit.h' in doc
 print('HUD visual-only checks OK; Windows/Minecraft verification required')
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_hud_visual_style.py
+================================================================================
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/check_menu_embed.py
+================================================================================
+"""Static wiring checks for the embedded new GAYClient menu; no Windows here."""
+from pathlib import Path
+import re
+r=Path(__file__).resolve().parents[1]
+root=r.parent
+u=(r/'src/compat.cpp').read_text()
+m=(r/'src/menu_embed.cpp').read_text()
+h=(r/'src/menu_embed.h').read_text()
+menu=(root/'GAYClientMenu.h').read_text()
+menucpp=(root/'GAYClientMenu.cpp').read_text()
+
+# The user-provided menu sources stay the integration contract: only the
+# ModuleId enum gained the adapter test modules, everything else is wired
+# through MenuState/MenuActions callbacks.
+assert '#include "GAYClientMenu.h"' in m and '#include "menu_embed.h"' in u
+assert 'Katana,' in menu and 'Crown' in menu
+assert menu.count('ModuleId::') >= 1 and 'RenderMenu(MenuState& state, const MenuActions& actions)' in menu
+# The menu itself never touches D3D or creates contexts.
+assert 'CreateContext' not in menucpp and 'ID3D11' not in menucpp
+
+# Private ImGui context: created once, no ini writes, cyrillic font through
+# the menu's own loader, and the DX11 backend initialized from the same
+# device/context the legacy overlay already uses.
+assert 'ImGui::CreateContext()' in m and 'io.IniFilename = nullptr' in m
+assert 'LoadCyrillicFont(io, 17.0f)' in m
+assert 'ImGui_ImplDX11_Init(device, context)' in m
+assert 'g_context = nullptr' in m and 'g_initFailed = true' in m
+assert 'ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData())' in m
+
+# The legacy client's ImGui context is never touched: the embed only uses its
+# own context and its own compiled backend.
+assert 'SetCurrentContext' in m and 'getIO' not in m
+
+# Input comes from the existing hooks only; no new game hooks.
+assert 'menu_embed::SetPointer(x, y, w, h)' in u
+assert 'menu_embed::AddWheel(wheelX / 120.0f, wheelY / 120.0f)' in u
+assert 'menu_embed::SetKeyQuery(keyDown)' in u
+assert 'GetAsyncKeyState(vk) & 0x8000' in m  # mouse buttons fallback
+
+# Game-module toggles are queued and drained on the legacy GUI thread where
+# setModule is already used; the runtime pointer comes from patchedDrawGui.
+assert 'queueAgModule' in m and 'DrainModuleToggles' in h and 'void DrainModuleToggles' in m
+assert 'menu_embed::DrainModuleToggles(&toggleGameModule)' in u
+assert 'setModule(menuEmbedRuntime' in u and 'static_cast<ag::ModuleId>(static_cast<std::size_t>(moduleId))' in u
+
+# Present path: the overlay renders after the legacy, with the back buffer
+# bound explicitly because ImGui never sets targets itself.
+assert u.index('legacyPresent(chain, 0, flags);') < u.index('menu_embed::RenderOverlay(device, context, desc.Width, desc.Height)')
+assert 'CreateRenderTargetView(back, nullptr, &overlayTarget)' in u
+assert 'context->OMSetRenderTargets(1, &overlayTarget, nullptr)' in u
+
+# Replacement gating: the old interface survives any embed failure.
+assert 'const bool replaced=menuOpen && menu_embed::ReplacesLegacyMenu();' in u
+assert 'if (menuOpen && menu_embed::ConsumeHudEditorRequest()) hudEditorOpen=true;' in u
+assert 'bool ReplacesLegacyMenu();' in h and 'bool ConsumeHudEditorRequest();' in h
+
+# Module wiring: every menu module maps to an existing tested setter; the
+# test modules (katana/crown) keep their controls in the test tools window.
+for wiring in ('case ModuleId::ChinaHat: SetChinaHatEnabled(enable); return;',
+               'case ModuleId::Trail: SetTrailEnabled(enable); return;',
+               'case ModuleId::JumpRings: SetJumpEnabled(enable); return;',
+               'case ModuleId::Katana: SetKatanaEnabled(enable); return;',
+               'case ModuleId::Crown: SetAccessoryEnabled(enable); return;'):
+    assert wiring in m, wiring
+assert 'g_state.modules.push_back({ModuleId::Katana' in m
+assert 'g_state.modules.push_back({ModuleId::Crown' in m
+assert 'SetVisualParam(VisualParam::HatRed' in m and 'SetVisualParam(VisualParam::JumpSeconds' in m
+assert 'SetHatRainbowEnabled' in m and 'SetTrailRainbowEnabled' in m and 'SetJumpRainbowEnabled' in m
+assert 'SetHatFillEnabled' in m and 'SetTrailFillEnabled' in m
+
+# The vendored Dear ImGui implementation matches the header version the menu
+# was developed against (the shipped DLL links these exact sources).
+version=re.search(r'#define IMGUI_VERSION\s+"([^"]+)"',(r/'vendor/imgui/imgui.h').read_text()).group(1)
+assert version=='1.91.9b', version
+for source in ('imgui.cpp','imgui_draw.cpp','imgui_tables.cpp','imgui_widgets.cpp',
+               'backends/imgui_impl_dx11.cpp','backends/imgui_impl_dx11.h'):
+    assert (r/'vendor/imgui'/source).exists(), source
+print('Embedded GAYClient menu wiring OK; Windows in-game test still required')
+================================================================================
+КОНЕЦ ФАЙЛА: repair/tests/check_menu_embed.py
 ================================================================================
 
 ================================================================================
@@ -5047,6 +5185,501 @@ bool InitializeMenuMouse(HatCreateHook create,HatToggleHook enable,HatToggleHook
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/menu_mouse_native.cpp
 ================================================================================
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/menu_embed.h
+================================================================================
+#pragma once
+#include <cstdint>
+struct ID3D11Device;
+struct ID3D11DeviceContext;
+
+// Embedding of the new GAYClient menu (GAYClientMenu.h/.cpp, Dear ImGui
+// 1.91.9b) into the adapter. The menu renders with its own private ImGui
+// context and its own DX11 backend objects, created from the same device and
+// immediate context the legacy overlay already uses; the legacy client's
+// ImGui context is never touched. Everything below is called from existing
+// adapter hooks, so no new game hooks are introduced.
+namespace menu_embed {
+
+// Called at the end of the Present-path draw, after the legacy overlay has
+// rendered. Renders the new menu plus the test-tools window with a private
+// ImGui context. Safe no-op until initialization succeeds once.
+void RenderOverlay(ID3D11Device* device, ID3D11DeviceContext* context,
+                   unsigned width, unsigned height);
+
+// Input plumbing from the existing adapter hooks. All cross-thread safe.
+void SetPointer(float clientX, float clientY, float clientWidth, float clientHeight);
+void AddWheel(float dx, float dy);
+void SetKeyQuery(bool (*query)(int vk));
+
+// Live game state plumbing: menu visibility follows the game menu flag, the
+// HUD-style module flags are read through the reader, and toggles requested
+// from the menu are queued here and must be drained on the legacy GUI thread
+// by DrainModuleToggles, which forwards them to ag::Runtime::SetModule.
+void SetGameMenuOpen(bool open);
+void SetModuleStateReader(bool (*reader)(int moduleId));
+void DrainModuleToggles(void (*toggler)(int moduleId, bool));
+
+// True once the new menu is alive; the legacy click GUI and the old test
+// panels stay hidden while this holds, falling back automatically otherwise.
+bool ReplacesLegacyMenu();
+
+// One-shot request from the menu's HUD-editor button.
+bool ConsumeHudEditorRequest();
+
+} // namespace menu_embed
+================================================================================
+КОНЕЦ ФАЙЛА: repair/src/menu_embed.h
+================================================================================
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/menu_embed.cpp
+================================================================================
+#include "menu_embed.h"
+
+#include <atomic>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <initializer_list>
+#include <mutex>
+#include <utility>
+#include <vector>
+
+#include "imgui.h"
+#include "backends/imgui_impl_dx11.h"
+
+#include "GAYClientMenu.h"
+#include "china_hat_native.h"
+#include "settings.h"
+#include "visual_settings.h"
+
+// This translation unit links the user-provided GAYClientMenu (pure Dear
+// ImGui code) into the adapter:
+//
+//  - a private ImGui context + DX11 backend is created on the same device and
+//    immediate context the legacy overlay already renders through, so no new
+//    hooks or swap chains are needed;
+//  - input is forwarded from the existing adapter hooks (patchedPointer for
+//    the cursor, the UWP wheel, the legacy key state export), never from new
+//    game hooks;
+//  - module toggles and graphics settings are mapped one-to-one onto the
+//    adapter's existing, tested setters (SetChinaHatEnabled, SetVisualParam,
+//    ag::Runtime::SetModule through the compat bridge);
+//  - the katana/crown test controls that have no place in the new menu live
+//    in a small separate "test tools" window drawn by this module.
+//
+// Failure of anything above only means the new menu stays hidden and the
+// previous interface keeps working.
+namespace menu_embed {
+namespace {
+
+using gayclient::MenuActions;
+using gayclient::MenuState;
+using gayclient::ModuleId;
+
+MenuState g_state;
+MenuActions g_actions;
+ImGuiContext* g_context = nullptr;
+bool g_backendReady = false;
+bool g_initFailed = false;
+
+std::atomic<bool> g_gameMenuOpen{false};
+std::atomic<bool> g_hiddenByClose{false};
+std::atomic<bool> g_hudEditorRequest{false};
+std::atomic<bool> g_pointerValid{false};
+std::atomic<float> g_pointerX{0.0f}, g_pointerY{0.0f};
+std::atomic<float> g_pointerW{0.0f}, g_pointerH{0.0f};
+std::atomic<float> g_wheelX{0.0f}, g_wheelY{0.0f};
+bool (*g_keyDown)(int) = nullptr;
+bool (*g_moduleStateReader)(int) = nullptr;
+// Toggles for the game's own HUD modules must run on the legacy GUI thread
+// (ag::Runtime::SetModule is not documented as thread-safe), so the menu
+// callback only queues them; the compat layer drains the queue each frame.
+std::mutex g_pendingMutex;
+std::vector<std::pair<int, bool>> g_pendingToggles;
+ULONGLONG g_lastFrameTick = 0;
+bool g_keyStates[256] = {};
+
+float clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+
+// Menu percentages (0..100) to the adapter parameter ranges.
+float percentToRange(float percent, float low, float high) {
+    return low + clamp01(percent / 100.0f) * (high - low);
+}
+float rangeToPercent(float value, float low, float high) {
+    if (high <= low) return 0.0f;
+    return clamp01((value - low) / (high - low)) * 100.0f;
+}
+
+// Initialize the menu's graphics values from the adapter's live parameters so
+// the tab shows what is actually rendered instead of the design defaults.
+void initLiveDefaults() {
+    auto& hat = g_state.graphics.chinaHat;
+    hat.fill = HatFillEnabled();
+    hat.rainbow = HatRainbowEnabled();
+    hat.rainbowSpeed = rangeToPercent(GetVisualParam(VisualParam::HatRainbowSpeed), 0.03f, 0.80f);
+    hat.opacity = GetVisualParam(VisualParam::HatOpacity) * 100.0f;
+    hat.radius = GetVisualParam(VisualParam::HatRadius);
+    hat.height = GetVisualParam(VisualParam::HatConeHeight);
+    hat.offset = GetVisualParam(VisualParam::HatOffset);
+    hat.floatAmplitude = GetVisualParam(VisualParam::HatBobAmplitude);
+    hat.floatSpeed = GetVisualParam(VisualParam::HatBobSpeed);
+    hat.color = ImVec4(GetVisualParam(VisualParam::HatRed), GetVisualParam(VisualParam::HatGreen),
+                       GetVisualParam(VisualParam::HatBlue), 1.0f);
+    auto& trail = g_state.graphics.trail;
+    trail.fill = TrailFillEnabled();
+    trail.rainbow = TrailRainbowEnabled();
+    trail.rainbowSpeed = rangeToPercent(GetVisualParam(VisualParam::TrailRainbowSpeed), 0.03f, 0.80f);
+    trail.opacity = GetVisualParam(VisualParam::TrailOpacity) * 100.0f;
+    trail.height = GetVisualParam(VisualParam::TrailHeight);
+    trail.life = GetVisualParam(VisualParam::TrailSeconds);
+    trail.color = ImVec4(GetVisualParam(VisualParam::TrailRed), GetVisualParam(VisualParam::TrailGreen),
+                         GetVisualParam(VisualParam::TrailBlue), 1.0f);
+    auto& jump = g_state.graphics.jumpRings;
+    jump.rainbow = JumpRainbowEnabled();
+    jump.rainbowSpeed = rangeToPercent(GetVisualParam(VisualParam::JumpRainbowSpeed), 0.03f, 0.80f);
+    jump.opacity = GetVisualParam(VisualParam::JumpOpacity) * 100.0f;
+    jump.radius = GetVisualParam(VisualParam::JumpRadius);
+    jump.duration = GetVisualParam(VisualParam::JumpSeconds);
+    jump.color = ImVec4(GetVisualParam(VisualParam::JumpRed), GetVisualParam(VisualParam::JumpGreen),
+                        GetVisualParam(VisualParam::JumpBlue), 1.0f);
+}
+
+void pushChinaHat() {
+    const auto& hat = g_state.graphics.chinaHat;
+    SetHatFillEnabled(hat.fill);
+    SetHatRainbowEnabled(hat.rainbow);
+    SetVisualParam(VisualParam::HatRainbowSpeed, percentToRange(hat.rainbowSpeed, 0.03f, 0.80f));
+    SetVisualParam(VisualParam::HatOpacity, clamp01(hat.opacity / 100.0f));
+    SetVisualParam(VisualParam::HatRadius, hat.radius);
+    SetVisualParam(VisualParam::HatConeHeight, hat.height);
+    SetVisualParam(VisualParam::HatOffset, hat.offset);
+    SetVisualParam(VisualParam::HatBobAmplitude, hat.floatAmplitude);
+    SetVisualParam(VisualParam::HatBobSpeed, hat.floatSpeed);
+    SetVisualParam(VisualParam::HatRed, clamp01(hat.color.x));
+    SetVisualParam(VisualParam::HatGreen, clamp01(hat.color.y));
+    SetVisualParam(VisualParam::HatBlue, clamp01(hat.color.z));
+}
+
+void pushTrail() {
+    const auto& trail = g_state.graphics.trail;
+    SetTrailFillEnabled(trail.fill);
+    SetTrailRainbowEnabled(trail.rainbow);
+    SetVisualParam(VisualParam::TrailRainbowSpeed, percentToRange(trail.rainbowSpeed, 0.03f, 0.80f));
+    SetVisualParam(VisualParam::TrailOpacity, clamp01(trail.opacity / 100.0f));
+    SetVisualParam(VisualParam::TrailHeight, trail.height);
+    SetVisualParam(VisualParam::TrailSeconds, trail.life);
+    SetVisualParam(VisualParam::TrailRed, clamp01(trail.color.x));
+    SetVisualParam(VisualParam::TrailGreen, clamp01(trail.color.y));
+    SetVisualParam(VisualParam::TrailBlue, clamp01(trail.color.z));
+}
+
+void pushJumpRings() {
+    const auto& jump = g_state.graphics.jumpRings;
+    SetJumpRainbowEnabled(jump.rainbow);
+    SetVisualParam(VisualParam::JumpRainbowSpeed, percentToRange(jump.rainbowSpeed, 0.03f, 0.80f));
+    SetVisualParam(VisualParam::JumpOpacity, clamp01(jump.opacity / 100.0f));
+    SetVisualParam(VisualParam::JumpRadius, jump.radius);
+    SetVisualParam(VisualParam::JumpSeconds, jump.duration);
+    SetVisualParam(VisualParam::JumpRed, clamp01(jump.color.x));
+    SetVisualParam(VisualParam::JumpGreen, clamp01(jump.color.y));
+    SetVisualParam(VisualParam::JumpBlue, clamp01(jump.color.z));
+}
+
+void onSettingChanged(const char* path) {
+    if (!path) return;
+    if (std::strcmp(path, "graphics.chinaHat.enabled") == 0) { SetChinaHatEnabled(g_state.graphics.chinaHat.enabled); return; }
+    if (std::strncmp(path, "graphics.chinaHat.", 18) == 0) { pushChinaHat(); return; }
+    if (std::strcmp(path, "graphics.trail.enabled") == 0) { SetTrailEnabled(g_state.graphics.trail.enabled); return; }
+    if (std::strncmp(path, "graphics.trail.", 15) == 0) { pushTrail(); return; }
+    if (std::strcmp(path, "graphics.jumpRings.enabled") == 0) { SetJumpEnabled(g_state.graphics.jumpRings.enabled); return; }
+    if (std::strncmp(path, "graphics.jumpRings.", 19) == 0) { pushJumpRings(); return; }
+    // hud.*, ui.*, sound.* and controls.* stay in the menu state for now:
+    // the game HUD layout, sound and key bindings are not exposed by the
+    // adapter's verified surface, and nothing is guessed here.
+}
+
+void queueAgModule(int moduleId, bool enable) {
+    std::lock_guard<std::mutex> lock(g_pendingMutex);
+    if (g_pendingToggles.size() < 32) g_pendingToggles.emplace_back(moduleId, enable);
+}
+
+void onModuleToggled(ModuleId id, bool enable) {
+    switch (id) {
+        case ModuleId::ChinaHat: SetChinaHatEnabled(enable); return;
+        case ModuleId::Trail: SetTrailEnabled(enable); return;
+        case ModuleId::JumpRings: SetJumpEnabled(enable); return;
+        case ModuleId::Katana: SetKatanaEnabled(enable); return;
+        case ModuleId::Crown: SetAccessoryEnabled(enable); return;
+        case ModuleId::Fps: queueAgModule(static_cast<int>(ag::ModuleId::Fps), enable); return;
+        case ModuleId::Cps: queueAgModule(static_cast<int>(ag::ModuleId::Cps), enable); return;
+        case ModuleId::Clock: queueAgModule(static_cast<int>(ag::ModuleId::Clock), enable); return;
+        case ModuleId::Keystrokes: queueAgModule(static_cast<int>(ag::ModuleId::Keystrokes), enable); return;
+        case ModuleId::Watermark: queueAgModule(static_cast<int>(ag::ModuleId::Watermark), enable); return;
+        case ModuleId::Coordinates: queueAgModule(static_cast<int>(ag::ModuleId::Coordinates), enable); return;
+        case ModuleId::Resolution: queueAgModule(static_cast<int>(ag::ModuleId::Resolution), enable); return;
+        case ModuleId::ModuleList: queueAgModule(static_cast<int>(ag::ModuleId::ActiveModules), enable); return;
+        case ModuleId::Performance:
+            queueAgModule(static_cast<int>(ag::ModuleId::Cpu), enable);
+            queueAgModule(static_cast<int>(ag::ModuleId::Ram), enable);
+            return;
+    }
+}
+
+// Mirror the live game state into the menu so the toggles never drift.
+void syncLiveState() {
+    g_state.graphics.chinaHat.enabled = ChinaHatEnabled();
+    g_state.graphics.trail.enabled = TrailEnabled();
+    g_state.graphics.jumpRings.enabled = JumpEnabled();
+    if (!g_state.modules.empty() && g_state.modules.back().id != ModuleId::Crown) {
+        g_state.modules.push_back({ModuleId::Katana, "Katana (test)", "Графика",
+            "Замена алмазного меча катаной (испытание)", false});
+        g_state.modules.push_back({ModuleId::Crown, "3D crown (test)", "Графика",
+            "Пробная золотистая корона", false});
+    }
+    for (gayclient::ModuleEntry& module : g_state.modules) {
+        switch (module.id) {
+            case ModuleId::Katana: module.enabled = KatanaEnabled(); break;
+            case ModuleId::Crown: module.enabled = AccessoryEnabled(); break;
+            default: break;
+        }
+    }
+    if (g_moduleStateReader) {
+        g_state.hud.showFps = g_moduleStateReader(static_cast<int>(ag::ModuleId::Fps));
+        g_state.hud.showCps = g_moduleStateReader(static_cast<int>(ag::ModuleId::Cps));
+        g_state.hud.showClock = g_moduleStateReader(static_cast<int>(ag::ModuleId::Clock));
+        g_state.hud.showKeystrokes = g_moduleStateReader(static_cast<int>(ag::ModuleId::Keystrokes));
+        g_state.hud.showWatermark = g_moduleStateReader(static_cast<int>(ag::ModuleId::Watermark));
+        g_state.hud.showCoordinates = g_moduleStateReader(static_cast<int>(ag::ModuleId::Coordinates));
+        g_state.hud.showResolution = g_moduleStateReader(static_cast<int>(ag::ModuleId::Resolution));
+        g_state.hud.showPerformance = g_moduleStateReader(static_cast<int>(ag::ModuleId::Cpu));
+        g_state.hud.showModuleList = g_moduleStateReader(static_cast<int>(ag::ModuleId::ActiveModules));
+    }
+}
+
+void wireActions() {
+    g_actions.settingChanged = [](const char* path) { onSettingChanged(path); };
+    g_actions.moduleToggled = [](ModuleId id, bool enabled) { onModuleToggled(id, enabled); };
+    g_actions.closeRequested = [] { g_hiddenByClose.store(true, std::memory_order_relaxed); };
+    g_actions.hudEditorRequested = [] { g_hudEditorRequest.store(true, std::memory_order_relaxed); };
+    // Profiles, resets, statistics and preview textures have no verified
+    // counterpart in the adapter yet; the callbacks stay unset and the menu
+    // keeps its honest "no data" presentation for those.
+}
+
+bool keyIsDown(int vk) {
+    if (g_keyDown && g_keyDown(vk)) return true;
+    return (GetAsyncKeyState(vk) & 0x8000) != 0;
+}
+
+struct KeyMap { int vk; ImGuiKey key; bool character; };
+const KeyMap kKeys[] = {
+    {VK_BACK, ImGuiKey_Backspace, false},   {VK_RETURN, ImGuiKey_Enter, false},
+    {VK_ESCAPE, ImGuiKey_Escape, false},    {VK_SPACE, ImGuiKey_Space, true},
+    {VK_DELETE, ImGuiKey_Delete, false},    {VK_LEFT, ImGuiKey_LeftArrow, false},
+    {VK_RIGHT, ImGuiKey_RightArrow, false}, {VK_UP, ImGuiKey_UpArrow, false},
+    {VK_DOWN, ImGuiKey_DownArrow, false},   {VK_PRIOR, ImGuiKey_PageUp, false},
+    {VK_NEXT, ImGuiKey_PageDown, false},    {VK_HOME, ImGuiKey_Home, false},
+    {VK_END, ImGuiKey_End, false},          {VK_SHIFT, ImGuiKey_LeftShift, false},
+    {VK_CONTROL, ImGuiKey_LeftCtrl, false},
+};
+constexpr int kKeyCount = sizeof(kKeys) / sizeof(kKeys[0]);
+
+void feedInput(unsigned width, unsigned height) {
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(static_cast<float>(width), static_cast<float>(height));
+    const ULONGLONG now = GetTickCount64();
+    io.DeltaTime = g_lastFrameTick && now > g_lastFrameTick
+        ? static_cast<float>(now - g_lastFrameTick) / 1000.0f
+        : 1.0f / 60.0f;
+    if (io.DeltaTime <= 0.0f || io.DeltaTime > 0.25f) io.DeltaTime = 1.0f / 60.0f;
+    g_lastFrameTick = now;
+
+    if (g_pointerValid.load(std::memory_order_relaxed)) {
+        const float w = g_pointerW.load(std::memory_order_relaxed);
+        const float h = g_pointerH.load(std::memory_order_relaxed);
+        if (w > 1.0f && h > 1.0f) {
+            const float mx = g_pointerX.load(std::memory_order_relaxed) * (static_cast<float>(width) / w);
+            const float my = g_pointerY.load(std::memory_order_relaxed) * (static_cast<float>(height) / h);
+            io.AddMousePosEvent(mx, my);
+        }
+    }
+    io.AddMouseButtonEvent(0, keyIsDown(VK_LBUTTON));
+    io.AddMouseButtonEvent(1, keyIsDown(VK_RBUTTON));
+    const float wheelX = g_wheelX.exchange(0.0f, std::memory_order_relaxed);
+    const float wheelY = g_wheelY.exchange(0.0f, std::memory_order_relaxed);
+    if (wheelX != 0.0f || wheelY != 0.0f) io.AddMouseWheelEvent(wheelX, wheelY);
+
+    const bool shift = keyIsDown(VK_SHIFT);
+    for (int i = 0; i < kKeyCount; ++i) {
+        const bool down = keyIsDown(kKeys[i].vk);
+        if (down == g_keyStates[kKeys[i].vk]) continue;
+        g_keyStates[kKeys[i].vk] = down;
+        io.AddKeyEvent(kKeys[i].key, down);
+        if (down && kKeys[i].character)
+            io.AddInputCharacter(static_cast<unsigned int>(shift ? kKeys[i].vk : (kKeys[i].vk | 0x20)));
+    }
+    for (int vk = '0'; vk <= '9'; ++vk) {
+        const bool down = keyIsDown(vk);
+        if (down == g_keyStates[vk]) continue;
+        g_keyStates[vk] = down;
+        io.AddKeyEvent(static_cast<ImGuiKey>(ImGuiKey_0 + (vk - '0')), down);
+        if (down) io.AddInputCharacter(static_cast<unsigned int>(vk));
+    }
+    for (int vk = 'A'; vk <= 'Z'; ++vk) {
+        const bool down = keyIsDown(vk);
+        if (down == g_keyStates[vk]) continue;
+        g_keyStates[vk] = down;
+        io.AddKeyEvent(static_cast<ImGuiKey>(ImGuiKey_A + (vk - 'A')), down);
+        if (down) io.AddInputCharacter(static_cast<unsigned int>(shift ? vk : (vk | 0x20)));
+    }
+}
+
+void drawTestToolsWindow() {
+    const bool katana = KatanaEnabled();
+    const bool crown = AccessoryEnabled();
+    if (!katana && !crown) return;
+    ImGui::SetNextWindowPos(ImVec2(18.0f, ImGui::GetIO().DisplaySize.y - 320.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(330.0f, 300.0f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Test tools (adapter)", nullptr,
+                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::End();
+        return;
+    }
+    if (katana && ImGui::CollapsingHeader("Katana (test)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        const int status = KatanaStatus();
+        ImGui::TextUnformatted(status == 1 ? "Katana: drawing (world pass)"
+            : status == 2 ? "Katana: draw unavailable; original kept"
+            : status == 9 ? "Katana: local player not matched"
+            : status == 10 ? "Katana: sword not matched"
+            : status == 11 ? "Katana: sword candidate"
+            : status == 12 ? "Katana: third person not confirmed yet"
+            : status == 13 ? "Katana: rotation unreadable; original kept"
+            : status == 14 ? "Katana: visible; replacing sword"
+            : status == 15 ? "Katana: model invalid"
+            : "Katana: waiting for held diamond sword");
+        const unsigned e = KatanaEvidence();
+        ImGui::Text("F:%u V:%u S:%u C:%u", !!e, !!(e & 2), !!(e & 16), !!(e & 32) | !!(e & 64));
+        ImGui::Text("R:%u X:%u D:%u O:%u P:%u", !!(e & 256), !!(e & 512), !!(e & 128), !!(e & 2048), !!(e & 4096) | !!(e & 8192));
+        const auto d = KatanaDebugSnapshot();
+        ImGui::Text("Rot P:%u A:%u B:%u H:%u%s yaw:%+.2f pitch:%+.2f",
+            d.sources & 1 ? 1u : 0u, d.sources & 2 ? 1u : 0u, d.sources & 4 ? 1u : 0u, d.sources & 8 ? 1u : 0u,
+            d.wrapped ? " (wrapped)" : "", d.yaw, d.pitchUp);
+        ImGui::Text("CI:%llX PL:%llX H58:%llX", d.clientInstance, d.player, d.rotationHolder);
+        ImGui::Text("TP in:%d out:%d tex:%llX learned:%llX",
+            d.tpCallsInPass, d.tpCallsOutOfPass, d.tpLastTexture, d.learnedTexture);
+        struct Slider { const char* label; VisualParam param; float low, high; };
+        const Slider sliders[] = {
+            {"Scale", VisualParam::KatanaScale, 0.4f, 1.0f},
+            {"Blade tilt", VisualParam::KatanaTilt, 0.2f, 1.55f},
+            {"Side", VisualParam::KatanaSide, 0.0f, 0.8f},
+            {"Hand height", VisualParam::KatanaHeight, 0.6f, 1.8f},
+            {"Forward", VisualParam::KatanaForward, -0.5f, 1.0f},
+            {"Opacity", VisualParam::KatanaOpacity, 0.3f, 1.0f},
+            {"Side (FP)", VisualParam::KatanaFirstSide, 0.0f, 0.8f},
+            {"Forward (FP)", VisualParam::KatanaFirstForward, -0.3f, 1.0f},
+        };
+        for (const Slider& slider : sliders) {
+            float value = GetVisualParam(slider.param);
+            if (ImGui::SliderFloat(slider.label, &value, slider.low, slider.high, "%.2f"))
+                SetVisualParam(slider.param, value);
+        }
+    }
+    if (crown && ImGui::CollapsingHeader("3D crown (test)")) {
+        struct Slider { const char* label; VisualParam param; };
+        const Slider sliders[] = {
+            {"Scale", VisualParam::AccessoryScale}, {"Offset", VisualParam::AccessoryOffset},
+            {"Opacity", VisualParam::AccessoryOpacity}, {"Red", VisualParam::AccessoryRed},
+            {"Green", VisualParam::AccessoryGreen}, {"Blue", VisualParam::AccessoryBlue},
+        };
+        for (const Slider& slider : sliders) {
+            float value = GetVisualParam(slider.param);
+            if (ImGui::SliderFloat(slider.label, &value, 0.0f, 2.0f, "%.2f"))
+                SetVisualParam(slider.param, value);
+        }
+    }
+    ImGui::End();
+}
+
+} // namespace
+
+void SetPointer(float clientX, float clientY, float clientWidth, float clientHeight) {
+    if (clientWidth <= 0.0f || clientHeight <= 0.0f) return;
+    g_pointerX.store(clientX, std::memory_order_relaxed);
+    g_pointerY.store(clientY, std::memory_order_relaxed);
+    g_pointerW.store(clientWidth, std::memory_order_relaxed);
+    g_pointerH.store(clientHeight, std::memory_order_relaxed);
+    g_pointerValid.store(true, std::memory_order_relaxed);
+}
+
+void AddWheel(float dx, float dy) {
+    if (dx == 0.0f && dy == 0.0f) return;
+    g_wheelX.store(dx, std::memory_order_relaxed);
+    g_wheelY.store(dy, std::memory_order_relaxed);
+}
+
+void SetKeyQuery(bool (*query)(int)) { g_keyDown = query; }
+void SetModuleStateReader(bool (*reader)(int)) { g_moduleStateReader = reader; }
+
+void DrainModuleToggles(void (*toggler)(int, bool)) {
+    if (!toggler) return;
+    std::vector<std::pair<int, bool>> pending;
+    {
+        std::lock_guard<std::mutex> lock(g_pendingMutex);
+        if (g_pendingToggles.empty()) return;
+        pending.swap(g_pendingToggles);
+    }
+    for (const auto& toggle : pending) toggler(toggle.first, toggle.second);
+}
+
+void SetGameMenuOpen(bool open) {
+    if (!open) g_hiddenByClose.store(false, std::memory_order_relaxed);
+    g_gameMenuOpen.store(open, std::memory_order_relaxed);
+}
+
+bool ReplacesLegacyMenu() { return g_backendReady; }
+bool ConsumeHudEditorRequest() { return g_hudEditorRequest.exchange(false, std::memory_order_relaxed); }
+
+void RenderOverlay(ID3D11Device* device, ID3D11DeviceContext* context,
+                   unsigned width, unsigned height) {
+    if (g_initFailed || !device || !context || width < 200 || height < 200) return;
+    if (!g_backendReady) {
+        ImGuiContext* created = ImGui::CreateContext();
+        ImGui::SetCurrentContext(created);
+        g_context = created;
+        ImGuiIO& io = ImGui::GetIO();
+        io.IniFilename = nullptr;  // no ini file writes from inside the game
+        g_state.cyrillicFontLoaded = gayclient::LoadCyrillicFont(io, 17.0f);
+        if (!ImGui_ImplDX11_Init(device, context)) {
+            ImGui::DestroyContext(created);
+            g_context = nullptr;
+            g_initFailed = true;
+            return;
+        }
+        g_state.dataConnected = true;
+        wireActions();
+        initLiveDefaults();
+        g_backendReady = true;
+    }
+    ImGui::SetCurrentContext(g_context);
+    feedInput(width, height);
+    ImGui::NewFrame();
+    const bool open = g_gameMenuOpen.load(std::memory_order_relaxed) &&
+                      !g_hiddenByClose.load(std::memory_order_relaxed);
+    g_state.visible = open;
+    if (open) {
+        syncLiveState();
+        gayclient::RenderMenu(g_state, g_actions);
+        drawTestToolsWindow();
+    }
+    ImGui::Render();
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+}
+
+} // namespace menu_embed
+================================================================================
+КОНЕЦ ФАЙЛА: repair/src/menu_embed.cpp
+================================================================================
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/menu_mouse_policy.h
@@ -6267,8 +6900,12 @@ assert 'realDrawHud(runtime)' in u and 'drawModuleHud(runtime,false)' in u
 assert 'drawModuleHud(runtime,true)' in u and 'hudEditorActive.load' in u
 assert 'if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }' in u
 assert 'if (!menuOpen || (!hudEditorOpen && !editingVisual)) {' in u
-assert 'if (menuOpen) { VisualStyleScope style; realDrawGui(runtime); }' in u
-assert 'else realDrawGui(runtime);' in u
+assert 'if (menuOpen && !replaced) { VisualStyleScope style; realDrawGui(runtime); }' in u
+assert 'else if (!menuOpen) realDrawGui(runtime);' in u
+# The embedded new menu replaces the legacy GUI only while it is alive; the
+# old panels stay hidden then and reappear automatically if the embed fails.
+assert 'menu_embed::SetGameMenuOpen(menuOpen)' in u and 'if (replaced) return;' in u
+assert 'menu_embed::RenderOverlay(device, context, desc.Width, desc.Height)' in u
 assert u.index('if (hudHookCreated) {') > u.index('mhApply())')
 for name in ('HatOpacity','TrailOpacity'):
     assert 'VisualParam::'+name in n and 'VisualParam::'+name in u and name in settings

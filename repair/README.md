@@ -199,7 +199,7 @@ Windows и не гарантирует корректную прокрутку �
 `ziglang`), затем воспроизводимое создание EXE из точного исходного файла:
 
 ```
-zig c++ -target x86_64-windows-gnu -std=c++17 -shared -O2 -Irepair/vendor/imgui repair/src/compat.cpp repair/src/uwp_extra.cpp repair/src/china_hat_native.cpp repair/src/menu_mouse_native.cpp -o repair/GAYClientInternal.dll -ld3d11 -ldxgi -luser32 -lole32 -lapi-ms-win-core-winrt-l1-1-0 -lapi-ms-win-core-winrt-string-l1-1-0 -luuid -lbcrypt
+zig c++ -target x86_64-windows-gnu -std=c++17 -shared -O2 -I. -Irepair/vendor/imgui -Irepair/src repair/src/compat.cpp repair/src/uwp_extra.cpp repair/src/china_hat_native.cpp repair/src/menu_mouse_native.cpp repair/src/menu_embed.cpp GAYClientMenu.cpp repair/vendor/imgui/imgui.cpp repair/vendor/imgui/imgui_draw.cpp repair/vendor/imgui/imgui_tables.cpp repair/vendor/imgui/imgui_widgets.cpp repair/vendor/imgui/backends/imgui_impl_dx11.cpp -o repair/GAYClientInternal.dll -ld3d11 -ldxgi -ld3dcompiler_47 -luser32 -lole32 -lapi-ms-win-core-winrt-l1-1-0 -lapi-ms-win-core-winrt-string-l1-1-0 -luuid -lbcrypt
 cd repair/launcher-web
 npm ci --ignore-scripts
 npx tsc --noEmit
@@ -246,6 +246,44 @@ Win32-страницы. Если WebView2 не запустился, срабо�
 старого EXE скрывается сразу после появления окна лаунчера и проверяется снова
 каждые 125 мс; до создания нового окна краткое появление исходного окна всё ещё
 возможно. На Windows порядок появления и обработка ошибок требуют проверки.
+
+## Встроенное новое меню GAYClient (испытание)
+
+Пользовательские исходники `GAYClientMenu.h/.cpp` (корень репозитория, Dear
+ImGui 1.91.9b; демо-проект `main.cpp`/`CMakeLists.txt` в сборку адаптера не
+входят) встроены в адаптер модулем `src/menu_embed.cpp`:
+
+- меню рисуется в конце Present-пути, после оверлея легаси, **собственным
+  контекстом ImGui** и собственными объектами DX11-бэкенда на том же устройстве
+  и immediate context; контекст легаси не затрагивается вообще. Полные исходники
+  ImGui вендорены в `vendor/imgui` (та же версия 1.91.9b, что и заголовок);
+- ввод берётся только из существующих перехватов: курсор — из `patchedPointer`,
+  колесо — из того же сэмпла UWP, клавиши — из экспорта `UwpKeyDown` (с
+  запасным `GetAsyncKeyState` для кнопок мыши). Новых игровых хуков нет.
+  Кириллица грузится из системных шрифтов самим `LoadCyrillicFont`; если шрифт
+  не найден, меню деградирует до встроенного (без кириллицы), но работает;
+- включение/выключение модулей проводится через существующие проверенные
+  сеттеры: China Hat / Trail / Jump Rings / Katana / 3D crown — напрямую,
+  HUD-модули (FPS, CPS, Clock, Keystrokes, Watermark, Coordinates, Resolution,
+  список модулей, CPU/RAM) — через очередь, которую `patchedDrawGui` исполняет
+  на своём потоке через `ag::Runtime::SetModule`. Вкладка «Графика» пишет
+  цвета/ползунки эффектов через `SetVisualParam` с клампом; при старте меню
+  показывает реальные текущие значения эффектов, а не демо-дефолты;
+- пока меню живо, оно заменяет собой легаси click-GUI и старые тестовые панели
+  (`Visuals`, переключатель координат). Любой сбой встраивания автоматически
+  возвращает прежний интерфейс. Кнопка меню «редактор HUD» открывает
+  существующий HUD-редактор; профили/статистика/звук остаются в состоянии меню
+  («Нет данных») — для них нет проверенной серверной части;
+- испытательные настройки катаны и короны, которых нет в новом меню, живут в
+  отдельном окне «Test tools (adapter)»: оно появляется только когда включена
+  катана или корона, и содержит статус, флаги, диагностические строки и все
+  ползунки прежней панели.
+
+Ограничения (честно): текстовые поля меню (поиск модулей, переименование
+профилей) принимают только латиницу и цифры — раскладка/символы игры не
+перехватываются; ввод мыши в меню и в игру одновременно не различается
+(как и раньше, курсор игровой мыши управляется флагом меню игры). Работа
+в реальной игре не проверена — нужен тест пользователя.
 
 ## China Hat (test)
 

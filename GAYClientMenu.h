@@ -50,7 +50,13 @@ namespace gayclient
         ModuleList,
         ChinaHat,
         Trail,
-        JumpRings
+        JumpRings,
+        // Adapter-only test modules. Added by the client integration: the
+        // entries live in the runtime module list, the icon falls back to
+        // Glyph::Dots and EnabledFlag returns nullptr (the client owns the
+        // real state through moduleToggled).
+        Katana,
+        Crown
     };
 
     inline constexpr const char* kPositions[] = {
