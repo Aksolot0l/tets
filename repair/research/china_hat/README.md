@@ -60,3 +60,12 @@ addresses, player state, or names, does not transmit anything, and does not
 modify or inject into the game. Candidate bytes alone do not prove compatibility.
 See `repair/tests/china_hat_mesh.cpp` for portable geometry tests. The geometry is compiled into the adapter; the separate diagnostic is not part
 of the installed client bundle.
+
+The user later reported that the filled visuals worked in the prior build but
+are visible through blocks and players. The opacity sliders pass an alpha
+uniform, and an opt-in vertex-gradient mode supplies varying vertex colors;
+these depend on the game's material/blending and are unverified. Default is
+opacity 1 and vertex gradient off, preserving the previous working appearance.
+Depth occlusion is not fixed. Output-merger observations in Options are read-only,
+only from a previously observed same-thread swap-chain context; before/after UI
+state is not proof of the depth content or of state inside tessDraw.

@@ -1,6 +1,10 @@
 #pragma once
 #include <windows.h>
 #include "visual_settings.h"
+struct ID3D11DeviceContext;
+void ObserveVisualContext(ID3D11DeviceContext* context);
+int VisualDepthBefore();
+int VisualDepthAfter();
 
 using HatCreateHook = int (WINAPI*)(void*, void*, void**);
 using HatToggleHook = int (WINAPI*)(void*);
@@ -32,5 +36,7 @@ bool HatRainbowEnabled();
 void SetHatRainbowEnabled(bool enabled);
 bool TrailRainbowEnabled();
 void SetTrailRainbowEnabled(bool enabled);
+bool VertexGradientEnabled();
+void SetVertexGradientEnabled(bool enabled);
 int HatFillStatus();
 int TrailFillStatus();

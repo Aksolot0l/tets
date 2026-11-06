@@ -12,6 +12,8 @@
 #include "visual_hooks.h"
 #include "visual_color.h"
 #include "visual_ribbon.h"
+#include "visual_gradient.h"
+#include <d3d11.h>
 #include "hat_animation.h"
 #include <bcrypt.h>
 #include <atomic>
@@ -37,12 +39,37 @@ std::atomic<bool> available{false}, enabled{false};
 // Modules remain off until the user explicitly enables them. Defaults configure
 // the requested filled/rainbow appearance, with a wireframe fallback in Visuals.
 std::atomic<bool> trailEnabled{false}, materialTint{true}, hatFill{true}, trailFill{true};
-std::atomic<bool> hatRainbow{true}, trailRainbow{true};
+std::atomic<bool> hatRainbow{true}, trailRainbow{true}, vertexGradient{false};
 struct ParamStorage {
  std::atomic<float> values[static_cast<std::size_t>(VisualParam::Count)]{};
  ParamStorage() { for (std::size_t i=0;i<static_cast<std::size_t>(VisualParam::Count);++i) values[i].store(visualParamSpecs[i].value); }
 } params;
 float param(VisualParam p) { return params.values[static_cast<std::size_t>(p)].load(std::memory_order_acquire); }
+// Diagnostics only: record OM bindings before and after the existing screen
+// hook, never modify depth/blend. A bound DSV is not proof of valid scene depth.
+SRWLOCK contextLock=SRWLOCK_INIT;
+ID3D11DeviceContext* observedContext=nullptr;
+DWORD observedThread=0;
+std::atomic<int> depthBefore{0}, depthAfter{0};
+void sampleOutputMerger(std::atomic<int>& target) {
+ ID3D11DeviceContext* ctx=nullptr;
+ AcquireSRWLockShared(&contextLock);
+ if (observedContext && observedThread==GetCurrentThreadId()) { ctx=observedContext; ctx->AddRef(); }
+ ReleaseSRWLockShared(&contextLock);
+ if (!ctx) { target.store(0,std::memory_order_relaxed); return; }
+ ID3D11DepthStencilView* dsv=nullptr; ctx->OMGetRenderTargets(0,nullptr,&dsv);
+ ID3D11DepthStencilState* depth=nullptr; UINT ref=0; ctx->OMGetDepthStencilState(&depth,&ref);
+ D3D11_DEPTH_STENCIL_DESC desc{};
+ if (depth) depth->GetDesc(&desc);
+ // D3D11 default null depth state enables LESS depth test and writes.
+ int bits=1 | (dsv?2:0) | ((!depth || desc.DepthEnable)?4:0);
+ ID3D11BlendState* blend=nullptr; FLOAT factors[4]{}; UINT mask=0;
+ ctx->OMGetBlendState(&blend,factors,&mask);
+ D3D11_BLEND_DESC blendDesc{}; if (blend) blend->GetDesc(&blendDesc);
+ if (blend && blendDesc.RenderTarget[0].BlendEnable) bits |= 8;
+ if (blend) blend->Release(); if (depth) depth->Release(); if (dsv) dsv->Release(); ctx->Release();
+ target.store(bits,std::memory_order_relaxed);
+}
 std::atomic<unsigned> trailGeneration{0};
 thread_local visual_trail::History trail;
 thread_local unsigned seenTrailGeneration=0;
@@ -242,9 +269,13 @@ void renderHat(const PlayerFrame& player) {
    param(VisualParam::HatOffset)+hat_animation::bob(now,param(VisualParam::HatBobAmplitude),param(VisualParam::HatBobSpeed)),player.world.z-origin[2]};
  if (std::fabs(head.x)>16 || std::fabs(head.y)>16 || std::fabs(head.z)>16) return;
  china_hat::Mesh mesh{};
- if (!china_hat::build(mesh,head,param(VisualParam::HatRadius),param(VisualParam::HatConeHeight),48,static_cast<float>(now%8000)/8000.0f,255)) return;
+ const bool gradient=materialTint.load(std::memory_order_acquire) && hatRainbow.load(std::memory_order_acquire) && vertexGradient.load(std::memory_order_acquire);
+ const float phase=gradient ? visual_gradient::phase(now,param(VisualParam::HatRainbowSpeed)) : static_cast<float>(now%8000)/8000.0f;
+ if (!china_hat::build(mesh,head,param(VisualParam::HatRadius),param(VisualParam::HatConeHeight),48,phase,255)) return;
  auto tint=visual_color::animated(materialTint.load(std::memory_order_acquire),hatRainbow.load(std::memory_order_acquire),
     {{param(VisualParam::HatRed),param(VisualParam::HatGreen),param(VisualParam::HatBlue)}},param(VisualParam::HatRainbowSpeed),now);
+ if (gradient) tint={{1.f,1.f,1.f,1.f}};
+ tint[3]=param(VisualParam::HatOpacity); // The game's material must support alpha/blending.
  std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
  auto* t=reinterpret_cast<void*>(tess);
  // The documented 1.1.5 renderer uses topology 4 for line segments. The first
@@ -300,17 +331,22 @@ void renderTrail(const PlayerFrame& player) {
  for (float v:origin) if (!std::isfinite(v)) return;
  china_hat::Vertex points[visual_trail::History::capacity]{}; bool valid[visual_trail::History::capacity]{};
  int segments=0;
+ const bool gradient=materialTint.load(std::memory_order_acquire) && trailRainbow.load(std::memory_order_acquire) && vertexGradient.load(std::memory_order_acquire);
+ const float phase=visual_gradient::phase(now,param(VisualParam::TrailRainbowSpeed));
  for (std::size_t i=0;i<trail.size();++i) {
   const auto& p=trail[i]; auto& v=points[i];
   v.position={p.point.x-origin[0],p.point.y-origin[1],p.point.z-origin[2]};
   valid[i]=std::fabs(v.position.x)<32 && std::fabs(v.position.y)<32 && std::fabs(v.position.z)<32;
   float age=static_cast<float>(now-p.time)/static_cast<float>(ttl);
-  v.color=china_hat::rainbow(.38f + static_cast<float>(i)*.002f,static_cast<std::uint8_t>(255.f*(1.f-std::clamp(age,0.f,1.f))));
+  const auto alpha=static_cast<std::uint8_t>(255.f*(1.f-std::clamp(age,0.f,1.f)));
+  v.color=gradient ? visual_gradient::trail(i,trail.size(),phase,alpha) : china_hat::rainbow(.38f+static_cast<float>(i)*.002f,alpha);
   if (i && valid[i] && valid[i-1]) ++segments;
  }
  if (!segments) return;
  auto tint=visual_color::animated(materialTint.load(std::memory_order_acquire),trailRainbow.load(std::memory_order_acquire),
     {{param(VisualParam::TrailRed),param(VisualParam::TrailGreen),param(VisualParam::TrailBlue)}},param(VisualParam::TrailRainbowSpeed),now);
+ if (gradient) tint={{1.f,1.f,1.f,1.f}};
+ tint[3]=param(VisualParam::TrailOpacity); // The game's material must support alpha/blending.
  std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
  auto* t=reinterpret_cast<void*>(tess);
  tessBegin(t,4,segments*2);
@@ -340,7 +376,9 @@ void renderTrail(const PlayerFrame& player) {
 void screenHook(void* self,void* ctx) {
  if (inScreen) { originalScreen(self,ctx); return; }
  inScreen=true;
+ if (anyVisual()) sampleOutputMerger(depthBefore);
  originalScreen(self,ctx);
+ if (anyVisual()) sampleOutputMerger(depthAfter);
  PlayerFrame visible=frame; frame.valid=false;
  // Submit the verified hat before collecting/drawing the experimental trail.
  renderHat(visible);
@@ -353,6 +391,17 @@ void screenHook(void* self,void* ctx) {
  inScreen=false;
 }
 }
+void ObserveVisualContext(ID3D11DeviceContext* context) {
+ if (!context) return;
+ context->AddRef();
+ AcquireSRWLockExclusive(&contextLock);
+ ID3D11DeviceContext* old=observedContext;
+ observedContext=context; observedThread=GetCurrentThreadId();
+ ReleaseSRWLockExclusive(&contextLock);
+ if (old) old->Release();
+}
+int VisualDepthBefore() { return depthBefore.load(std::memory_order_relaxed); }
+int VisualDepthAfter() { return depthAfter.load(std::memory_order_relaxed); }
 bool ChinaHatAvailable() { return available.load(std::memory_order_acquire); }
 bool ChinaHatEnabled() { return enabled.load(std::memory_order_acquire); }
 namespace {
@@ -423,6 +472,8 @@ bool HatRainbowEnabled() { return hatRainbow.load(std::memory_order_acquire); }
 void SetHatRainbowEnabled(bool value) { hatRainbow.store(value,std::memory_order_release); }
 bool TrailRainbowEnabled() { return trailRainbow.load(std::memory_order_acquire); }
 void SetTrailRainbowEnabled(bool value) { trailRainbow.store(value,std::memory_order_release); }
+bool VertexGradientEnabled() { return vertexGradient.load(std::memory_order_acquire); }
+void SetVertexGradientEnabled(bool value) { vertexGradient.store(value,std::memory_order_release); }
 int HatFillStatus() { return hatFillStatus.load(std::memory_order_relaxed); }
 int TrailFillStatus() { return trailFillStatus.load(std::memory_order_relaxed); }
 int ChinaHatStatus() {

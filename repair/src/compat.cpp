@@ -10,6 +10,7 @@
 #include <cstdio>
 #include "imgui.h"
 #include "settings.h"
+#include "hud_module_list.h"
 #include "pointer_mapping.h"
 #include "uwp_extra.h"
 #include "page_scroll.h"
@@ -59,6 +60,11 @@ using BeginTabBarFn = bool (*)(const char*, int);
 using BeginTabItemFn = bool (*)(const char*, bool*, int);
 using EndTabFn = void (*)();
 using ColorEdit3Fn = bool (*)(const char*, float*, int);
+using PushColorFn = void (*)(int, const ImVec4&);
+using PopColorFn = void (*)(int);
+using FontScaleFn = void (*)(float);
+using DrawHudFn = void (*)(void*);
+using NotificationDrawFn = void (*)(void*, const ag::Settings&);
 
 static HMODULE selfModule = nullptr;
 static HMODULE core = nullptr;
@@ -95,6 +101,17 @@ static BeginTabBarFn guiBeginTabBar = nullptr;
 static BeginTabItemFn guiBeginTabItem = nullptr;
 static EndTabFn guiEndTabBar = nullptr, guiEndTabItem = nullptr;
 static ColorEdit3Fn guiColorEdit3 = nullptr;
+static PushColorFn guiPushColor = nullptr;
+static PopColorFn guiPopColor = nullptr;
+static FontScaleFn guiFontScale = nullptr;
+static DrawHudFn realDrawHud = nullptr;
+static NotificationDrawFn realNotificationDraw = nullptr;
+static std::atomic<bool> hudHooksReady{false}, notificationHookReady{false};
+static bool hudEditorOpen = false, moduleHudEnabled = false;
+static std::atomic<bool> hudEditorActive{false};
+// New Module List HUD settings are per-session; they do not overwrite profiles.
+static float hudScale = 1.f, hudOpacity = .78f, hudX = .78f, hudY = .05f;
+static float hudColor[3] = {.35f,.85f,1.f};
 static std::atomic<const WheelBridge*> externalWheel{nullptr};
 static SRWLOCK externalWheelLock = SRWLOCK_INIT;
 static HWND pointerWindow = nullptr;
@@ -256,6 +273,7 @@ static void drawHatSettings() {
     if (guiCheckbox("Rainbow hat",&rainbow)) SetHatRainbowEnabled(rainbow);
     if (rainbow) visualSlider("Rainbow speed##hat",VisualParam::HatRainbowSpeed,"%.2f");
     else visualColor("Hat color",VisualParam::HatRed,VisualParam::HatGreen,VisualParam::HatBlue);
+    visualSlider("Opacity (test)##hat",VisualParam::HatOpacity,"%.2f");
     visualSlider("Radius",VisualParam::HatRadius,"%.2f");
     visualSlider("Cone height",VisualParam::HatConeHeight,"%.2f");
     visualSlider("Hat height",VisualParam::HatOffset,"%.2f");
@@ -278,6 +296,7 @@ static void drawTrailSettings() {
     if (guiCheckbox("Rainbow trail",&rainbow)) SetTrailRainbowEnabled(rainbow);
     if (rainbow) visualSlider("Rainbow speed##trail",VisualParam::TrailRainbowSpeed,"%.2f");
     else visualColor("Trail color",VisualParam::TrailRed,VisualParam::TrailGreen,VisualParam::TrailBlue);
+    visualSlider("Opacity (test)##trail",VisualParam::TrailOpacity,"%.2f");
     visualSlider("Trail height",VisualParam::TrailHeight,"%.2f");
     visualSlider("Lifetime (seconds)",VisualParam::TrailSeconds,"%.1f");
     if (TrailEnabled()) {
@@ -291,6 +310,18 @@ static void drawTrailSettings() {
 static void drawVisualOptions() {
     bool tint=VisualTintEnabled();
     if (guiCheckbox("Enable colors",&tint)) SetVisualTintEnabled(tint);
+    bool gradient=VertexGradientEnabled();
+    if (guiCheckbox("Vertex gradient (test)",&gradient)) SetVertexGradientEnabled(gradient);
+    realText("Gradient and opacity depend on game material.",nullptr);
+    auto diagnostic=[](const char* label,int bits) {
+        char line[120]{};
+        if (!(bits&1)) std::snprintf(line,sizeof(line),"%s: no same-thread context",label);
+        else std::snprintf(line,sizeof(line),"%s: DSV %s, depth %s, blend %s",label,
+            bits&2?"bound":"none",bits&4?"on":"off",bits&8?"on":"off");
+        realText(line,nullptr);
+    };
+    diagnostic("Before UI",VisualDepthBefore()); diagnostic("After UI",VisualDepthAfter());
+    realText("Diagnostics only; not proof of valid scene depth.",nullptr);
     realText("Settings reset when the game closes.",nullptr);
     realText("Fill is experimental; uncheck to use lines.",nullptr);
 }
@@ -315,6 +346,68 @@ static void drawVisualPanel() {
     guiEnd();
 }
 
+// Draw exactly the same new Module List card in the editor and during play.
+// Existing legacy HUD widgets are not restyled by these settings.
+static void drawModuleHud(void* runtime, bool preview) {
+    if (!runtime || !guiPushColor || !guiPopColor || !guiFontScale) return;
+    auto* s = reinterpret_cast<ag::Settings*>(reinterpret_cast<unsigned char*>(runtime)+0x48);
+    // Position is scaled to a small preview area so X/Y sliders also give
+    // immediate feedback without covering the editor itself.
+    const float x = preview ? 390.f+hudX*180.f : hudX*static_cast<float>(frameWidth);
+    const float y = preview ? 90.f+hudY*180.f : hudY*static_cast<float>(frameHeight);
+    guiSetNextPos(ImVec2(x,y),ImGuiCond_Always,ImVec2(0,0));
+    guiPushColor(ImGuiCol_WindowBg,ImVec4(.045f,.055f,.085f,hudOpacity));
+    guiPushColor(ImGuiCol_Text,ImVec4(hudColor[0],hudColor[1],hudColor[2],1.f));
+    const int flags=ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|
+        ImGuiWindowFlags_NoInputs|ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|
+        ImGuiWindowFlags_NoFocusOnAppearing;
+    if (guiBegin(preview?"##module_hud_preview":"##module_hud",nullptr,flags)) {
+        guiFontScale(hudScale);
+        realText("MODULES",nullptr);
+        module_hud::labels(s->enabled,ChinaHatEnabled(),TrailEnabled(),[](const char* label) { realText(label,nullptr); });
+    }
+    guiEnd(); guiPopColor(2);
+}
+static void patchedDrawHud(void* runtime) {
+    const bool menu=runtime && *(reinterpret_cast<unsigned char*>(runtime)+0x551);
+    const bool editing=module_hud::editing(menu,hudEditorOpen);
+    hudEditorActive.store(editing,std::memory_order_release);
+    if (!editing) {
+        realDrawHud(runtime);
+        if (moduleHudEnabled) drawModuleHud(runtime,false);
+    }
+}
+static void patchedNotificationDraw(void* queue, const ag::Settings& s) {
+    if (!hudEditorActive.load(std::memory_order_acquire)) realNotificationDraw(queue,s);
+}
+static void drawHudEditor(void* runtime) {
+    guiSetNextPos(ImVec2(18.f,90.f),ImGuiCond_Always,ImVec2(0,0));
+    if (guiSetNextSize) guiSetNextSize(ImVec2(350.f,350.f),ImGuiCond_FirstUseEver);
+    if (guiBegin("HUD editor",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
+        guiCheckbox("Open editor",&hudEditorOpen);
+        guiCheckbox("Module List HUD",&moduleHudEnabled);
+        if (guiSliderFloat) {
+            guiSliderFloat("Scale",&hudScale,.7f,1.6f,"%.2f",0);
+            guiSliderFloat("Background opacity",&hudOpacity,0.f,1.f,"%.2f",0);
+            guiSliderFloat("Position X",&hudX,0.f,.9f,"%.2f",0);
+            guiSliderFloat("Position Y",&hudY,0.f,.9f,"%.2f",0);
+        }
+        if (guiColorEdit3) guiColorEdit3("Text color",hudColor,0);
+        realText("Preview is on the right; close editor to return.",nullptr);
+        realText("Settings reset after closing the game.",nullptr);
+        if (!notificationHookReady) realText("Notifications may remain visible.",nullptr);
+    }
+    guiEnd();
+    if (hudEditorOpen) drawModuleHud(runtime,true);
+}
+static void drawHudEntry() {
+    if (!hudHooksReady) return;
+    guiSetNextPos(ImVec2(18.f,130.f),ImGuiCond_FirstUseEver,ImVec2(0,0));
+    if (guiBegin("HUD",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoCollapse))
+        guiCheckbox("Open Module List editor",&hudEditorOpen);
+    guiEnd();
+}
+
 static void patchedDrawGui(void* runtime) {
     // The old loop never calls RequestUnload for Delete. This is an explicit
     // one-way overlay stop, NOT a DLL unload: callbacks and hooks remain pinned.
@@ -329,7 +422,10 @@ static void patchedDrawGui(void* runtime) {
         log("overlay disabled by Delete; DLLs remain loaded until game exit");
         return;
     }
-    realDrawGui(runtime);
+    const bool menuOpen=runtime && *(reinterpret_cast<unsigned char*>(runtime)+0x551);
+    if (!menuOpen) hudEditorOpen=false;
+    if (!menuOpen || !hudEditorOpen) realDrawGui(runtime);
+    if (menuOpen && hudEditorOpen && hudHooksReady) { drawHudEditor(runtime); return; }
     // Exact legacy build layout, verified against the original binary.
     if (!runtime || !*(reinterpret_cast<unsigned char*>(runtime) + 0x551)) return;
     auto* settings = reinterpret_cast<ag::Settings*>(reinterpret_cast<unsigned char*>(runtime) + 0x48);
@@ -342,6 +438,7 @@ static void patchedDrawGui(void* runtime) {
     }
     guiEnd();
     drawVisualPanel();
+    drawHudEntry();
 }
 
 // Called from legacy drawMarker, while its own render lock is held. The ImGui
@@ -445,6 +542,7 @@ static void draw(IDXGISwapChain* chain, UINT flags) {
         if (desc.Width >= 320 && desc.Height >= 200) {
             device->GetImmediateContext(&context);
             if (context) {
+                ObserveVisualContext(context);
                 frameDevice = device; frameContext = context;
                 frameWidth = desc.Width; frameHeight = desc.Height; seenInput = false; pointerInUse = false;
                 legacyPresent(chain, 0, flags);
@@ -543,6 +641,9 @@ static DWORD WINAPI bootstrap(void*) {
     guiBeginTabItem = symbol<BeginTabItemFn>("_ZN5ImGui12BeginTabItemEPKcPbi");
     guiEndTabItem = symbol<EndTabFn>("_ZN5ImGui10EndTabItemEv");
     guiColorEdit3 = symbol<ColorEdit3Fn>("_ZN5ImGui10ColorEdit3EPKcPfi");
+    guiPushColor = symbol<PushColorFn>("_ZN5ImGui14PushStyleColorEiRK6ImVec4");
+    guiPopColor = symbol<PopColorFn>("_ZN5ImGui13PopStyleColorEi");
+    guiFontScale = symbol<FontScaleFn>("_ZN5ImGui18SetWindowFontScaleEf");
     guiSetNextPos = symbol<SetNextPosFn>("_ZN5ImGui16SetNextWindowPosERK6ImVec2iS2_");
     findGameWindow = symbol<FindWindowFn>("_ZN2ag19FindMinecraftWindowEb");
     addFont = symbol<AddFontFn>("_ZN2ag15AddEmbeddedFontEfb");
@@ -571,6 +672,12 @@ static DWORD WINAPI bootstrap(void*) {
         mhCreate(textTarget, reinterpret_cast<void*>(&patchedText), reinterpret_cast<void**>(&realText)) == 0 &&
         mhCreate(drawGuiTarget, reinterpret_cast<void*>(&patchedDrawGui), reinterpret_cast<void**>(&realDrawGui)) == 0;
     if (!coordHooks) log("coordinate display hooks unavailable");
+    void* hudTarget = reinterpret_cast<void*>(GetProcAddress(core,"_ZN2ag7DrawHudERNS_7RuntimeE"));
+    void* notifyTarget = reinterpret_cast<void*>(GetProcAddress(core,"_ZN2ag17NotificationQueue4DrawERKNS_8SettingsE"));
+    // Optional HUD hooks are enabled only after the essential overlay is live;
+    // failure must not prevent the verified overlay from starting.
+    const bool hudHookCreated = coordHooks && mhEnable && mhRemove && hudTarget && guiPushColor && guiPopColor && guiFontScale &&
+        mhCreate(hudTarget,reinterpret_cast<void*>(&patchedDrawHud),reinterpret_cast<void**>(&realDrawHud))==0;
     bool pageKeyHook = watchedTarget && keyDown &&
         mhCreate(watchedTarget, reinterpret_cast<void*>(&patchedWatchedKeys), reinterpret_cast<void**>(&realWatchedKeys)) == 0;
     pageKeysReady = pageKeyHook;
@@ -586,12 +693,20 @@ static DWORD WINAPI bootstrap(void*) {
         mhQueueEnable(pointerTarget) || mhQueueEnable(settingsTarget) || (pageKeyHook && mhQueueEnable(watchedTarget)) || (tickHook && mhQueueEnable(tickTarget)) ||
         (coordHooks && (mhQueueEnable(textTarget) || mhQueueEnable(drawGuiTarget))) ||
         mhQueueEnable(present) || mhQueueEnable(present1) || mhApply()) {
-        mhDisable(present1); mhDisable(present); if (coordHooks) { mhDisable(textTarget); mhDisable(drawGuiTarget); }
+        mhDisable(present1); mhDisable(present); if (hudHookCreated) mhRemove(hudTarget); if (coordHooks) { mhDisable(textTarget); mhDisable(drawGuiTarget); }
         if (tickHook) mhDisable(tickTarget); if (pageKeyHook) mhDisable(watchedTarget); mhDisable(settingsTarget);
         mhDisable(pointerTarget); mhDisable(updateTarget); mhDisable(newFrameTarget);
         log("hook enable failed; attempted to disable hooks"); return 1;
     }
     log("hooks enabled");
+    if (hudHookCreated) {
+        if (mhEnable(hudTarget)==0) hudHooksReady.store(true,std::memory_order_release);
+        else { mhRemove(hudTarget); log("HUD editor unavailable"); }
+    }
+    if (hudHooksReady && notifyTarget && mhCreate(notifyTarget,reinterpret_cast<void*>(&patchedNotificationDraw),reinterpret_cast<void**>(&realNotificationDraw))==0) {
+        notificationHookReady = mhEnable(notifyTarget)==0;
+        if (!notificationHookReady) mhRemove(notifyTarget);
+    }
     // Hat is optional and must never block the already working overlay.
     // Private game-render hooks are deferred until the user checks the box.
     try { InitializeChinaHat(mhCreate,mhEnable,mhDisable,mhRemove); }
