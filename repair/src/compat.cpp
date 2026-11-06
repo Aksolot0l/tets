@@ -24,6 +24,7 @@
 #include "visual_avatar_preview.h"
 #include "visual_color.h"
 #include "visual_player_skin.h"
+#include "visual_player_replay.h"
 #include <atomic>
 #include <array>
 #include <cstring>
@@ -165,6 +166,7 @@ static thread_local ID3D11DeviceContext* frameContext = nullptr;
 static thread_local UINT frameWidth = 0, frameHeight = 0;
 // One SRV reference is retained until the ImGui draw data is submitted.
 static thread_local ID3D11ShaderResourceView* previewFrameView = nullptr;
+static bool previewGameModelTest=false; // explicitly opt-in; reset on restart
 static LARGE_INTEGER lastFrame{};
 static LARGE_INTEGER frequency{};
 
@@ -580,23 +582,42 @@ static void drawEffectPreview(VisualEditor editor) {
     if (guiSetNextSize) guiSetNextSize(ImVec2(310.f,360.f),ImGuiCond_FirstUseEver);
     pushVisualStyle();
     if (guiBegin("Preview##effect",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
-        // Keep the acquired view alive until the ImGui renderer has consumed
-        // this frame; the candidate list itself can change or be cleared.
-        release(previewFrameView);
-        auto skin=visual_player_skin::acquire(frameDevice); previewFrameView=skin.view;
-        if (skin.view) {
-            char label[96]{}; std::snprintf(label,sizeof(label),"Game texture %u/%u (verify)",skin.index+1,skin.count); realText(label,nullptr);
-        } else realText("Waiting for player; sample avatar",nullptr);
-        auto* d=guiDrawList(); const ImVec2 o=guiCursor(); const auto now=GetTickCount64();
-        if (d) {
-            drawGradientRect(d,o,ImVec2(o.x+280.f,o.y+215.f),IM_COL32(19,33,37,255),IM_COL32(17,26,33,255),IM_COL32(8,14,20,255),IM_COL32(9,18,20,255));
-            drawLine(d,ImVec2(o.x+15,o.y+205),ImVec2(o.x+265,o.y+205),IM_COL32(42,85,68,150),1.f);
-            if (editor==VisualEditor::Hat) drawHatPreview(d,o,now,skin); else drawTrailPreview(d,o,now,skin);
+        if (guiCheckbox("Game model replay (test)",&previewGameModelTest)) {
+            if (!previewGameModelTest) SetPlayerModelPreviewActive(false);
         }
-        guiDummy(ImVec2(280.f,215.f));
-        realText("Sample model; game shader may differ.",nullptr);
-        if (skin.count>1 && guiButton("Next texture##skin",ImVec2(-1.f,0.f))) visual_player_skin::next();
-        if (!skin.view) realText("Use third person to detect skin.",nullptr);
+        // ImGui consumes the texture only after GUI construction has finished.
+        release(previewFrameView);
+        auto* d=guiDrawList(); const auto now=GetTickCount64();
+        if (previewGameModelTest) {
+            auto* model=visual_player_replay::acquire(frameDevice); previewFrameView=model;
+            char status[96]{};
+            if (model) std::snprintf(status,sizeof(status),"%u game draws copied (verify)",visual_player_replay::lastDraws.load(std::memory_order_relaxed));
+            else std::snprintf(status,sizeof(status),"Waiting for player draws");
+            realText(status,nullptr);
+            const ImVec2 p=guiCursor();
+            if (d) {
+                drawGradientRect(d,p,ImVec2(p.x+280.f,p.y+215.f),IM_COL32(19,33,37,255),IM_COL32(17,26,33,255),IM_COL32(8,14,20,255),IM_COL32(9,18,20,255));
+                if (model) drawImage(d,static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(model)),ImVec2(p.x+32.f,p.y),ImVec2(p.x+247.f,p.y+215.f),ImVec2(0,0),ImVec2(1,1),IM_COL32_WHITE);
+            }
+            guiDummy(ImVec2(280.f,215.f));
+            realText("Third person; turn to face camera.",nullptr);
+            realText("Effect overlay not available in test.",nullptr);
+        } else {
+            auto skin=visual_player_skin::acquire(frameDevice); previewFrameView=skin.view;
+            if (skin.view) {
+                char label[96]{}; std::snprintf(label,sizeof(label),"Game texture %u/%u (verify)",skin.index+1,skin.count); realText(label,nullptr);
+            } else realText("Waiting for player; sample avatar",nullptr);
+            const ImVec2 p=guiCursor();
+            if (d) {
+                drawGradientRect(d,p,ImVec2(p.x+280.f,p.y+215.f),IM_COL32(19,33,37,255),IM_COL32(17,26,33,255),IM_COL32(8,14,20,255),IM_COL32(9,18,20,255));
+                drawLine(d,ImVec2(p.x+15,p.y+205),ImVec2(p.x+265,p.y+205),IM_COL32(42,85,68,150),1.f);
+                if (editor==VisualEditor::Hat) drawHatPreview(d,p,now,skin); else drawTrailPreview(d,p,now,skin);
+            }
+            guiDummy(ImVec2(280.f,215.f));
+            realText("Sample model; game shader may differ.",nullptr);
+            if (skin.count>1 && guiButton("Next texture##skin",ImVec2(-1.f,0.f))) visual_player_skin::next();
+            if (!skin.view) realText("Use third person to detect skin.",nullptr);
+        }
     }
     guiEnd(); popVisualStyle();
 }
@@ -749,6 +770,7 @@ static void patchedDrawGui(void* runtime) {
         SetChinaHatEnabled(false);
         SetTrailEnabled(false);
         SetPlayerSkinPreviewActive(false);
+        SetPlayerModelPreviewActive(false);
         if (bridgeActive) bridgeActive(false);
         DisableUwpExtraInput();
         log("overlay disabled by Delete; DLLs remain loaded until game exit");
@@ -758,6 +780,7 @@ static void patchedDrawGui(void* runtime) {
     if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }
     const bool editingVisual=menuOpen && visualEditor!=VisualEditor::None && canVisualPreview();
     SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options);
+    SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && previewGameModelTest);
     if (!menuOpen || (!hudEditorOpen && !editingVisual)) realDrawGui(runtime);
     if (editingVisual) { drawVisualEditor(); return; }
     if (menuOpen && hudEditorOpen && hudHooksReady) { drawHudEditor(runtime); return; }

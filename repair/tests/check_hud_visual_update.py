@@ -31,7 +31,7 @@ for symbol in ('_ZN5ImGui6ButtonEPKcRK6ImVec2','_ZN5ImGui17GetWindowDrawListEv',
                '_ZN10ImDrawList23AddRectFilledMultiColorERK6ImVec2S2_jjjj'):
     assert symbol in u and symbol.encode() in exports, symbol
 assert 'Waiting for player; sample avatar' in u and 'Sample model; game shader may differ' in u
-assert 'visual_avatar_preview::hat(mesh,s,now)' in u and 'drawTrailPreview(d,o,now,skin)' in u
+assert 'visual_avatar_preview::hat(mesh,s,now)' in u and 'drawTrailPreview(d,p,now,skin)' in u
 assert 'captureGamePreview' not in u and 'CopyResource(previewTexture' not in u
 assert 'Settings##open_hat' in u and 'Settings##open_trail' in u
 assert 'drawVisualEditor(); return;' in u and 'drawEffectPreview(current)' in u
@@ -47,7 +47,7 @@ assert 'visual_gpu_depth::expectedDepth=dsv' in n and 'submitVisual(t,param(Visu
 assert 'D3D11_DEPTH_WRITE_MASK_ZERO' in gpu and 'D3D11_BLEND_BLEND_FACTOR' in gpu
 assert 'current==expectedDepth' in gpu and 'ctx!=expectedContext' in gpu
 assert 'ctx->OMSetDepthStencilState(oldDepth,stencil)' in gpu and 'ctx->OMSetBlendState(oldBlend,oldFactor,sampleMask)' in gpu
-assert 'if (!inVisualDraw)' in gpu and 'if (inPlayerCapture)' in gpu and 'call(); return;' in gpu
+assert 'if (!inVisualDraw)' in gpu and 'if (inPlayerCapture)' in gpu and 'call(); // The normal world draw' in gpu
 assert 'Old overlay (see-through)' in u and 'SetVisualLegacyMode(legacy)' in u
 
 # The main HUD theme is installed after essential hooks, is limited to known
@@ -81,3 +81,20 @@ assert 'scopeGeneration==generation' in skin and 'ctx!=scopeContext' in skin
 assert 'PSGetShaderResources(0,4,views)' in skin and 'count<8' in skin
 assert 'CreateFile' not in skin and 'Map(' not in skin and 'CopyResource' not in skin
 print('Read-only skin candidate preview: static OK; Windows test required')
+
+replay=(r/'src/visual_player_replay.h').read_text()
+assert 'static bool previewGameModelTest=false' in u
+assert 'Game model replay (test)' in u and 'Effect overlay not available in test.' in u
+assert 'SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && previewGameModelTest)' in u
+assert 'visual_player_replay::acquire(frameDevice)' in u and 'previewFrameView=model' in u
+assert 'scope.draws>=128' in replay and 'srvBound(ctx,scope.srv)' in replay and 'outputBound(ctx,scope.rtv,scope.dsv)' in replay
+for guard in ('SOGetTargets','GetPredication','OMGetRenderTargetsAndUnorderedAccessViews','d.StencilEnable','RSGetViewports'):
+    assert guard in replay
+assert 'ctx->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT,saved.rtv,saved.dsv)' in replay
+assert 'ctx->RSSetViewports(1,&saved.viewport)' in replay and 'ctx->RSSetScissorRects(saved.scissorCount' in replay
+assert 'CreateFile' not in replay and 'CopyResource' not in replay and 'Map(' not in replay
+assert 'originalDraw(c,n,start); },true' in gpu and 'originalIndexed(c,n,start,base); },true' in gpu
+assert 'originalInstanced(c,n,instances,start,first); },true' in gpu
+assert 'originalIndirect(c,b,off); },true' not in gpu and 'originalAuto(c); },true' not in gpu
+assert 'NestedScope' in n and 'visual_player_replay::end()' in n
+print('Opt-in replay wiring: static OK; D3D11/Minecraft test required')

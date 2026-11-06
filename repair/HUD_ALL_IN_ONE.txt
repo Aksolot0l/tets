@@ -24,6 +24,8 @@ SDK и Dear ImGui сюда не включены. Исходников закр�
    - repair/src/visual_gpu_depth.h
    - repair/src/visual_depth_policy.h
    - repair/src/visual_player_skin.h
+   - repair/src/visual_player_replay.h
+   - repair/src/visual_model_capture_policy.h
    - repair/src/visual_skin_policy.h
    - repair/src/visual_avatar_preview.h
    - repair/src/visual_gradient.h
@@ -55,6 +57,9 @@ SDK и Dear ImGui сюда не включены. Исходников закр�
    - repair/tests/visual_gpu_mock_types.h
    - repair/tests/visual_depth_policy.cpp
    - repair/tests/visual_player_skin.cpp
+   - repair/tests/visual_player_replay.cpp
+   - repair/tests/visual_replay_mock_types.h
+   - repair/tests/visual_model_capture_policy.cpp
    - repair/tests/visual_skin_mock_types.h
    - repair/tests/visual_skin_policy.cpp
    - repair/tests/visual_hooks.cpp
@@ -157,6 +162,14 @@ Visuals содержит отдельные кнопки Settings для China H
 Пока текстура не найдена, отображается примерный Стив. Нет чтения текстуры на
 CPU, сохранения в файл или отправки в сеть. В Minecraft поиск не проверен.
 
+В Preview доступен выключенный по умолчанию `Game model replay (test)`.
+Он пробует скопировать прямые GPU-вызовы локального игрока в отдельную текстуру,
+используя игровую камеру: это не копия экрана и не отдельный фронтальный ракурс.
+Модель может обрезаться или не появиться; шляпа/трейл в этом тестовом режиме
+пока не накладываются. Тест не проверен на Windows/Minecraft, возможны падение
+FPS, артефакты, влияние на GPU-запросы и сбой. При выключении галочки возвращается
+предыдущий пример со скином; при перезапуске эксперимент выключен.
+
 Даже если найден настоящий скин, модель в предпросмотре упрощённая и создана
 отдельно: из игры не извлечены mesh, кости, нестандартная геометрия и анимация.
 Для шляпы показана голова почти спереди; для трейла — персонаж сбоку и
@@ -215,6 +228,7 @@ previousSha256 в repair/install-manifest.json. Для сборки и уста�
 #include "visual_avatar_preview.h"
 #include "visual_color.h"
 #include "visual_player_skin.h"
+#include "visual_player_replay.h"
 #include <atomic>
 #include <array>
 #include <cstring>
@@ -356,6 +370,7 @@ static thread_local ID3D11DeviceContext* frameContext = nullptr;
 static thread_local UINT frameWidth = 0, frameHeight = 0;
 // One SRV reference is retained until the ImGui draw data is submitted.
 static thread_local ID3D11ShaderResourceView* previewFrameView = nullptr;
+static bool previewGameModelTest=false; // explicitly opt-in; reset on restart
 static LARGE_INTEGER lastFrame{};
 static LARGE_INTEGER frequency{};
 
@@ -771,23 +786,42 @@ static void drawEffectPreview(VisualEditor editor) {
     if (guiSetNextSize) guiSetNextSize(ImVec2(310.f,360.f),ImGuiCond_FirstUseEver);
     pushVisualStyle();
     if (guiBegin("Preview##effect",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
-        // Keep the acquired view alive until the ImGui renderer has consumed
-        // this frame; the candidate list itself can change or be cleared.
-        release(previewFrameView);
-        auto skin=visual_player_skin::acquire(frameDevice); previewFrameView=skin.view;
-        if (skin.view) {
-            char label[96]{}; std::snprintf(label,sizeof(label),"Game texture %u/%u (verify)",skin.index+1,skin.count); realText(label,nullptr);
-        } else realText("Waiting for player; sample avatar",nullptr);
-        auto* d=guiDrawList(); const ImVec2 o=guiCursor(); const auto now=GetTickCount64();
-        if (d) {
-            drawGradientRect(d,o,ImVec2(o.x+280.f,o.y+215.f),IM_COL32(19,33,37,255),IM_COL32(17,26,33,255),IM_COL32(8,14,20,255),IM_COL32(9,18,20,255));
-            drawLine(d,ImVec2(o.x+15,o.y+205),ImVec2(o.x+265,o.y+205),IM_COL32(42,85,68,150),1.f);
-            if (editor==VisualEditor::Hat) drawHatPreview(d,o,now,skin); else drawTrailPreview(d,o,now,skin);
+        if (guiCheckbox("Game model replay (test)",&previewGameModelTest)) {
+            if (!previewGameModelTest) SetPlayerModelPreviewActive(false);
         }
-        guiDummy(ImVec2(280.f,215.f));
-        realText("Sample model; game shader may differ.",nullptr);
-        if (skin.count>1 && guiButton("Next texture##skin",ImVec2(-1.f,0.f))) visual_player_skin::next();
-        if (!skin.view) realText("Use third person to detect skin.",nullptr);
+        // ImGui consumes the texture only after GUI construction has finished.
+        release(previewFrameView);
+        auto* d=guiDrawList(); const auto now=GetTickCount64();
+        if (previewGameModelTest) {
+            auto* model=visual_player_replay::acquire(frameDevice); previewFrameView=model;
+            char status[96]{};
+            if (model) std::snprintf(status,sizeof(status),"%u game draws copied (verify)",visual_player_replay::lastDraws.load(std::memory_order_relaxed));
+            else std::snprintf(status,sizeof(status),"Waiting for player draws");
+            realText(status,nullptr);
+            const ImVec2 p=guiCursor();
+            if (d) {
+                drawGradientRect(d,p,ImVec2(p.x+280.f,p.y+215.f),IM_COL32(19,33,37,255),IM_COL32(17,26,33,255),IM_COL32(8,14,20,255),IM_COL32(9,18,20,255));
+                if (model) drawImage(d,static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(model)),ImVec2(p.x+32.f,p.y),ImVec2(p.x+247.f,p.y+215.f),ImVec2(0,0),ImVec2(1,1),IM_COL32_WHITE);
+            }
+            guiDummy(ImVec2(280.f,215.f));
+            realText("Third person; turn to face camera.",nullptr);
+            realText("Effect overlay not available in test.",nullptr);
+        } else {
+            auto skin=visual_player_skin::acquire(frameDevice); previewFrameView=skin.view;
+            if (skin.view) {
+                char label[96]{}; std::snprintf(label,sizeof(label),"Game texture %u/%u (verify)",skin.index+1,skin.count); realText(label,nullptr);
+            } else realText("Waiting for player; sample avatar",nullptr);
+            const ImVec2 p=guiCursor();
+            if (d) {
+                drawGradientRect(d,p,ImVec2(p.x+280.f,p.y+215.f),IM_COL32(19,33,37,255),IM_COL32(17,26,33,255),IM_COL32(8,14,20,255),IM_COL32(9,18,20,255));
+                drawLine(d,ImVec2(p.x+15,p.y+205),ImVec2(p.x+265,p.y+205),IM_COL32(42,85,68,150),1.f);
+                if (editor==VisualEditor::Hat) drawHatPreview(d,p,now,skin); else drawTrailPreview(d,p,now,skin);
+            }
+            guiDummy(ImVec2(280.f,215.f));
+            realText("Sample model; game shader may differ.",nullptr);
+            if (skin.count>1 && guiButton("Next texture##skin",ImVec2(-1.f,0.f))) visual_player_skin::next();
+            if (!skin.view) realText("Use third person to detect skin.",nullptr);
+        }
     }
     guiEnd(); popVisualStyle();
 }
@@ -940,6 +974,7 @@ static void patchedDrawGui(void* runtime) {
         SetChinaHatEnabled(false);
         SetTrailEnabled(false);
         SetPlayerSkinPreviewActive(false);
+        SetPlayerModelPreviewActive(false);
         if (bridgeActive) bridgeActive(false);
         DisableUwpExtraInput();
         log("overlay disabled by Delete; DLLs remain loaded until game exit");
@@ -949,6 +984,7 @@ static void patchedDrawGui(void* runtime) {
     if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }
     const bool editingVisual=menuOpen && visualEditor!=VisualEditor::None && canVisualPreview();
     SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options);
+    SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && previewGameModelTest);
     if (!menuOpen || (!hudEditorOpen && !editingVisual)) realDrawGui(runtime);
     if (editingVisual) { drawVisualEditor(); return; }
     if (menuOpen && hudEditorOpen && hudHooksReady) { drawHudEditor(runtime); return; }
@@ -1470,6 +1506,7 @@ struct Settings {
 #include "visual_depth_policy.h"
 #include "visual_gpu_depth.h"
 #include "visual_player_skin.h"
+#include "visual_player_replay.h"
 #include <d3d11.h>
 #include "hat_animation.h"
 #include <bcrypt.h>
@@ -1714,27 +1751,31 @@ void rememberPlayer(void* entity,float partial) {
 void drawHatAtPlayer(const PlayerFrame& player);
 ID3D11DeviceContext* sameThreadContext();
 std::intptr_t playerHook(void* self,void* entity,void* pos,float renderValue,float partial) {
- // Only inspect shader resources while this exact local player's original
- // renderer executes, on the observed immediate-context thread. No second
- // call to the game renderer and no modification of its GPU state.
+ // Only observe this exact local player's original renderer on the observed
+ // immediate-context thread. Optional GPU draw replay is separately opt-in.
+ // A nested player renderer (for example another actor) is never captured.
+ const bool nested=visual_gpu_depth::inPlayerCapture;
+ if (nested) visual_gpu_depth::inPlayerCapture=false;
+ struct NestedScope { bool nested; ~NestedScope() { if (nested) visual_gpu_depth::inPlayerCapture=true; } } nestedScope{nested};
  ID3D11DeviceContext* captureContext=nullptr; bool capture=false;
- if (visual_player_skin::isRequested() && !visual_gpu_depth::inPlayerCapture) {
+ if (visual_player_skin::isRequested() && !nested) {
   std::uintptr_t local=0;
   if (localPlayer(local) && reinterpret_cast<std::uintptr_t>(entity)==local) {
    captureContext=sameThreadContext();
    if (captureContext && visual_gpu_depth::matches(captureContext)) {
     visual_player_skin::begin(local,captureContext);
     capture=visual_player_skin::scopeContext==captureContext;
+    if (capture) visual_player_replay::begin(local,captureContext);
     visual_gpu_depth::inPlayerCapture=capture;
    }
   }
  }
  struct CaptureScope {
   ID3D11DeviceContext* ctx; bool active;
-  ~CaptureScope() { if(active) { visual_gpu_depth::inPlayerCapture=false; visual_player_skin::end(); } if(ctx)ctx->Release(); }
+  ~CaptureScope() { if(active) { visual_gpu_depth::inPlayerCapture=false; visual_player_replay::end(); visual_player_skin::end(); } if(ctx)ctx->Release(); }
  } captureScope{captureContext,capture};
  const auto result=originalPlayer(self,entity,pos,renderValue,partial);
- if (capture) { visual_gpu_depth::inPlayerCapture=false; visual_player_skin::end(); captureScope.active=false; }
+ if (capture) { visual_gpu_depth::inPlayerCapture=false; visual_player_replay::end(); visual_player_skin::end(); captureScope.active=false; }
  // Do not clear a local-player frame when another player's renderer runs.
  if (anyVisual()) {
   std::uintptr_t local=0;
@@ -2063,7 +2104,11 @@ bool installHooks() {
   if (ctx) {
    bool gpu=visual_gpu_depth::install(ctx,createHook,enableHook,disableHook,removeHook);
    gpuHooksReady.store(gpu,std::memory_order_release);
-   if (gpu) visual_gpu_depth::playerObserver.store(&visual_player_skin::observe,std::memory_order_release);
+   if (gpu) {
+    visual_gpu_depth::playerObserver.store(&visual_player_skin::observe,std::memory_order_release);
+    visual_gpu_depth::replayEnd.store(&visual_player_replay::endDraw,std::memory_order_release);
+    visual_gpu_depth::replayBegin.store(&visual_player_replay::beginDraw,std::memory_order_release);
+   }
    ctx->Release();
    if (!gpu) log("GPU depth guard unavailable; strict visual draw disabled");
   }
@@ -2088,6 +2133,11 @@ void SetPlayerSkinPreviewActive(bool value) {
  if (!value) { visual_player_skin::setRequested(false); return; }
  if (visual_player_skin::isRequested()) return;
  if (enableVisual() && gpuHooksReady.load(std::memory_order_acquire)) visual_player_skin::setRequested(true);
+}
+void SetPlayerModelPreviewActive(bool value) {
+ if (!value) { visual_player_replay::setRequested(false); return; }
+ if (visual_player_replay::isRequested()) return;
+ if (enableVisual() && gpuHooksReady.load(std::memory_order_acquire)) visual_player_replay::setRequested(true);
 }
 void SetChinaHatEnabled(bool value) {
  if (!value) { enabled.store(false,std::memory_order_release); hatStatus.store(0,std::memory_order_relaxed); return; }
@@ -2155,6 +2205,8 @@ bool InitializeChinaHat(HatCreateHook create,HatToggleHook enable,HatToggleHook 
 struct ID3D11DeviceContext;
 // Opt-in read-only GPU skin candidate discovery for the effect editor.
 void SetPlayerSkinPreviewActive(bool enabled);
+// Experimental GPU draw replay, never enabled unless the user selects it.
+void SetPlayerModelPreviewActive(bool enabled);
 void ObserveVisualContext(ID3D11DeviceContext* context);
 int VisualDepthBefore();
 int VisualDepthAfter();
@@ -2250,10 +2302,10 @@ inline float sanitizeVisualParam(VisualParam param,float value) {
 НАЧАЛО ФАЙЛА: repair/src/visual_gpu_depth.h
 ================================================================================
 #pragma once
-// Experimental D3D11 gate. Draw hooks are global but touch state ONLY during
-// the adapter's scoped tessDraw on the same immediate context. Missing or
-// mismatched world depth fails closed. Original depth/blend is restored after
-// each draw. This still requires validation in the actual game.
+// Experimental D3D11 gate. Global draw hooks pass through by default. During
+// adapter tessDraw they guard depth/blend; the separate, user-opted-in local
+// player preview may replay direct draws into private targets after the world
+// draw. Each scope restores changed state. Both paths require game validation.
 #ifdef VISUAL_GPU_DEPTH_TEST_TYPES
 #include VISUAL_GPU_DEPTH_TEST_TYPES
 #else
@@ -2282,6 +2334,10 @@ inline thread_local bool inVisualDraw=false;
 // Optional read-only observer scoped to the local-player renderer.
 using PlayerObserver=void (*)(ID3D11DeviceContext*);
 inline std::atomic<PlayerObserver> playerObserver{nullptr};
+using ReplayBegin=bool (*)(ID3D11DeviceContext*);
+using ReplayEnd=void (*)(ID3D11DeviceContext*);
+inline std::atomic<ReplayBegin> replayBegin{nullptr};
+inline std::atomic<ReplayEnd> replayEnd{nullptr};
 inline thread_local bool inPlayerCapture=false;
 inline thread_local ID3D11DeviceContext* expectedContext=nullptr;
 inline thread_local ID3D11DepthStencilView* expectedDepth=nullptr;
@@ -2339,26 +2395,37 @@ struct Guard {
   release(newBlend); release(oldBlend); release(newDepth); release(oldDepth);
  }
 };
-template<class Call> void draw(ID3D11DeviceContext* ctx,Call call) {
+template<class Call> void draw(ID3D11DeviceContext* ctx,Call call,bool replayable=false) {
  if (!inVisualDraw) {
   if (inPlayerCapture) { auto observer=playerObserver.load(std::memory_order_acquire); if (observer) observer(ctx); }
-  call(); return;
+  call(); // The normal world draw is always submitted exactly once first.
+  if (inPlayerCapture && replayable) {
+   auto begin=replayBegin.load(std::memory_order_acquire); auto end=replayEnd.load(std::memory_order_acquire);
+   if (begin && end && begin(ctx)) {
+    // Do not recursively observe/replay if the runtime issues another draw
+    // while processing this copied call.
+    struct Restore { ID3D11DeviceContext* ctx; ReplayEnd end; ~Restore() { end(ctx); inPlayerCapture=true; } } restore{ctx,end};
+    inPlayerCapture=false;
+    call(); // Only direct Draw/DrawIndexed, including instanced variants.
+   }
+  }
+  return;
  }
  Guard guard(ctx);
  if (!guard.active) { rejected.fetch_add(1,std::memory_order_relaxed); return; }
  submitted.fetch_add(1,std::memory_order_relaxed); call();
 }
 inline void STDMETHODCALLTYPE onDraw(ID3D11DeviceContext* c,UINT n,UINT start) {
- draw(c,[&]{ originalDraw(c,n,start); });
+ draw(c,[&]{ originalDraw(c,n,start); },true);
 }
 inline void STDMETHODCALLTYPE onIndexed(ID3D11DeviceContext* c,UINT n,UINT start,INT base) {
- draw(c,[&]{ originalIndexed(c,n,start,base); });
+ draw(c,[&]{ originalIndexed(c,n,start,base); },true);
 }
 inline void STDMETHODCALLTYPE onInstanced(ID3D11DeviceContext* c,UINT n,UINT instances,UINT start,UINT first) {
- draw(c,[&]{ originalInstanced(c,n,instances,start,first); });
+ draw(c,[&]{ originalInstanced(c,n,instances,start,first); },true);
 }
 inline void STDMETHODCALLTYPE onIndexedInstanced(ID3D11DeviceContext* c,UINT n,UINT instances,UINT start,INT base,UINT first) {
- draw(c,[&]{ originalIndexedInstanced(c,n,instances,start,base,first); });
+ draw(c,[&]{ originalIndexedInstanced(c,n,instances,start,base,first); },true);
 }
 inline void STDMETHODCALLTYPE onAuto(ID3D11DeviceContext* c) { draw(c,[&]{ originalAuto(c); }); }
 inline void STDMETHODCALLTYPE onIndirect(ID3D11DeviceContext* c,ID3D11Buffer* b,UINT off) {
@@ -2529,6 +2596,193 @@ inline void next() { AcquireSRWLockExclusive(&lock); if (count) selected=(select
 
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/visual_player_skin.h
+================================================================================
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/visual_player_replay.h
+================================================================================
+#pragma once
+// Opt-in, best-effort copy of *GPU draws* made by the original local-player
+// renderer. It does not call that renderer again. The image has the game's
+// current camera, not an independent front view. Experimental, unverified.
+#ifdef VISUAL_PLAYER_REPLAY_TEST_TYPES
+#include VISUAL_PLAYER_REPLAY_TEST_TYPES
+#else
+#include <windows.h>
+#include <d3d11.h>
+#endif
+#include <atomic>
+#include <cstdint>
+#include "visual_model_capture_policy.h"
+namespace visual_player_replay {
+template<class T> inline void release(T*& p) { if (p) { p->Release(); p=nullptr; } }
+struct Target { ID3D11Texture2D* color=nullptr; ID3D11RenderTargetView* rtv=nullptr; ID3D11ShaderResourceView* srv=nullptr; ID3D11Texture2D* depth=nullptr; ID3D11DepthStencilView* dsv=nullptr; };
+inline void release(Target& t) { release(t.rtv); release(t.srv); release(t.color); release(t.dsv); release(t.depth); }
+inline constexpr UINT size=256;
+inline std::atomic<bool> requested{false};
+inline SRWLOCK lock=SRWLOCK_INIT;
+inline Target targets[2]{};
+inline ID3D11Device* device=nullptr;
+inline std::uintptr_t actor=0;
+inline std::uint64_t generation=0;
+inline int front=-1;
+inline std::uint64_t lastFrameTick=0;
+inline bool creationFailed=false;
+inline std::atomic<unsigned> lastDraws{0}, skipped{0};
+inline void clearLocked() { for (auto& t:targets) release(t); release(device); actor=0; front=-1; lastFrameTick=0; creationFailed=false; ++generation; lastDraws.store(0); }
+inline void setRequested(bool value) {
+ bool old=requested.exchange(value,std::memory_order_acq_rel);
+ if (old && !value) { AcquireSRWLockExclusive(&lock); clearLocked(); ReleaseSRWLockExclusive(&lock); }
+}
+inline bool isRequested() { return requested.load(std::memory_order_acquire); }
+inline bool createTarget(ID3D11Device* dev,Target& t) {
+ D3D11_TEXTURE2D_DESC d{}; d.Width=size; d.Height=size; d.MipLevels=1; d.ArraySize=1;
+ d.Format=DXGI_FORMAT_R8G8B8A8_UNORM; d.SampleDesc.Count=1; d.Usage=D3D11_USAGE_DEFAULT; d.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;
+ if (FAILED(dev->CreateTexture2D(&d,nullptr,&t.color)) || FAILED(dev->CreateRenderTargetView(t.color,nullptr,&t.rtv)) || FAILED(dev->CreateShaderResourceView(t.color,nullptr,&t.srv))) { release(t); return false; }
+ d.Format=DXGI_FORMAT_D24_UNORM_S8_UINT; d.BindFlags=D3D11_BIND_DEPTH_STENCIL;
+ if (FAILED(dev->CreateTexture2D(&d,nullptr,&t.depth)) || FAILED(dev->CreateDepthStencilView(t.depth,nullptr,&t.dsv))) { release(t); return false; }
+ return true;
+}
+// Our private SRVs must not be bound for reading when used as render targets.
+// Check all six shader stages once per player pass, before any clear or replay.
+inline bool srvBound(ID3D11DeviceContext* c,ID3D11ShaderResourceView* target) {
+ using Get = void (STDMETHODCALLTYPE ID3D11DeviceContext::*)(UINT,UINT,ID3D11ShaderResourceView**);
+ const Get getters[]={&ID3D11DeviceContext::VSGetShaderResources,&ID3D11DeviceContext::HSGetShaderResources,&ID3D11DeviceContext::DSGetShaderResources,&ID3D11DeviceContext::GSGetShaderResources,&ID3D11DeviceContext::PSGetShaderResources,&ID3D11DeviceContext::CSGetShaderResources};
+ bool found=false;
+ for (auto get:getters) {
+  ID3D11ShaderResourceView* views[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT]{};
+  (c->*get)(0,D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT,views);
+  for (auto*& v:views) { if (v==target) found=true; release(v); }
+ }
+ return found;
+}
+struct Scope { ID3D11DeviceContext* ctx=nullptr; ID3D11RenderTargetView* rtv=nullptr; ID3D11DepthStencilView* dsv=nullptr; ID3D11ShaderResourceView* srv=nullptr; int index=-1; std::uint64_t gen=0; unsigned draws=0; bool depthCleared=false, reversedDepth=false; };
+inline thread_local Scope scope;
+inline void end();
+inline bool outputBound(ID3D11DeviceContext* c,ID3D11RenderTargetView* target,ID3D11DepthStencilView* depth) {
+ ID3D11RenderTargetView* views[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{}; ID3D11DepthStencilView* dsv=nullptr;
+ c->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT,views,&dsv);
+ bool found=dsv==depth; for (auto*& v:views) { found|=v==target; release(v); } release(dsv); return found;
+}
+inline void begin(std::uintptr_t player,ID3D11DeviceContext* ctx) {
+ end(); if (!isRequested() || !player || !ctx) return;
+ ID3D11Device* current=nullptr; ctx->GetDevice(&current); if (!current) return;
+ AcquireSRWLockExclusive(&lock);
+ if (isRequested()) {
+  if (device!=current || actor!=player) { clearLocked(); device=current; current=nullptr; actor=player; }
+  if (!creationFailed && (!targets[0].rtv || !targets[1].rtv)) {
+   release(targets[0]); release(targets[1]);
+   if (!createTarget(device,targets[0]) || !createTarget(device,targets[1])) { release(targets[0]); release(targets[1]); creationFailed=true; }
+  }
+  if (targets[0].rtv && targets[1].rtv) {
+   const int index=front==0?1:0; auto& t=targets[index];
+   scope.ctx=ctx; scope.rtv=t.rtv; scope.dsv=t.dsv; scope.srv=t.srv; scope.index=index; scope.gen=generation;
+   scope.rtv->AddRef(); scope.dsv->AddRef(); scope.srv->AddRef();
+  }
+ }
+ ReleaseSRWLockExclusive(&lock); release(current);
+ if (!scope.ctx) return;
+ if (srvBound(ctx,scope.srv) || outputBound(ctx,scope.rtv,scope.dsv)) { end(); return; }
+ const FLOAT transparent[4]={0,0,0,0}; ctx->ClearRenderTargetView(scope.rtv,transparent);
+}
+inline void end() {
+ if (scope.ctx && scope.draws) {
+  AcquireSRWLockExclusive(&lock);
+  if (isRequested() && scope.gen==generation) { front=scope.index; lastFrameTick=GetTickCount64(); lastDraws.store(scope.draws,std::memory_order_relaxed); }
+  ReleaseSRWLockExclusive(&lock);
+ }
+ release(scope.rtv); release(scope.dsv); release(scope.srv); scope={};
+}
+inline ID3D11ShaderResourceView* acquire(ID3D11Device* expected) {
+ ID3D11ShaderResourceView* result=nullptr; AcquireSRWLockShared(&lock);
+ const auto now=GetTickCount64();
+ if (isRequested() && expected && device==expected && front>=0 && lastFrameTick && now>=lastFrameTick && now-lastFrameTick<=2000) { result=targets[front].srv; if(result)result->AddRef(); }
+ ReleaseSRWLockShared(&lock); return result;
+}
+struct DrawState {
+ ID3D11DeviceContext* ctx=nullptr;
+ ID3D11RenderTargetView* rtv[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
+ ID3D11DepthStencilView* dsv=nullptr;
+ D3D11_VIEWPORT viewport{};
+ D3D11_RECT scissors[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
+ UINT scissorCount=0;
+ bool active=false;
+};
+inline thread_local DrawState saved;
+inline bool beginDraw(ID3D11DeviceContext* ctx) {
+ if (!isRequested() || !scope.ctx || ctx!=scope.ctx || saved.active || scope.draws>=128) return false;
+ UINT count=0; ctx->RSGetViewports(&count,nullptr);
+ D3D11_VIEWPORT vp{}; if (count==1) { UINT one=1; ctx->RSGetViewports(&one,&vp); if(one!=1)count=0; }
+ visual_model_capture_policy::Viewport input{vp.TopLeftX,vp.TopLeftY,vp.Width,vp.Height,vp.MinDepth,vp.MaxDepth}, output{};
+ const bool validVp=count==1 && visual_model_capture_policy::viewport(input,static_cast<float>(size),output);
+ ID3D11DepthStencilState* depth=nullptr; UINT stencil=0; ctx->OMGetDepthStencilState(&depth,&stencil);
+ D3D11_DEPTH_STENCIL_DESC d{}; if (depth) depth->GetDesc(&d); else { d.DepthEnable=TRUE; d.DepthFunc=D3D11_COMPARISON_LESS; }
+ release(depth);
+ const bool depthOk=d.DepthEnable && (d.DepthFunc==D3D11_COMPARISON_LESS || d.DepthFunc==D3D11_COMPARISON_LESS_EQUAL || d.DepthFunc==D3D11_COMPARISON_GREATER || d.DepthFunc==D3D11_COMPARISON_GREATER_EQUAL);
+ ID3D11RenderTargetView* old[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{}; ID3D11DepthStencilView* oldDsv=nullptr;
+ ctx->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT,old,&oldDsv);
+ ID3D11Buffer* streams[D3D11_SO_BUFFER_SLOT_COUNT]{}; ctx->SOGetTargets(D3D11_SO_BUFFER_SLOT_COUNT,streams);
+ bool so=false; for(auto*& p:streams) { so|=p!=nullptr; release(p); }
+ ID3D11Predicate* pred=nullptr; BOOL predValue=FALSE; ctx->GetPredication(&pred,&predValue); const bool predicate=pred!=nullptr; release(pred);
+ ID3D11Device* dev=nullptr; ctx->GetDevice(&dev); const bool deviceReady=dev!=nullptr;
+ UINT slots=dev && dev->GetFeatureLevel()>=D3D_FEATURE_LEVEL_11_1 ? 64u : 8u; release(dev);
+ ID3D11UnorderedAccessView* uavs[64]{}; ctx->OMGetRenderTargetsAndUnorderedAccessViews(0,nullptr,nullptr,0,slots,uavs);
+ bool uav=false; for (UINT i=0;i<slots;++i) { uav|=uavs[i]!=nullptr; release(uavs[i]); }
+ const bool safe=visual_model_capture_policy::safeDraw(validVp && deviceReady,depthOk && oldDsv!=nullptr,d.StencilEnable!=FALSE,uav,so,predicate,count);
+ if (!safe) { for(auto*& p:old)release(p); release(oldDsv); skipped.fetch_add(1,std::memory_order_relaxed); return false; }
+ const bool reversed=d.DepthFunc==D3D11_COMPARISON_GREATER || d.DepthFunc==D3D11_COMPARISON_GREATER_EQUAL;
+ if (scope.depthCleared && reversed!=scope.reversedDepth) {
+  for (auto*& p:old) release(p);
+  release(oldDsv); skipped.fetch_add(1,std::memory_order_relaxed); return false;
+ }
+ if (!scope.depthCleared) {
+  ctx->ClearDepthStencilView(scope.dsv,D3D11_CLEAR_DEPTH,reversed?0.f:1.f,0); scope.depthCleared=true; scope.reversedDepth=reversed;
+ }
+ saved.ctx=ctx; for (UINT i=0;i<D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT;++i) saved.rtv[i]=old[i]; saved.dsv=oldDsv; saved.viewport=vp;
+ saved.scissorCount=D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE; ctx->RSGetScissorRects(&saved.scissorCount,saved.scissors);
+ D3D11_VIEWPORT dst{output.x,output.y,output.width,output.height,output.minDepth,output.maxDepth};
+ const D3D11_RECT rect{0,0,static_cast<LONG>(size),static_cast<LONG>(size)};
+ ctx->OMSetRenderTargets(1,&scope.rtv,scope.dsv); ctx->RSSetViewports(1,&dst); ctx->RSSetScissorRects(1,&rect); saved.active=true;
+ return true;
+}
+inline void endDraw(ID3D11DeviceContext* ctx) {
+ if (!saved.active || ctx!=saved.ctx) return;
+ ctx->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT,saved.rtv,saved.dsv);
+ ctx->RSSetViewports(1,&saved.viewport); ctx->RSSetScissorRects(saved.scissorCount,saved.scissorCount?saved.scissors:nullptr);
+ for (auto*& p:saved.rtv) release(p);
+ release(saved.dsv); saved={}; ++scope.draws;
+}
+}
+
+================================================================================
+КОНЕЦ ФАЙЛА: repair/src/visual_player_replay.h
+================================================================================
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/visual_model_capture_policy.h
+================================================================================
+#pragma once
+#include <cmath>
+namespace visual_model_capture_policy {
+// This is not a new camera: it magnifies the actor's existing world projection.
+struct Viewport { float x,y,width,height,minDepth,maxDepth; };
+inline bool viewport(const Viewport& source,float size,Viewport& out) {
+ if (!std::isfinite(source.width) || !std::isfinite(source.height) || !std::isfinite(source.minDepth) || !std::isfinite(source.maxDepth) || source.width<1 || source.height<1 || source.minDepth<0 || source.maxDepth>1 || source.minDepth>source.maxDepth || !std::isfinite(size) || size<1 || size>1024) return false;
+ const float aspect=source.width/source.height;
+ if (!std::isfinite(aspect) || aspect<.2f || aspect>5.f) return false;
+ const float h=size*3.f, w=h*aspect;
+ out={(size-w)*.5f,(size-h)*.5f,w,h,source.minDepth,source.maxDepth};
+ return true;
+}
+inline bool safeDraw(bool contextOk,bool depthOk,bool stencil,bool outputUav,bool streamOutput,bool predication,unsigned viewportCount) {
+ return contextOk && depthOk && !stencil && !outputUav && !streamOutput && !predication && viewportCount==1;
+}
+}
+
+================================================================================
+КОНЕЦ ФАЙЛА: repair/src/visual_model_capture_policy.h
 ================================================================================
 
 
@@ -3662,14 +3916,27 @@ struct Context:ID3D11DeviceContext {
  void OMSetDepthStencilState(ID3D11DepthStencilState* p,UINT r) override {curDepth=p;stencil=r;sets++;}
  void OMSetBlendState(ID3D11BlendState* p,const FLOAT* f,UINT m) override {curBlend=p;mask=m;for(int i=0;i<4;i++)factor[i]=f[i];sets++;}
 };
-static int observed=0;
+static int observed=0, replayStarts=0,replayEnds=0; static bool replayAllowed=true;
+static bool beginReplay(ID3D11DeviceContext*) { ++replayStarts; return replayAllowed; }
+static void endReplay(ID3D11DeviceContext*) { ++replayEnds; }
 static void observePlayer(ID3D11DeviceContext*) { ++observed; }
 int main() {
  using namespace visual_gpu_depth;
  Context ctx; int calls=0; inVisualDraw=false; playerObserver.store(&observePlayer);
  draw(&ctx,[&]{++calls;}); assert(calls==1 && ctx.sets==0 && observed==0);
  inPlayerCapture=true; draw(&ctx,[&]{++calls;}); assert(calls==2 && ctx.sets==0 && observed==1);
- inPlayerCapture=false; playerObserver.store(nullptr); calls=1;
+ // World is drawn first; only allowed draw types are replayed and state is
+ // restored even if a simulated replay throws.
+ replayBegin.store(&beginReplay); replayEnd.store(&endReplay);
+ int startCalls=calls; int pass=0;
+ draw(&ctx,[&]{++calls; ++pass; assert(inPlayerCapture==(pass==1));},true);
+ assert(calls==startCalls+2 && replayStarts==1 && replayEnds==1 && inPlayerCapture);
+ startCalls=calls; draw(&ctx,[&]{++calls;},false); assert(calls==startCalls+1 && replayStarts==1 && replayEnds==1);
+ replayAllowed=false; startCalls=calls; draw(&ctx,[&]{++calls;},true); assert(calls==startCalls+1 && replayStarts==2 && replayEnds==1);
+ replayAllowed=true; int step=0; try { draw(&ctx,[&]{if(++step==2) throw 5;},true); assert(false); } catch(int e) {assert(e==5);}
+ assert(step==2 && replayStarts==3 && replayEnds==2);
+ inPlayerCapture=false; startCalls=calls; draw(&ctx,[&]{++calls;},true); assert(calls==startCalls+1 && replayStarts==3);
+ replayBegin.store(nullptr); replayEnd.store(nullptr); playerObserver.store(nullptr); calls=1;
  expectedContext=&ctx; expectedDepth=&ctx.view; worldCompare=D3D11_COMPARISON_LESS_EQUAL; opacity=.25f; inVisualDraw=true;
  draw(&ctx,[&]{
   ++calls; D3D11_DEPTH_STENCIL_DESC d{}; ctx.curDepth->GetDesc(&d);
@@ -3859,6 +4126,188 @@ int main() {
 
 
 ================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/visual_player_replay.cpp
+================================================================================
+#define VISUAL_PLAYER_REPLAY_TEST_TYPES "../tests/visual_replay_mock_types.h"
+#include "../src/visual_player_replay.h"
+#include <cassert>
+#include <cstring>
+#include <vector>
+static int liveObjects=0;
+template<class T> struct Obj:T { int refs=1; Obj(){++liveObjects;} ~Obj(){--liveObjects;} ULONG AddRef() override {return ++refs;} ULONG Release() override {auto r=--refs;if(!r)delete this;return r;} };
+struct Device:Obj<ID3D11Device> {
+ bool fail=false;
+ HRESULT CreateTexture2D(const D3D11_TEXTURE2D_DESC*,void*,ID3D11Texture2D** out) override {if(fail)return -1;*out=new Obj<ID3D11Texture2D>;return 0;}
+ HRESULT CreateRenderTargetView(ID3D11Texture2D*,void*,ID3D11RenderTargetView** out) override {*out=new Obj<ID3D11RenderTargetView>;return 0;}
+ HRESULT CreateShaderResourceView(ID3D11Texture2D*,void*,ID3D11ShaderResourceView** out) override {*out=new Obj<ID3D11ShaderResourceView>;return 0;}
+ HRESULT CreateDepthStencilView(ID3D11Texture2D*,void*,ID3D11DepthStencilView** out) override {*out=new Obj<ID3D11DepthStencilView>;return 0;}
+ D3D_FEATURE_LEVEL GetFeatureLevel() override {return D3D_FEATURE_LEVEL_11_0;}
+};
+struct Depth:Obj<ID3D11DepthStencilState> {D3D11_DEPTH_STENCIL_DESC desc{TRUE,D3D11_COMPARISON_LESS,FALSE}; void GetDesc(D3D11_DEPTH_STENCIL_DESC* d) override {*d=desc;} };
+struct Context:ID3D11DeviceContext {
+ Device* device=new Device; Depth* depth=new Depth;
+ ID3D11RenderTargetView* target=new Obj<ID3D11RenderTargetView>;
+ ID3D11DepthStencilView* dsv=new Obj<ID3D11DepthStencilView>;
+ ID3D11RenderTargetView* curTarget=target; ID3D11DepthStencilView* curDsv=dsv;
+ ID3D11ShaderResourceView* bound=nullptr; ID3D11UnorderedAccessView* uav=nullptr; ID3D11Buffer* so=nullptr; ID3D11Predicate* pred=nullptr;
+ D3D11_VIEWPORT viewport{0,0,1920,1080,0,1}; D3D11_RECT scissors{1,2,3,4}; UINT views=1,scissorCount=1; int sets=0,clears=0,depthClears=0;
+ ~Context(){device->Release();depth->Release();target->Release();dsv->Release();if(uav)uav->Release();if(so)so->Release();if(pred)pred->Release();}
+ void shader(UINT,UINT n,ID3D11ShaderResourceView** out) {for(UINT i=0;i<n;i++)out[i]=nullptr;if(bound){out[0]=bound;bound->AddRef();}}
+ void VSGetShaderResources(UINT a,UINT b,ID3D11ShaderResourceView** c) override {shader(a,b,c);}
+ void HSGetShaderResources(UINT a,UINT b,ID3D11ShaderResourceView** c) override {shader(a,b,c);}
+ void DSGetShaderResources(UINT a,UINT b,ID3D11ShaderResourceView** c) override {shader(a,b,c);}
+ void GSGetShaderResources(UINT a,UINT b,ID3D11ShaderResourceView** c) override {shader(a,b,c);}
+ void PSGetShaderResources(UINT a,UINT b,ID3D11ShaderResourceView** c) override {shader(a,b,c);}
+ void CSGetShaderResources(UINT a,UINT b,ID3D11ShaderResourceView** c) override {shader(a,b,c);}
+ void GetDevice(ID3D11Device** o) override {*o=device;device->AddRef();}
+ void ClearRenderTargetView(ID3D11RenderTargetView*,const FLOAT[4]) override {clears++;}
+ void RSGetViewports(UINT* n,D3D11_VIEWPORT* o) override {if(o && *n>0)*o=viewport;*n=views;}
+ void OMGetDepthStencilState(ID3D11DepthStencilState** o,UINT* s) override {*o=depth;depth->AddRef();*s=0;}
+ void OMGetRenderTargets(UINT n,ID3D11RenderTargetView** o,ID3D11DepthStencilView** v) override {for(UINT i=0;i<n;i++)o[i]=nullptr;o[0]=curTarget;if(curTarget)curTarget->AddRef();*v=curDsv;if(curDsv)curDsv->AddRef();}
+ void SOGetTargets(UINT n,ID3D11Buffer** o) override {for(UINT i=0;i<n;i++)o[i]=nullptr;if(so){o[0]=so;so->AddRef();}}
+ void GetPredication(ID3D11Predicate** o,BOOL* b) override {*o=pred;*b=FALSE;if(pred)pred->AddRef();}
+ void OMGetRenderTargetsAndUnorderedAccessViews(UINT,ID3D11RenderTargetView**,ID3D11DepthStencilView**,UINT,UINT n,ID3D11UnorderedAccessView** o) override {for(UINT i=0;i<n;i++)o[i]=nullptr;if(uav){o[0]=uav;uav->AddRef();}}
+ void ClearDepthStencilView(ID3D11DepthStencilView*,UINT,float,UINT) override {depthClears++;}
+ void RSGetScissorRects(UINT* n,D3D11_RECT* o) override {if(*n>0 && scissorCount)*o=scissors;*n=scissorCount;}
+ void OMSetRenderTargets(UINT n,ID3D11RenderTargetView* const* o,ID3D11DepthStencilView* v) override {assert(n==1 || n==8);assert(o[0] && v);curTarget=o[0];curDsv=v;sets++;}
+ void RSSetViewports(UINT n,const D3D11_VIEWPORT* v) override {assert(n==1);viewport=*v;sets++;}
+ void RSSetScissorRects(UINT n,const D3D11_RECT* r) override {assert(n==1 || n==0);scissorCount=n;if(n)scissors=*r;sets++;}
+};
+int main() {
+ using namespace visual_player_replay;
+ {
+  Context c;
+  begin(1,&c); assert(!scope.ctx && c.clears==0);
+  setRequested(true); begin(1,&c); assert(scope.ctx==&c && c.clears==1 && !acquire(c.device));
+  const auto oldViewport=c.viewport; const auto oldScissor=c.scissors;
+  assert(beginDraw(&c) && saved.active && c.sets==3 && c.depthClears==1);
+  assert(c.curTarget==scope.rtv && c.curDsv==scope.dsv && c.viewport.Height==768 && c.scissors.right==256);
+  endDraw(&c); assert(!saved.active && c.sets==6 && scope.draws==1);
+  assert(c.curTarget==c.target && c.curDsv==c.dsv && std::memcmp(&oldViewport,&c.viewport,sizeof(oldViewport))==0 && std::memcmp(&oldScissor,&c.scissors,sizeof(oldScissor))==0);
+  end(); auto* image=acquire(c.device); assert(image); image->Release();
+  mockTick+=2001; assert(!acquire(c.device)); mockTick=100;
+  // A view bound for reading prevents any clear or target mutation.
+  c.bound=targets[1].srv; const int clears=c.clears; begin(1,&c); assert(!scope.ctx && c.clears==clears); c.bound=nullptr;
+  begin(1,&c); assert(scope.index==1); c.depth->desc.StencilEnable=TRUE;
+  assert(!beginDraw(&c) && c.sets==6); c.depth->desc.StencilEnable=FALSE;
+  c.uav=new Obj<ID3D11UnorderedAccessView>; assert(!beginDraw(&c)); c.uav->Release(); c.uav=nullptr;
+  c.so=new Obj<ID3D11Buffer>; assert(!beginDraw(&c)); c.so->Release(); c.so=nullptr;
+  c.pred=new Obj<ID3D11Predicate>; assert(!beginDraw(&c)); c.pred->Release(); c.pred=nullptr;
+  c.views=2; assert(!beginDraw(&c)); c.views=1;
+  assert(beginDraw(&c)); endDraw(&c);
+  c.depth->desc.DepthFunc=D3D11_COMPARISON_GREATER; assert(!beginDraw(&c)); c.depth->desc.DepthFunc=D3D11_COMPARISON_LESS; end();
+  auto* held=acquire(c.device); assert(held);
+  // Closing while a frame holds a view leaves that view alive, but removes it
+  // from future snapshots; reopening cannot publish an old scoped capture.
+  begin(1,&c); assert(beginDraw(&c)); endDraw(&c); setRequested(false); setRequested(true); end();
+  assert(!acquire(c.device)); held->Release();
+  // Device creation failure is fail-closed and isn't retried each frame.
+  setRequested(false); c.device->fail=true; setRequested(true); begin(1,&c); assert(!scope.ctx && creationFailed);
+  c.device->fail=false; begin(1,&c); assert(!scope.ctx && creationFailed);
+  setRequested(false); setRequested(true); begin(2,&c); assert(scope.ctx); end(); setRequested(false);
+  assert(liveObjects==4); // context-owned device, depth, world render target and DSV
+ }
+ assert(liveObjects==0);
+}
+
+================================================================================
+КОНЕЦ ФАЙЛА: repair/tests/visual_player_replay.cpp
+================================================================================
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/visual_replay_mock_types.h
+================================================================================
+#pragma once
+#include <cstdint>
+inline std::uint64_t mockTick=100; inline std::uint64_t GetTickCount64() { return mockTick; }
+using UINT=unsigned; using LONG=long; using BOOL=int; using FLOAT=float; using ULONG=unsigned long; using HRESULT=int;
+#define STDMETHODCALLTYPE
+#define TRUE 1
+#define FALSE 0
+#define FAILED(x) ((x)<0)
+struct SRWLOCK { int unused=0; };
+#define SRWLOCK_INIT {}
+inline void AcquireSRWLockExclusive(SRWLOCK*){} inline void ReleaseSRWLockExclusive(SRWLOCK*){}
+inline void AcquireSRWLockShared(SRWLOCK*){} inline void ReleaseSRWLockShared(SRWLOCK*){}
+constexpr UINT D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT=128,D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT=8,D3D11_SO_BUFFER_SLOT_COUNT=4,D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE=16;
+constexpr UINT D3D11_BIND_RENDER_TARGET=0x20,D3D11_BIND_SHADER_RESOURCE=8,D3D11_BIND_DEPTH_STENCIL=0x40,D3D11_CLEAR_DEPTH=1;
+enum DXGI_FORMAT { DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_D24_UNORM_S8_UINT };
+enum D3D11_COMPARISON_FUNC { D3D11_COMPARISON_LESS=2,D3D11_COMPARISON_LESS_EQUAL=4,D3D11_COMPARISON_GREATER=5,D3D11_COMPARISON_GREATER_EQUAL=7 };
+enum D3D_FEATURE_LEVEL { D3D_FEATURE_LEVEL_11_0=0xb000,D3D_FEATURE_LEVEL_11_1=0xb100 };
+constexpr int D3D11_USAGE_DEFAULT=0;
+struct D3D11_TEXTURE2D_DESC {UINT Width=0,Height=0,MipLevels=0,ArraySize=0; DXGI_FORMAT Format{}; struct {UINT Count=0,Quality=0;} SampleDesc; int Usage=0; UINT BindFlags=0,CPUAccessFlags=0,MiscFlags=0;};
+struct D3D11_DEPTH_STENCIL_DESC { BOOL DepthEnable=0; D3D11_COMPARISON_FUNC DepthFunc{}; BOOL StencilEnable=0;};
+struct D3D11_VIEWPORT {float TopLeftX,TopLeftY,Width,Height,MinDepth,MaxDepth;};
+struct D3D11_RECT {LONG left,top,right,bottom;};
+struct Base { virtual ULONG AddRef()=0; virtual ULONG Release()=0; protected: virtual ~Base()=default; };
+struct ID3D11Texture2D:Base{}; struct ID3D11RenderTargetView:Base{}; struct ID3D11ShaderResourceView:Base{}; struct ID3D11DepthStencilView:Base{};
+struct ID3D11Buffer:Base{}; struct ID3D11Predicate:Base{}; struct ID3D11UnorderedAccessView:Base{};
+struct ID3D11DepthStencilState:Base {virtual void GetDesc(D3D11_DEPTH_STENCIL_DESC*)=0;};
+struct ID3D11Device:Base {
+ virtual HRESULT CreateTexture2D(const D3D11_TEXTURE2D_DESC*,void*,ID3D11Texture2D**)=0;
+ virtual HRESULT CreateRenderTargetView(ID3D11Texture2D*,void*,ID3D11RenderTargetView**)=0;
+ virtual HRESULT CreateShaderResourceView(ID3D11Texture2D*,void*,ID3D11ShaderResourceView**)=0;
+ virtual HRESULT CreateDepthStencilView(ID3D11Texture2D*,void*,ID3D11DepthStencilView**)=0;
+ virtual D3D_FEATURE_LEVEL GetFeatureLevel()=0;
+};
+struct ID3D11DeviceContext {
+ virtual void VSGetShaderResources(UINT,UINT,ID3D11ShaderResourceView**)=0;
+ virtual void HSGetShaderResources(UINT,UINT,ID3D11ShaderResourceView**)=0;
+ virtual void DSGetShaderResources(UINT,UINT,ID3D11ShaderResourceView**)=0;
+ virtual void GSGetShaderResources(UINT,UINT,ID3D11ShaderResourceView**)=0;
+ virtual void PSGetShaderResources(UINT,UINT,ID3D11ShaderResourceView**)=0;
+ virtual void CSGetShaderResources(UINT,UINT,ID3D11ShaderResourceView**)=0;
+ virtual void GetDevice(ID3D11Device**)=0;
+ virtual void ClearRenderTargetView(ID3D11RenderTargetView*,const FLOAT[4])=0;
+ virtual void RSGetViewports(UINT*,D3D11_VIEWPORT*)=0;
+ virtual void OMGetDepthStencilState(ID3D11DepthStencilState**,UINT*)=0;
+ virtual void OMGetRenderTargets(UINT,ID3D11RenderTargetView**,ID3D11DepthStencilView**)=0;
+ virtual void SOGetTargets(UINT,ID3D11Buffer**)=0;
+ virtual void GetPredication(ID3D11Predicate**,BOOL*)=0;
+ virtual void OMGetRenderTargetsAndUnorderedAccessViews(UINT,ID3D11RenderTargetView**,ID3D11DepthStencilView**,UINT,UINT,ID3D11UnorderedAccessView**)=0;
+ virtual void ClearDepthStencilView(ID3D11DepthStencilView*,UINT,float,UINT)=0;
+ virtual void RSGetScissorRects(UINT*,D3D11_RECT*)=0;
+ virtual void OMSetRenderTargets(UINT,ID3D11RenderTargetView* const*,ID3D11DepthStencilView*)=0;
+ virtual void RSSetViewports(UINT,const D3D11_VIEWPORT*)=0;
+ virtual void RSSetScissorRects(UINT,const D3D11_RECT*)=0;
+};
+
+================================================================================
+КОНЕЦ ФАЙЛА: repair/tests/visual_replay_mock_types.h
+================================================================================
+
+
+================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/visual_model_capture_policy.cpp
+================================================================================
+#include "../src/visual_model_capture_policy.h"
+#include <cassert>
+#include <cmath>
+#include <limits>
+int main() {
+ using namespace visual_model_capture_policy;
+ Viewport in{0,0,1920,1080,0,1},out{};
+ assert(viewport(in,256,out)); assert(out.width==1365.333374f && out.height==768.f);
+ assert(std::fabs(out.x+out.width*.5f-128)<.001f && out.y+out.height*.5f==128);
+ assert(safeDraw(true,true,false,false,false,false,1));
+ assert(!safeDraw(false,true,false,false,false,false,1));
+ assert(!safeDraw(true,false,false,false,false,false,1));
+ assert(!safeDraw(true,true,true,false,false,false,1));
+ assert(!safeDraw(true,true,false,true,false,false,1));
+ assert(!safeDraw(true,true,false,false,true,false,1));
+ assert(!safeDraw(true,true,false,false,false,true,1));
+ assert(!safeDraw(true,true,false,false,false,false,2));
+ in.width=std::numeric_limits<float>::quiet_NaN(); assert(!viewport(in,256,out));
+ in.width=0; assert(!viewport(in,256,out));
+}
+
+================================================================================
+КОНЕЦ ФАЙЛА: repair/tests/visual_model_capture_policy.cpp
+================================================================================
+
+
+================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/visual_skin_mock_types.h
 ================================================================================
 #pragma once
@@ -3985,7 +4434,7 @@ for symbol in ('_ZN5ImGui6ButtonEPKcRK6ImVec2','_ZN5ImGui17GetWindowDrawListEv',
                '_ZN10ImDrawList23AddRectFilledMultiColorERK6ImVec2S2_jjjj'):
     assert symbol in u and symbol.encode() in exports, symbol
 assert 'Waiting for player; sample avatar' in u and 'Sample model; game shader may differ' in u
-assert 'visual_avatar_preview::hat(mesh,s,now)' in u and 'drawTrailPreview(d,o,now,skin)' in u
+assert 'visual_avatar_preview::hat(mesh,s,now)' in u and 'drawTrailPreview(d,p,now,skin)' in u
 assert 'captureGamePreview' not in u and 'CopyResource(previewTexture' not in u
 assert 'Settings##open_hat' in u and 'Settings##open_trail' in u
 assert 'drawVisualEditor(); return;' in u and 'drawEffectPreview(current)' in u
@@ -4001,7 +4450,7 @@ assert 'visual_gpu_depth::expectedDepth=dsv' in n and 'submitVisual(t,param(Visu
 assert 'D3D11_DEPTH_WRITE_MASK_ZERO' in gpu and 'D3D11_BLEND_BLEND_FACTOR' in gpu
 assert 'current==expectedDepth' in gpu and 'ctx!=expectedContext' in gpu
 assert 'ctx->OMSetDepthStencilState(oldDepth,stencil)' in gpu and 'ctx->OMSetBlendState(oldBlend,oldFactor,sampleMask)' in gpu
-assert 'if (!inVisualDraw)' in gpu and 'if (inPlayerCapture)' in gpu and 'call(); return;' in gpu
+assert 'if (!inVisualDraw)' in gpu and 'if (inPlayerCapture)' in gpu and 'call(); // The normal world draw' in gpu
 assert 'Old overlay (see-through)' in u and 'SetVisualLegacyMode(legacy)' in u
 
 # The main HUD theme is installed after essential hooks, is limited to known
@@ -4035,6 +4484,23 @@ assert 'scopeGeneration==generation' in skin and 'ctx!=scopeContext' in skin
 assert 'PSGetShaderResources(0,4,views)' in skin and 'count<8' in skin
 assert 'CreateFile' not in skin and 'Map(' not in skin and 'CopyResource' not in skin
 print('Read-only skin candidate preview: static OK; Windows test required')
+
+replay=(r/'src/visual_player_replay.h').read_text()
+assert 'static bool previewGameModelTest=false' in u
+assert 'Game model replay (test)' in u and 'Effect overlay not available in test.' in u
+assert 'SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && previewGameModelTest)' in u
+assert 'visual_player_replay::acquire(frameDevice)' in u and 'previewFrameView=model' in u
+assert 'scope.draws>=128' in replay and 'srvBound(ctx,scope.srv)' in replay and 'outputBound(ctx,scope.rtv,scope.dsv)' in replay
+for guard in ('SOGetTargets','GetPredication','OMGetRenderTargetsAndUnorderedAccessViews','d.StencilEnable','RSGetViewports'):
+    assert guard in replay
+assert 'ctx->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT,saved.rtv,saved.dsv)' in replay
+assert 'ctx->RSSetViewports(1,&saved.viewport)' in replay and 'ctx->RSSetScissorRects(saved.scissorCount' in replay
+assert 'CreateFile' not in replay and 'CopyResource' not in replay and 'Map(' not in replay
+assert 'originalDraw(c,n,start); },true' in gpu and 'originalIndexed(c,n,start,base); },true' in gpu
+assert 'originalInstanced(c,n,instances,start,first); },true' in gpu
+assert 'originalIndirect(c,b,off); },true' not in gpu and 'originalAuto(c); },true' not in gpu
+assert 'NestedScope' in n and 'visual_player_replay::end()' in n
+print('Opt-in replay wiring: static OK; D3D11/Minecraft test required')
 
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_hud_visual_update.py

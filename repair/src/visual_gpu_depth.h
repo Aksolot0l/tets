@@ -1,8 +1,8 @@
 #pragma once
-// Experimental D3D11 gate. Draw hooks are global but touch state ONLY during
-// the adapter's scoped tessDraw on the same immediate context. Missing or
-// mismatched world depth fails closed. Original depth/blend is restored after
-// each draw. This still requires validation in the actual game.
+// Experimental D3D11 gate. Global draw hooks pass through by default. During
+// adapter tessDraw they guard depth/blend; the separate, user-opted-in local
+// player preview may replay direct draws into private targets after the world
+// draw. Each scope restores changed state. Both paths require game validation.
 #ifdef VISUAL_GPU_DEPTH_TEST_TYPES
 #include VISUAL_GPU_DEPTH_TEST_TYPES
 #else
@@ -31,6 +31,10 @@ inline thread_local bool inVisualDraw=false;
 // Optional read-only observer scoped to the local-player renderer.
 using PlayerObserver=void (*)(ID3D11DeviceContext*);
 inline std::atomic<PlayerObserver> playerObserver{nullptr};
+using ReplayBegin=bool (*)(ID3D11DeviceContext*);
+using ReplayEnd=void (*)(ID3D11DeviceContext*);
+inline std::atomic<ReplayBegin> replayBegin{nullptr};
+inline std::atomic<ReplayEnd> replayEnd{nullptr};
 inline thread_local bool inPlayerCapture=false;
 inline thread_local ID3D11DeviceContext* expectedContext=nullptr;
 inline thread_local ID3D11DepthStencilView* expectedDepth=nullptr;
@@ -88,26 +92,37 @@ struct Guard {
   release(newBlend); release(oldBlend); release(newDepth); release(oldDepth);
  }
 };
-template<class Call> void draw(ID3D11DeviceContext* ctx,Call call) {
+template<class Call> void draw(ID3D11DeviceContext* ctx,Call call,bool replayable=false) {
  if (!inVisualDraw) {
   if (inPlayerCapture) { auto observer=playerObserver.load(std::memory_order_acquire); if (observer) observer(ctx); }
-  call(); return;
+  call(); // The normal world draw is always submitted exactly once first.
+  if (inPlayerCapture && replayable) {
+   auto begin=replayBegin.load(std::memory_order_acquire); auto end=replayEnd.load(std::memory_order_acquire);
+   if (begin && end && begin(ctx)) {
+    // Do not recursively observe/replay if the runtime issues another draw
+    // while processing this copied call.
+    struct Restore { ID3D11DeviceContext* ctx; ReplayEnd end; ~Restore() { end(ctx); inPlayerCapture=true; } } restore{ctx,end};
+    inPlayerCapture=false;
+    call(); // Only direct Draw/DrawIndexed, including instanced variants.
+   }
+  }
+  return;
  }
  Guard guard(ctx);
  if (!guard.active) { rejected.fetch_add(1,std::memory_order_relaxed); return; }
  submitted.fetch_add(1,std::memory_order_relaxed); call();
 }
 inline void STDMETHODCALLTYPE onDraw(ID3D11DeviceContext* c,UINT n,UINT start) {
- draw(c,[&]{ originalDraw(c,n,start); });
+ draw(c,[&]{ originalDraw(c,n,start); },true);
 }
 inline void STDMETHODCALLTYPE onIndexed(ID3D11DeviceContext* c,UINT n,UINT start,INT base) {
- draw(c,[&]{ originalIndexed(c,n,start,base); });
+ draw(c,[&]{ originalIndexed(c,n,start,base); },true);
 }
 inline void STDMETHODCALLTYPE onInstanced(ID3D11DeviceContext* c,UINT n,UINT instances,UINT start,UINT first) {
- draw(c,[&]{ originalInstanced(c,n,instances,start,first); });
+ draw(c,[&]{ originalInstanced(c,n,instances,start,first); },true);
 }
 inline void STDMETHODCALLTYPE onIndexedInstanced(ID3D11DeviceContext* c,UINT n,UINT instances,UINT start,INT base,UINT first) {
- draw(c,[&]{ originalIndexedInstanced(c,n,instances,start,base,first); });
+ draw(c,[&]{ originalIndexedInstanced(c,n,instances,start,base,first); },true);
 }
 inline void STDMETHODCALLTYPE onAuto(ID3D11DeviceContext* c) { draw(c,[&]{ originalAuto(c); }); }
 inline void STDMETHODCALLTYPE onIndirect(ID3D11DeviceContext* c,ID3D11Buffer* b,UINT off) {

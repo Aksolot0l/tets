@@ -16,6 +16,7 @@
 #include "visual_depth_policy.h"
 #include "visual_gpu_depth.h"
 #include "visual_player_skin.h"
+#include "visual_player_replay.h"
 #include <d3d11.h>
 #include "hat_animation.h"
 #include <bcrypt.h>
@@ -260,27 +261,31 @@ void rememberPlayer(void* entity,float partial) {
 void drawHatAtPlayer(const PlayerFrame& player);
 ID3D11DeviceContext* sameThreadContext();
 std::intptr_t playerHook(void* self,void* entity,void* pos,float renderValue,float partial) {
- // Only inspect shader resources while this exact local player's original
- // renderer executes, on the observed immediate-context thread. No second
- // call to the game renderer and no modification of its GPU state.
+ // Only observe this exact local player's original renderer on the observed
+ // immediate-context thread. Optional GPU draw replay is separately opt-in.
+ // A nested player renderer (for example another actor) is never captured.
+ const bool nested=visual_gpu_depth::inPlayerCapture;
+ if (nested) visual_gpu_depth::inPlayerCapture=false;
+ struct NestedScope { bool nested; ~NestedScope() { if (nested) visual_gpu_depth::inPlayerCapture=true; } } nestedScope{nested};
  ID3D11DeviceContext* captureContext=nullptr; bool capture=false;
- if (visual_player_skin::isRequested() && !visual_gpu_depth::inPlayerCapture) {
+ if (visual_player_skin::isRequested() && !nested) {
   std::uintptr_t local=0;
   if (localPlayer(local) && reinterpret_cast<std::uintptr_t>(entity)==local) {
    captureContext=sameThreadContext();
    if (captureContext && visual_gpu_depth::matches(captureContext)) {
     visual_player_skin::begin(local,captureContext);
     capture=visual_player_skin::scopeContext==captureContext;
+    if (capture) visual_player_replay::begin(local,captureContext);
     visual_gpu_depth::inPlayerCapture=capture;
    }
   }
  }
  struct CaptureScope {
   ID3D11DeviceContext* ctx; bool active;
-  ~CaptureScope() { if(active) { visual_gpu_depth::inPlayerCapture=false; visual_player_skin::end(); } if(ctx)ctx->Release(); }
+  ~CaptureScope() { if(active) { visual_gpu_depth::inPlayerCapture=false; visual_player_replay::end(); visual_player_skin::end(); } if(ctx)ctx->Release(); }
  } captureScope{captureContext,capture};
  const auto result=originalPlayer(self,entity,pos,renderValue,partial);
- if (capture) { visual_gpu_depth::inPlayerCapture=false; visual_player_skin::end(); captureScope.active=false; }
+ if (capture) { visual_gpu_depth::inPlayerCapture=false; visual_player_replay::end(); visual_player_skin::end(); captureScope.active=false; }
  // Do not clear a local-player frame when another player's renderer runs.
  if (anyVisual()) {
   std::uintptr_t local=0;
@@ -609,7 +614,11 @@ bool installHooks() {
   if (ctx) {
    bool gpu=visual_gpu_depth::install(ctx,createHook,enableHook,disableHook,removeHook);
    gpuHooksReady.store(gpu,std::memory_order_release);
-   if (gpu) visual_gpu_depth::playerObserver.store(&visual_player_skin::observe,std::memory_order_release);
+   if (gpu) {
+    visual_gpu_depth::playerObserver.store(&visual_player_skin::observe,std::memory_order_release);
+    visual_gpu_depth::replayEnd.store(&visual_player_replay::endDraw,std::memory_order_release);
+    visual_gpu_depth::replayBegin.store(&visual_player_replay::beginDraw,std::memory_order_release);
+   }
    ctx->Release();
    if (!gpu) log("GPU depth guard unavailable; strict visual draw disabled");
   }
@@ -634,6 +643,11 @@ void SetPlayerSkinPreviewActive(bool value) {
  if (!value) { visual_player_skin::setRequested(false); return; }
  if (visual_player_skin::isRequested()) return;
  if (enableVisual() && gpuHooksReady.load(std::memory_order_acquire)) visual_player_skin::setRequested(true);
+}
+void SetPlayerModelPreviewActive(bool value) {
+ if (!value) { visual_player_replay::setRequested(false); return; }
+ if (visual_player_replay::isRequested()) return;
+ if (enableVisual() && gpuHooksReady.load(std::memory_order_acquire)) visual_player_replay::setRequested(true);
 }
 void SetChinaHatEnabled(bool value) {
  if (!value) { enabled.store(false,std::memory_order_release); hatStatus.store(0,std::memory_order_relaxed); return; }

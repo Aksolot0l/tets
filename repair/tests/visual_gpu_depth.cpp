@@ -36,14 +36,27 @@ struct Context:ID3D11DeviceContext {
  void OMSetDepthStencilState(ID3D11DepthStencilState* p,UINT r) override {curDepth=p;stencil=r;sets++;}
  void OMSetBlendState(ID3D11BlendState* p,const FLOAT* f,UINT m) override {curBlend=p;mask=m;for(int i=0;i<4;i++)factor[i]=f[i];sets++;}
 };
-static int observed=0;
+static int observed=0, replayStarts=0,replayEnds=0; static bool replayAllowed=true;
+static bool beginReplay(ID3D11DeviceContext*) { ++replayStarts; return replayAllowed; }
+static void endReplay(ID3D11DeviceContext*) { ++replayEnds; }
 static void observePlayer(ID3D11DeviceContext*) { ++observed; }
 int main() {
  using namespace visual_gpu_depth;
  Context ctx; int calls=0; inVisualDraw=false; playerObserver.store(&observePlayer);
  draw(&ctx,[&]{++calls;}); assert(calls==1 && ctx.sets==0 && observed==0);
  inPlayerCapture=true; draw(&ctx,[&]{++calls;}); assert(calls==2 && ctx.sets==0 && observed==1);
- inPlayerCapture=false; playerObserver.store(nullptr); calls=1;
+ // World is drawn first; only allowed draw types are replayed and state is
+ // restored even if a simulated replay throws.
+ replayBegin.store(&beginReplay); replayEnd.store(&endReplay);
+ int startCalls=calls; int pass=0;
+ draw(&ctx,[&]{++calls; ++pass; assert(inPlayerCapture==(pass==1));},true);
+ assert(calls==startCalls+2 && replayStarts==1 && replayEnds==1 && inPlayerCapture);
+ startCalls=calls; draw(&ctx,[&]{++calls;},false); assert(calls==startCalls+1 && replayStarts==1 && replayEnds==1);
+ replayAllowed=false; startCalls=calls; draw(&ctx,[&]{++calls;},true); assert(calls==startCalls+1 && replayStarts==2 && replayEnds==1);
+ replayAllowed=true; int step=0; try { draw(&ctx,[&]{if(++step==2) throw 5;},true); assert(false); } catch(int e) {assert(e==5);}
+ assert(step==2 && replayStarts==3 && replayEnds==2);
+ inPlayerCapture=false; startCalls=calls; draw(&ctx,[&]{++calls;},true); assert(calls==startCalls+1 && replayStarts==3);
+ replayBegin.store(nullptr); replayEnd.store(nullptr); playerObserver.store(nullptr); calls=1;
  expectedContext=&ctx; expectedDepth=&ctx.view; worldCompare=D3D11_COMPARISON_LESS_EQUAL; opacity=.25f; inVisualDraw=true;
  draw(&ctx,[&]{
   ++calls; D3D11_DEPTH_STENCIL_DESC d{}; ctx.curDepth->GetDesc(&d);

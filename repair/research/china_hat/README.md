@@ -132,8 +132,20 @@ operations and pops the stack at return. `0x15d390` applies a translation via
 scaling. Those observations do not identify all render targets, GPU shader
 constants, projection/camera data, virtual methods or side effects. Replaying
 this routine from the UI with an arbitrary camera and unvalidated pointers could
-break the world render or crash. There is still no safe proven game-model
-capture or independent model rendering implementation. Do not add a second
-player draw, mutate the shared matrix stack, or claim custom-model support based
-only on these offline bytes. Runtime inspection/testing on the exact Windows
-build is required before any such experiment.
+break the world render or crash. There is no proven independent model rendering implementation. Do not invoke
+the player renderer again, mutate the shared matrix stack, or claim full model
+support based only on these offline bytes. Runtime testing is required.
+
+### Opt-in GPU draw replay experiment
+The experimental `Game model replay (test)` checkbox, off by default, attempts
+to replay direct local-player draw calls into private 256x256 color/depth
+resources without a second call to the game renderer. World calls execute first.
+It saves/restores render targets, viewport and scissor; rejects predication,
+stream output, output UAVs, stencil and unsupported depth/multiple viewports,
+checks that its render target is not already bound, limits draws, and disables
+itself with the editor. The actual game's world camera remains in use; the image
+may be cropped, invisible or incorrect. It is not a front-facing custom camera
+and does not include the preview hat/trail. Some GPU queries can still be
+affected by extra draws; there can be performance issues, visual corruption or
+a crash. These precautions and mock tests do not prove safety. Windows/Minecraft
+runtime validation is required; never enable this experimental path implicitly.
