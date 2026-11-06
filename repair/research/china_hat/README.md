@@ -93,8 +93,10 @@ off by default. When enabled in strict mode, it tries one guarded hat draw
 after the local player renderer within the entity pass, suppressing the normal
 post-entities hat draw. It does not change trail or legacy overlay, always
 requires the observed context/DSV/depth and restores blend/depth state. Current
-status and depth comparison function are exposed; this path has not been
-tested in Minecraft, and `submitted` does not mean it is visually correct.
+status and depth comparison function are exposed. On the user's subsequent
+screenshot, it reported `submitted`, but the hat was fragmented even worse;
+this path does not resolve the depth mismatch and should remain disabled.
+`submitted` does not mean that the result is visually correct.
 
 ### Player model investigation (read-only executable fragments)
 The user supplied a small on-disk code diagnostic for the same SHA-256-verified
@@ -167,3 +169,14 @@ other code without switching the actual camera. That interceptor was removed.
 The user reports manual F5 switching works after that change. Do not restore
 the old getter override or patch these inline instructions. The getter/setting
 code is not evidence for the unrelated cursor-grab/input-blocking lifecycle.
+
+### Cursor investigation
+The user wants cursor control while the Right Shift menu is open without game
+input. The current UWP bridge only observes pointer/wheel and does not change
+the game's grab state or block gameplay input. A third-party 1.1.5 shim has
+separate mouse mode and event paths for a *different x86 executable*; those
+offsets and layouts cannot be used in the user's x64 game. Its source has no
+license and no code was copied. The optional read-only `DIAG_MOUSE_CODE.ps1`
+searches a bounded family of x64 instructions in executable sections of the
+exact on-disk build. Matches may be absent or unrelated; they are research
+leads, not validated hooks or proof that input can be safely suppressed.
