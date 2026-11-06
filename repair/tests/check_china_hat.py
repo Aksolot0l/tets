@@ -10,6 +10,13 @@ assert 'std::memcmp(fromFile,sig.bytes,16)!=0' in n
 assert 'state[0x125] || state[0x170] || pending' in n
 assert 'oldFlag' in n and 'saved,sizeof(saved)' in n
 assert 'actual!=actor' in n and 'type!=30' in n
+assert 'hat_player::fromClient' in n and 'clientTickRva=0x11b2d0' in n
+assert 'for (auto rva : {screenRva,endRva,clientTickRva})' in n
+assert 'visual_hooks::install(hooks,3' in n and '&clientTickHook' in n
+local=n[n.index('bool localPlayer('):n.index('bool writable(')]
+assert '0x1921df8' not in local and 'fromClient' in local
+player=(r/'src/china_hat_player.h').read_text()
+assert 'playerSlot=0x60' in player and 'again!=first' in player and 'maxTickAge=2000' in player
 assert 'GetTickCount64()-player.at>250' in n and 'now-player.at>250' in n
 assert 'available{false}, enabled{false}' in n
 assert 'if (!ChinaHatAvailable()) return false;' in n and 'return installHooks();' in n

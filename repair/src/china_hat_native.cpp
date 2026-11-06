@@ -8,6 +8,8 @@
 #include "china_hat_lines.h"
 #include "china_hat_hash.h"
 #include "visual_trail.h"
+#include "china_hat_player.h"
+#include "visual_hooks.h"
 #include <bcrypt.h>
 #include <atomic>
 #include <cstdint>
@@ -16,6 +18,7 @@
 #include <algorithm>
 
 namespace {
+using ClientTick = void (*)(void*,int,int);
 using PlayerRender = std::intptr_t (*)(void*,void*,void*,void*,float);
 using ScreenRender = void (*)(void*,void*);
 using TessBegin = void (*)(void*,std::uint8_t,int);
@@ -23,10 +26,10 @@ using TessColor = void (*)(void*,std::uint8_t,std::uint8_t,std::uint8_t,std::uin
 using TessVertex = void (*)(void*,float,float,float);
 using TessDraw = void (*)(void*,void*,std::int64_t);
 using TessEnd = void (*)(void*,void*,std::int64_t,std::uint8_t);
-constexpr std::uint32_t playerRva=0x581910, screenRva=0x3528c0, beginRva=0x5d0660,
+constexpr std::uint32_t playerRva=0x581910, screenRva=0x3528c0, clientTickRva=0x11b2d0, beginRva=0x5d0660,
  colorRva=0x5d0890, vertexRva=0x5d0a90, drawRva=0x5d1840, endRva=0x5d14f0;
 constexpr std::uint32_t originRva=0x19436e8, tessRva=0x1925550, contextRva=0x1913b40,
- shaderColorRva=0x192ae08, shaderFlagRva=0x192ae18, playerRootRva=0x1921df8;
+ shaderColorRva=0x192ae08, shaderFlagRva=0x192ae18;
 std::atomic<bool> available{false}, enabled{false};
 std::atomic<bool> trailEnabled{false};
 std::atomic<float> heightOffset{0.0f};
@@ -41,6 +44,9 @@ bool anyVisual() { return enabled.load(std::memory_order_acquire) || trailEnable
 std::atomic<int> hookState{0};
 HatCreateHook createHook=nullptr; HatToggleHook enableHook=nullptr, disableHook=nullptr, removeHook=nullptr;
 std::uintptr_t base=0;
+ClientTick originalTick=nullptr;
+std::atomic<std::uintptr_t> clientInstance{0};
+std::atomic<ULONGLONG> lastClientTick{0};
 PlayerRender originalPlayer=nullptr;
 ScreenRender originalScreen=nullptr;
 TessBegin tessBegin=nullptr; TessColor tessColor=nullptr; TessVertex tessVertex=nullptr;
@@ -55,14 +61,16 @@ bool read(std::uintptr_t p, void* out, std::size_t n) {
  return p && ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(p),out,n,&got) && got==n;
 }
 template<class T> bool fetch(std::uintptr_t p, T& out) { return read(p,&out,sizeof(out)); }
-bool readablePointer(std::uintptr_t p) { return p>=0x10000 && p<0x0000800000000000ULL && (p&7)==0; }
+// Only a recent ClientInstance's local-player slot is accepted. The old
+// 0x1921df8 chain is deliberately not a fallback: on a server it can identify
+// a different player while still returning plausible coordinates.
 bool localPlayer(std::uintptr_t& result) {
- result=0; std::uintptr_t value=0;
- if (!fetch(base+playerRootRva,value) || !readablePointer(value)) return false;
- for (auto offset : {0x30u,0x2c0u,0u,0x78u,0x28u,0x58u}) {
-  if (!fetch(value+offset,value) || !readablePointer(value)) return false;
- }
- result=value; return true;
+ auto observed=clientInstance.load(std::memory_order_acquire);
+ auto tick=lastClientTick.load(std::memory_order_acquire);
+ if (!hat_player::fromClient(observed,tick,GetTickCount64(),
+     [](std::uintptr_t address,std::uintptr_t& value) { return fetch(address,value); },result)) return false;
+ if (clientInstance.load(std::memory_order_acquire)!=observed) { result=0; return false; }
+ return true;
 }
 bool writable(std::uintptr_t p, std::size_t n) {
  MEMORY_BASIC_INFORMATION m{};
@@ -146,7 +154,7 @@ bool validateGame() {
     if (!fileCodeAt(bytes,size,nt,table,sig.rva,fromFile) || std::memcmp(fromFile,sig.bytes,16)!=0 ||
         !read(image+sig.rva,inMemory,16) || std::memcmp(inMemory,fromFile,16)!=0) { valid=false; break; }
    }
-   for (auto rva : {screenRva,endRva}) {
+   for (auto rva : {screenRva,endRva,clientTickRva}) {
     const BYTE* fromFile=nullptr; std::uint8_t inMemory[16]{};
     if (!fileCodeAt(bytes,size,nt,table,rva,fromFile) || !read(image+rva,inMemory,16) || std::memcmp(inMemory,fromFile,16)!=0) valid=false;
    }
@@ -157,6 +165,17 @@ bool validateGame() {
  if (mapping) CloseHandle(mapping); CloseHandle(file); return valid;
 }
 
+// 1.1.5 candidate tick signature, called only after exact EXE identity and
+// loaded/file code comparison. This observes the live ClientInstance; it never
+// writes to the instance or changes the original tick arguments.
+void clientTickHook(void* self,int a2,int a3) {
+ auto instance=reinterpret_cast<std::uintptr_t>(self);
+ if (hat_player::alignedPointer(instance)) {
+  clientInstance.store(instance,std::memory_order_release);
+  lastClientTick.store(GetTickCount64(),std::memory_order_release);
+ }
+ originalTick(self,a2,a3);
+}
 void rememberPlayer(void* entity,float partial) {
  frame.valid=false;
  if (!anyVisual() || !entity || !std::isfinite(partial)) return;
@@ -296,20 +315,15 @@ bool installHooks() {
   log("game changed or could not be verified before enabling"); return false;
  }
  auto p=reinterpret_cast<void*>(base+playerRva), s=reinterpret_cast<void*>(base+screenRva);
- bool success=false;
- if (createHook(p,reinterpret_cast<void*>(&playerHook),reinterpret_cast<void**>(&originalPlayer))!=0) {
-  log("player hook creation failed");
- } else if (createHook(s,reinterpret_cast<void*>(&screenHook),reinterpret_cast<void**>(&originalScreen))!=0) {
-  removeHook(p); log("screen hook creation failed");
- } else if (enableHook(p)!=0) {
-  removeHook(s); removeHook(p); log("player hook enable failed");
- } else if (enableHook(s)!=0) {
-  // If disable fails, leave the pinned, inert detour in place rather than
-  // removing an active hook or invalidating its trampoline.
-  if (disableHook(p)==0) removeHook(p);
-  removeHook(s); log("screen hook enable failed");
- } else {
-  success=true;
+ auto tick=reinterpret_cast<void*>(base+clientTickRva);
+ // All hooks are created before enabling; rollback never removes active hooks.
+ visual_hooks::Hook hooks[]={{tick,reinterpret_cast<void*>(&clientTickHook),reinterpret_cast<void**>(&originalTick)},
+                             {p,reinterpret_cast<void*>(&playerHook),reinterpret_cast<void**>(&originalPlayer)},
+                             {s,reinterpret_cast<void*>(&screenHook),reinterpret_cast<void**>(&originalScreen)}};
+ bool success=visual_hooks::install(hooks,3,createHook,enableHook,disableHook,removeHook);
+ if (!success) {
+  clientInstance.store(0,std::memory_order_release); lastClientTick.store(0,std::memory_order_release);
+  log("visual hook installation failed");
  }
  if (!success) available.store(false,std::memory_order_release);
  hookState.store(success?2:3,std::memory_order_release);

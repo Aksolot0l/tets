@@ -19,6 +19,13 @@ wireframe draw sequence (with an optional vertical offset) and separates the
 experimental trail into its own batch. The failed surface and depth changes
 are disabled; actual head-bone attachment and correct occlusion are not done.
 Both options are opt-in, and the revised build still requires testing on Windows.
+A subsequent user screenshot showed the old coordinate chain identifying an
+unrelated character on a server. The visual effects no longer use that chain:
+they read the candidate local-player slot of a recently observed client
+instance. A candidate 1.1.5 tick entry point is hooked only on opt-in, with
+file/memory code comparison, exact executable hash gate and rollback. The tick
+ABI and local slot still require in-game verification. The standalone coordinates
+experiment is separate and can still use the old, potentially nonlocal path.
 
 The path is restricted to the exact user-observed SHA-256, PE timestamp and
 image size; diagnostic prologues and loaded code are compared to the file.
