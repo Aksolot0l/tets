@@ -10,6 +10,7 @@
 #include <cstdarg>
 #include <atomic>
 #include "wheel_bridge.h"
+#include "launcher_ui.h"
 
 static HINSTANCE loaderModule = nullptr;
 static HANDLE wheelMapping = nullptr;
@@ -228,8 +229,14 @@ static DWORD WINAPI loaderThread(void*) {
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         CloseHandle(guard); showError(L"Автозагрузка уже запущена в другом окне клиента."); return 1;
     }
+    wchar_t classicFlag[32768]{};
+    if (ownPath(classicFlag, 32768, L"launcher-classic.flag") && isFile(classicFlag))
+        logLine("Classic launcher mode enabled by local flag.");
+    else if (!launcherStartUi())
+        logLine("New launcher window could not start; the original remains available.");
     wchar_t dll[32768]{};
     if (!ownPath(dll, 32768, L"GAYClientInternal.dll") || !isFile(dll)) {
+        launcherSetStatus(LauncherStatus::Failed);
         logLine("Keep GAYClientInternal.dll next to client.exe.");
         showError(L"Не найдена DLL клиента. Проверьте папку установки."); CloseHandle(guard); return 1;
     }
@@ -241,24 +248,27 @@ static DWORD WINAPI loaderThread(void*) {
         Sleep(1000);
         bool multiple = false; DWORD pid = uniqueGamePid(multiple);
         foregroundGamePid.store(multiple ? 0 : pid, std::memory_order_relaxed);
-        if (multiple) { logLine("Multiple Minecraft processes found; close extras and restart the client."); showError(L"Найдено несколько процессов Minecraft. Закройте лишние и перезапустите клиент."); break; }
-        if (!pid) { previousPid = 0; done = false; attempts = 0; continue; }
+        if (multiple) { launcherSetStatus(LauncherStatus::MultipleGames); logLine("Multiple Minecraft processes found; close extras and restart the client."); showError(L"Найдено несколько процессов Minecraft. Закройте лишние и перезапустите клиент."); break; }
+        if (!pid) { launcherSetStatus(LauncherStatus::Waiting); previousPid = 0; done = false; attempts = 0; continue; }
         ULONGLONG now = GetTickCount64();
         if (pid != previousPid) {
             previousPid = pid; done = false; attempts = 0; firstSeen = now; nextAttempt = now + 10000;
+            launcherSetStatus(LauncherStatus::GameDetected);
             logLine("Minecraft detected (PID %lu); waiting for startup...\n", pid);
         }
         if (!done && now >= nextAttempt && now - firstSeen >= 10000) {
             ++attempts;
+            launcherSetStatus(LauncherStatus::Loading);
             logLine("Loading overlay...");
             InjectResult result = inject(pid, dll);
             if (result == InjectResult::Success || result == InjectResult::Stop) {
                 done = true;
-                if (result == InjectResult::Success) connectWheelBridge(pid, dll);
-                if (result == InjectResult::Stop) showError(L"Не удалось автоматически загрузить DLL. Перезапустите Minecraft и клиент. Подробности в client-autoload.log.");
+                if (result == InjectResult::Success) { connectWheelBridge(pid, dll); launcherSetStatus(LauncherStatus::Loaded); }
+                if (result == InjectResult::Stop) { launcherSetStatus(LauncherStatus::Failed); showError(L"Не удалось автоматически загрузить DLL. Перезапустите Minecraft и клиент. Подробности в client-autoload.log."); }
             }
             else if (attempts >= 3) {
                 done = true;
+                launcherSetStatus(LauncherStatus::Failed);
                 logLine("Automatic loading failed. Close this client and retry, or load manually.");
                 showError(L"Не удалось автоматически загрузить DLL. Проверьте доступ к файлам и повторите запуск. Подробности в client-autoload.log.");
             } else {
