@@ -123,3 +123,17 @@ shared draw callee, matrix operations, rotation helper and tessellator code.
 An independently positioned, front-facing rendering of the actual game model
 remains unimplemented; do not treat any of these pointers or offsets as a safe
 API or perform extra renderer calls based on the disassembly alone.
+
+The third static diagnostic identifies `0x579ee0` as a shared actor drawing
+path: it pushes the game-owned matrix stack at `0x192aed0`, calls model and
+renderer virtual methods, modifies renderer/actor fields, performs matrix
+operations and pops the stack at return. `0x15d390` applies a translation via
+`0x160790`, copying a 4x4 result back to its input; `0x15d560` is called for
+scaling. Those observations do not identify all render targets, GPU shader
+constants, projection/camera data, virtual methods or side effects. Replaying
+this routine from the UI with an arbitrary camera and unvalidated pointers could
+break the world render or crash. There is still no safe proven game-model
+capture or independent model rendering implementation. Do not add a second
+player draw, mutate the shared matrix stack, or claim custom-model support based
+only on these offline bytes. Runtime inspection/testing on the exact Windows
+build is required before any such experiment.
