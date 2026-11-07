@@ -1,7 +1,7 @@
-GAYCLIENT REPAIR - HUD + ВНУТРИИГРОВОЕ МЕНЮ, ВСЁ В ОДНОМ ФАЙЛЕ (v8)
+GAYCLIENT REPAIR - HUD + ВНУТРИИГРОВОЕ МЕНЮ, ВСЁ В ОДНОМ ФАЙЛЕ (v8.1)
 ====================================================================
 
-Версия v8 внутриигрового меню (RmlUi, встроен в GAYClientInternal.dll),
+Версия v8.1 внутриигрового меню (RmlUi, встроен в GAYClientInternal.dll),
 исправление ползунков из v7:
 - Найдена причина "мёртвых" ползунков: диапазоны в разметке не совпадали
   с реальными диапазонами параметров адаптера (visualParamSpecs).
@@ -18,6 +18,11 @@ GAYCLIENT REPAIR - HUD + ВНУТРИИГРОВОЕ МЕНЮ, ВСЁ В ОДНО
 - Проверки: round-trip всех 31 ползунков в трёх точках (никаких
   пружинений), пиксельные проверки центровки ручки и заливки,
   драг ползунка мышью в харнессе.
+- v8.1: строка реестра прозрачности катаны осталась Direct, хотя
+  разметка и проверки говорили Percent - ручка работала, но рид-аут
+  показывал сырое "0.65" вместо "65%". Исправлено на Percent; в
+  статик-чек запечена сквозная сверка всех трёх таблиц (kSliders <->
+  visualParamSpecs <-> разметка min/max).
 
 Состав сборки не изменился: два окна (Home + Visuals), HUD-редактор
 перетаскиванием, 3D-превью игрока, адаптер не трогает client.exe.
@@ -1880,7 +1885,7 @@ kit = (r / 'src/hud_visual_kit.h').read_text(encoding='utf-8')
 assert '#include "hud_theme.h"' in u and '#include "hud_visual_kit.h"' in u
 assert 'namespace hud_visual' in kit and 'namespace hud_theme' in theme
 for helper in ('VisualStyleScope', 'sectionTitle', 'visualHint', 'fullWidthSlider',
-               'visualTokens', 'editorVisible', 'editorColumn'):
+               'visualTokens'):
     assert helper in u, helper
 assert 'Tokens tokens(' in theme and 'EditorMetrics' in theme
 assert 'ButtonSpec button(' in kit and 'ToggleSpec toggle(' in kit
@@ -1888,30 +1893,27 @@ assert 'SliderSpec slider(' in kit and 'CardSpec card(' in kit
 assert 'LayoutSpec layout(' in kit and 'readableOn(' in kit
 assert 'readableOpacity' in theme and 'editorOpacity' in theme
 
-# 2. Five editor columns and the neighbouring preview, from the mockup.
-for panel in ('Home##gc', 'HUD##gc', 'Modules##gc', 'Appearance##gc', 'Settings##gc'):
-    assert panel in u, panel
-assert 'Preview##gc_caption' in u
-assert 'drawModuleHud(runtime,true)' in u
-assert 'editorVisible[5]' in u
-assert 'hud_theme::panelX' in u and 'hud_theme::previewX' in u
+# 2. v5: the five-column editor is gone; the HUD editor is the HUD itself,
+# dragged directly through the ImGui::Begin hook, with one caption strip.
+for gone in ('Home##gc', 'HUD##gc', 'Modules##gc', 'Appearance##gc', 'Settings##gc',
+             'Preview##gc_caption', 'drawModuleHud(runtime,true)', 'editorVisible',
+             'editorColumn', 'editorToolbar', 'drawHudEditor'):
+    assert gone not in u, gone
+assert 'hudEditBegin' in u and 'drawHudEditCaption' in u
+assert 'if (menuOpen && hudEditorOpen) return;' in u
+assert 'updateHudEditInput' in u and 'kHudDragNames' in u
 
 # 3. Every pre-existing control/behaviour is still present.
 for preserved in (
-        'hud_theme::palette(i).name', 'hudPalette=i', 'hudColor[0]=c.r',
-        'Card rounding', 'Widget background opacity', 'HUD text color',
-        'Module List HUD', 'Module list scale', 'Module list opacity',
-        'Module list X', 'Module list Y', 'Style resets after game exit.',
-        'Notifications may remain visible.',
         'China Hat', 'Trail', 'Settings##open_hat', 'Settings##open_trail',
         'Options', 'Preview unavailable; inline settings:',
         'Game model replay (test)', 'Old overlay (see-through)',
         'Vertex gradient (test)', 'Hat at player pass (test)',
         'Waiting for player; sample avatar', 'Sample model; game shader may differ.'):
     assert preserved in u, preserved
-for entry in ('ag::ModuleId::Coordinates', 'setModule(runtime,entry.id,enabled)',
-              'settings->IsEnabled(entry.id)'):
-    assert entry in u, entry
+# v5: module toggles flow through the RmlUi queue (see check_menu_rml.py);
+# the legacy fallback still has the coordinates switch.
+assert 'ag::ModuleId::Coordinates' in u
 
 # 4. No behavioural additions: no new writes to game settings, no addresses.
 for forbidden in (
@@ -1934,10 +1936,12 @@ assert '~VisualStyleScope()' in u and 'guiPopColor(pushedColors)' in u and 'guiP
 assert 'insideLegacyHud || !hud_theme::card(name)' in u
 assert 'hud_theme::background(widgetOpacity*legacyOpacity,hudPalette)' in u
 assert 'SetMenuMouseOpen(menuOpen)' in u and 'SetMenuMouseOpen(false)' in u
-assert 'hud_theme::columnsFit(editorWidth())' in u
-assert '(wide || editorSelected==0)' in u and 'editorSelected=i; editorVisible[i]=true' in u
-assert 'hud_theme::panelX(index,width)' in u and 'hud_theme::panelHeight(index,width,height)' in u
 assert 'ImGuiCond_Always' in u and 'guiPushTextWrap(0.f)' in u
+# v5: the user-dragged HUD position overrides the game's pinned layout right
+# before Begin, and the exact widget rect comes from the exported ImGui calls.
+assert 'guiSetNextPos(ImVec2(e.x,e.y),ImGuiCond_Always,ImVec2(0,0))' in u
+assert '"_ZN5ImGui12GetWindowPosEv"' in u and '"_ZN5ImGui13GetWindowSizeEv"' in u
+assert 'drawHudDragOutline' in u
 for sym in ('_ZN5ImGui15PushTextWrapPosEf','_ZN5ImGui14PopTextWrapPosEv'):
     assert sym in u and sym.encode() in (r.parent/'GAYClientInternal.dll').read_bytes()
 
@@ -1954,7 +1958,6 @@ assert 'UPDATE: HUD redesign — visual layer' in doc
 assert 'hud_visual_kit.h' in doc
 
 print('HUD visual-only checks OK; Windows/Minecraft verification required')
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_hud_visual_style.py
 ================================================================================================================================================================
@@ -2287,6 +2290,42 @@ assert 'escEdge' in u
 assert '*(reinterpret_cast<unsigned char*>(runtime)+0x551)=0;' in u
 # plain ASCII punctuation in the compat captions too
 assert 'перетаскивай элементы мышкой - Esc - выход' in u
+
+# v8.1: the slider registry, the parameter specs and the markup must agree
+# on every slider's range. The katana opacity registry entry shipped as
+# Direct while the markup and the harness said Percent (30..100): the knob
+# worked, but the readout showed a raw "0.65" instead of "65%". This sweep
+# cross-checks all three tables so the class of bug cannot come back.
+import re as _re
+vs = (r/'src/visual_settings.h').read_text(encoding='utf-8')
+_names = [n.strip() for n in _re.search(
+    r'enum class VisualParam[^{]*\{(.*?)\};', vs, _re.S).group(1)
+    .replace('\n', ' ').split(',') if n.strip() and n.strip() != 'Count']
+_trips = _re.findall(
+    r'\{\s*([\d.\-]+)f?\s*,\s*([\d.\-]+)f?\s*,\s*([\d.\-]+)f?\s*\}',
+    _re.search(r'visualParamSpecs\[\]\s*=\s*\{(.*?)\};', vs, _re.S).group(1))
+assert len(_names) == len(_trips) == 38, (len(_names), len(_trips))
+_specs = {n: (float(lo), float(hi)) for n, (v, lo, hi) in zip(_names, _trips)}
+_reg = {}
+for _m in _re.finditer(
+        r'\{"(sl-[\w-]+)",\s*VisualParam::(\w+),\s*SlScale::(\w+)(?:,\s*"([^"]*)")?\}', m):
+    _reg[_m.group(1)] = (_m.group(2), _m.group(3), _m.group(4) or '')
+assert len(_reg) == 32, len(_reg)
+_markup = {mid: (float(lo), float(hi)) for mid, lo, hi in _re.findall(
+    r'id="(sl-[\w-]+)" min="([\d.\-]+)" max="([\d.\-]+)"', d)}
+assert set(_markup) == set(_reg), set(_markup) ^ set(_reg)
+for _id, (_param, _scale, _fmt) in _reg.items():
+    _lo, _hi = _specs[_param]
+    if _scale == 'Percent':
+        _lo, _hi = _lo * 100.0, _hi * 100.0
+        assert _fmt == '%.0f%%', (_id, _fmt)
+    elif _scale == 'RainbowPercent':
+        _lo, _hi = 0.0, 100.0
+    _mlo, _mhi = _markup[_id]
+    # 0.30f*100 = 30.000001: compare with a tolerance, never for equality
+    assert abs(_mlo - _lo) <= 0.011 and abs(_mhi - _hi) <= 0.011, \
+        f'{_id}: markup {_mlo}..{_mhi} vs {_scale} {_lo:.2f}..{_hi:.2f}'
+assert _reg['sl-kt-opacity'] == ('KatanaOpacity', 'Percent', '%.0f%%')
 
 print('check_menu_rml: ok')
 ================================================================================
@@ -5888,7 +5927,7 @@ const SliderDef kSliders[] = {
     {"sl-kt-side", VisualParam::KatanaSide, SlScale::Direct, "%.2f"},
     {"sl-kt-height", VisualParam::KatanaHeight, SlScale::Direct, "%.2f"},
     {"sl-kt-forward", VisualParam::KatanaForward, SlScale::Direct, "%.2f"},
-    {"sl-kt-opacity", VisualParam::KatanaOpacity, SlScale::Direct, "%.2f"},
+    {"sl-kt-opacity", VisualParam::KatanaOpacity, SlScale::Percent, "%.0f%%"},
     {"sl-kt-fpside", VisualParam::KatanaFirstSide, SlScale::Direct, "%.2f"},
     {"sl-kt-fpforward", VisualParam::KatanaFirstForward, SlScale::Direct, "%.2f"},
 };
@@ -8393,14 +8432,15 @@ for symbol in ('_ZN2ag7DrawHudERNS_7RuntimeE','_ZN2ag17NotificationQueue4DrawERK
     assert symbol in u and symbol.encode() in exports, symbol
 assert 'module_hud::editing(menu,hudEditorOpen || visualEditor!=VisualEditor::None)' in u
 assert 'realDrawHud(runtime)' in u and 'drawModuleHud(runtime,false)' in u
-assert 'drawModuleHud(runtime,true)' in u and 'hudEditorActive.load' in u
+assert 'drawModuleHud(runtime,false)' in u and 'hudEditorActive.load' in u
+assert 'drawModuleHud(runtime,true)' not in u  # old editor preview removed in v5
 assert 'if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }' in u
 assert 'if (!menuOpen || (!hudEditorOpen && !editingVisual)) {' in u
 assert 'if (menuOpen && !replaced) { VisualStyleScope style; realDrawGui(runtime); }' in u
 assert 'else if (!menuOpen) realDrawGui(runtime);' in u
 # The embedded new menu replaces the legacy GUI only while it is alive; the
 # old panels stay hidden then and reappear automatically if the embed fails.
-assert 'menu_rml::SetGameMenuOpen(menuOpen)' in u and 'if (replaced) return;' in u
+assert 'menu_rml::SetGameMenuOpen(menuOpen)' in u and 'if (replaced) {' in u
 assert 'menu_rml::RenderOverlay(device, overlayTarget, desc.Width, desc.Height)' in u
 assert u.index('if (hudHookCreated) {') > u.index('mhApply())')
 for name in ('HatOpacity','TrailOpacity'):
@@ -8449,8 +8489,12 @@ assert 'insideLegacyHud=true; realDrawHud(runtime)' in u
 assert 'realNotificationDraw(queue,s)' in u and 'insideLegacyHud=previous; legacyOpacity=oldOpacity' in u
 assert 'mhRemove(reinterpret_cast<void*>(guiBegin))' in u
 assert u.index('mhCreate(reinterpret_cast<void*>(guiBegin)') > u.index('mhApply())')
-assert 'Widget background opacity' in u and 'for (const auto& entry:module_hud::entries)' in u
-assert 'setModule(runtime,entry.id,enabled)' in u
+# v5: widget toggles moved to the RmlUi menu and reach SetModule through the
+# queued drain; the module list itself is drawn by drawModuleHud.
+assert 'for (const auto& entry:module_hud::entries)' not in u  # old editor column gone
+assert 'toggleGameModule(int moduleId, bool enable)' in u
+assert 'setModule(menuEmbedRuntime, static_cast<ag::ModuleId>(static_cast<std::size_t>(moduleId)), enable)' in u
+assert 'module_hud::labels(s->enabled' in u
 for name in ('fps','cps','clock','cpu','ram','resolution','watermark','info','active','hotkeys','coordinates','keystrokes'):
     assert '##hud_'+name in theme
 for symbol in ('_ZN5ImGui5BeginEPKcPbi','_ZN5ImGui8SameLineEff','_ZN5ImGui12PushStyleVarEif','_ZN5ImGui11PopStyleVarEi'):
@@ -8464,7 +8508,8 @@ for symbol in ('_ZN10ImDrawList8AddImageEyRK6ImVec2S2_S2_S2_j','_ZN10ImDrawList1
     assert symbol in u and symbol.encode() in exports
 assert 'visual_player_skin::acquire(frameDevice)' in u and 'previewFrameView=skin.view' in u
 assert u.index('release(previewFrameView);',u.index('legacyPresent(chain'))>u.index('legacyPresent(chain')
-assert 'SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory && visualEditor!=VisualEditor::Katana)' in u
+assert 'SetPlayerSkinPreviewActive((editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory && visualEditor!=VisualEditor::Katana) || rmlPreview)' in u
+assert 'menu_rml::VisualPreviewActive()' in u and 'drawRmlVisualPreview' in u
 assert 'visual_player_skin::begin(local,captureContext)' in n and 'visual_gpu_depth::inPlayerCapture=capture' in n
 assert n.index('visual_player_skin::begin(local,captureContext)')<n.index('originalPlayer(self,entity,pos,renderValue,partial)')
 assert 'scopeGeneration==generation' in skin and 'ctx!=scopeContext' in skin
@@ -8492,13 +8537,12 @@ print('Opt-in replay wiring: static OK; D3D11/Minecraft test required')
 # No perspective interception: it hid the first-person hand and interfered
 # with F5 in the reported game build. Keep camera input under game control.
 assert 'perspectiveHook' not in n and 'originalPerspective' not in n
-assert 'Use F5 for third person.' in u and 'PlayerPreviewCameraStatus' not in u
+assert 'PlayerPreviewCameraStatus' not in u  # crown settings UI removed in v5
 assert 'SetPlayerPreviewHatActive(editingVisual && visualEditor==VisualEditor::Hat && previewGameModelTest)' in u
 assert 'inHatCapture && replayable' in gpu and 'submitted.fetch_add(1,std::memory_order_relaxed); call();' in gpu
 assert 'struct EntityScope { ~EntityScope() { visual_player_replay::end();' in n
 for palette in ('Aogiri Green','Emerald','Graphite'): assert palette in theme
 print('Manual camera, hat replay and HUD palette wiring: static OK; Windows test required')
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_hud_visual_update.py
 ================================================================================================================================================================
@@ -8932,9 +8976,12 @@ assert n.count('renderAccessory(local);')==2
 assert 'actor!=player.entity' in n[n.index('void renderAccessory(const PlayerFrame& player) {'):]
 assert 'tessIdle(tess)' in n and 'visual_accessory::vertexCount' in n
 assert 'submitVisual(t,opacity)' in n and 'SetAccessoryEnabled(false)' in u
-assert '3D crown (test)' in u and 'drawAccessorySettings()' in u
+# v5: the crown is gone from every interface; while the RmlUi menu owns the
+# screen the adapter keeps it disabled. The render hook itself stays dormant.
+assert '3D crown (test)' not in u and 'drawAccessorySettings' not in u
+assert 'if (AccessoryEnabled()) SetAccessoryEnabled(false);' in u
 assert 'CreateFile' not in mesh and 'ReadProcessMemory' not in mesh
-print('3D crown wiring OK; Windows/Minecraft test required')
+print('3D crown render hook intact, UI removed (v5); Windows test required')
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_visual_accessory.py
 ================================================================================

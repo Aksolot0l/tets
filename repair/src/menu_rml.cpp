@@ -409,7 +409,7 @@ const SliderDef kSliders[] = {
     {"sl-kt-side", VisualParam::KatanaSide, SlScale::Direct, "%.2f"},
     {"sl-kt-height", VisualParam::KatanaHeight, SlScale::Direct, "%.2f"},
     {"sl-kt-forward", VisualParam::KatanaForward, SlScale::Direct, "%.2f"},
-    {"sl-kt-opacity", VisualParam::KatanaOpacity, SlScale::Direct, "%.2f"},
+    {"sl-kt-opacity", VisualParam::KatanaOpacity, SlScale::Percent, "%.0f%%"},
     {"sl-kt-fpside", VisualParam::KatanaFirstSide, SlScale::Direct, "%.2f"},
     {"sl-kt-fpforward", VisualParam::KatanaFirstForward, SlScale::Direct, "%.2f"},
 };

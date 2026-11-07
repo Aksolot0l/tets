@@ -323,4 +323,40 @@ assert '*(reinterpret_cast<unsigned char*>(runtime)+0x551)=0;' in u
 # plain ASCII punctuation in the compat captions too
 assert 'перетаскивай элементы мышкой - Esc - выход' in u
 
+# v8.1: the slider registry, the parameter specs and the markup must agree
+# on every slider's range. The katana opacity registry entry shipped as
+# Direct while the markup and the harness said Percent (30..100): the knob
+# worked, but the readout showed a raw "0.65" instead of "65%". This sweep
+# cross-checks all three tables so the class of bug cannot come back.
+import re as _re
+vs = (r/'src/visual_settings.h').read_text(encoding='utf-8')
+_names = [n.strip() for n in _re.search(
+    r'enum class VisualParam[^{]*\{(.*?)\};', vs, _re.S).group(1)
+    .replace('\n', ' ').split(',') if n.strip() and n.strip() != 'Count']
+_trips = _re.findall(
+    r'\{\s*([\d.\-]+)f?\s*,\s*([\d.\-]+)f?\s*,\s*([\d.\-]+)f?\s*\}',
+    _re.search(r'visualParamSpecs\[\]\s*=\s*\{(.*?)\};', vs, _re.S).group(1))
+assert len(_names) == len(_trips) == 38, (len(_names), len(_trips))
+_specs = {n: (float(lo), float(hi)) for n, (v, lo, hi) in zip(_names, _trips)}
+_reg = {}
+for _m in _re.finditer(
+        r'\{"(sl-[\w-]+)",\s*VisualParam::(\w+),\s*SlScale::(\w+)(?:,\s*"([^"]*)")?\}', m):
+    _reg[_m.group(1)] = (_m.group(2), _m.group(3), _m.group(4) or '')
+assert len(_reg) == 32, len(_reg)
+_markup = {mid: (float(lo), float(hi)) for mid, lo, hi in _re.findall(
+    r'id="(sl-[\w-]+)" min="([\d.\-]+)" max="([\d.\-]+)"', d)}
+assert set(_markup) == set(_reg), set(_markup) ^ set(_reg)
+for _id, (_param, _scale, _fmt) in _reg.items():
+    _lo, _hi = _specs[_param]
+    if _scale == 'Percent':
+        _lo, _hi = _lo * 100.0, _hi * 100.0
+        assert _fmt == '%.0f%%', (_id, _fmt)
+    elif _scale == 'RainbowPercent':
+        _lo, _hi = 0.0, 100.0
+    _mlo, _mhi = _markup[_id]
+    # 0.30f*100 = 30.000001: compare with a tolerance, never for equality
+    assert abs(_mlo - _lo) <= 0.011 and abs(_mhi - _hi) <= 0.011, \
+        f'{_id}: markup {_mlo}..{_mhi} vs {_scale} {_lo:.2f}..{_hi:.2f}'
+assert _reg['sl-kt-opacity'] == ('KatanaOpacity', 'Percent', '%.0f%%')
+
 print('check_menu_rml: ok')
