@@ -3,6 +3,7 @@ DACL_BACKUP.local.txt
 repair/*.acl.local.txt
 
 # Optional compiler intermediates for the adapter
+repair/build/
 repair/*.pdb
 repair/*.lib
 repair/*.res

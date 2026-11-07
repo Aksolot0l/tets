@@ -6,7 +6,7 @@ GAYCLIENT — ВСЁ В ОДНОМ: ОПИСАНИЕ HUD, ПРОМПТ И ИСХ
 
 ВАЖНО: это материал для чтения и передачи ИИ, а не один компилируемый C++ файл.
 Имена исходных файлов отмечены перед каждым фрагментом. Внешние заголовки Windows
-SDK и Dear ImGui сюда не включены. Исходников закрытого GAYClientCore.dll нет:
+SDK, RmlUi и Dear ImGui сюда не включены. Исходников закрытого GAYClientCore.dll нет:
 старый штатный HUD нельзя восстановить полностью по этому файлу.
 Мировой проход с глубиной, настоящая модель и копия шляпы в GPU-preview
 подтверждены пользователем. Автоматическое переключение с первого лица не
@@ -14,6 +14,11 @@ SDK и Dear ImGui сюда не включены. Исходников закр�
 остаётся. Right Shift и мышь подтверждены пользователем; текущий HUD в игре
 выглядит как отдельные окна и не соответствует желаемому референсу.
 Предыдущие Jump Rings работали в игре; новый многослойный вид ещё не проверен.
+UPDATE: внутриигровое меню полностью переделано на RmlUi (HTML/CSS, стиль
+лаунчера): мост src/menu_rml.cpp, дизайн src/menu_rml_data.h, сборка
+tools/build_adapter.py. Прежнее ImGui-меню (menu_embed + GAYClientMenu)
+удалено из сборки; легаси-интерфейс остаётся фолбэком. В реальной игре
+новое меню ещё не проверено пользователем.
 
 СОДЕРЖАНИЕ:
 1. Описание модулей, промпт и сборка
@@ -22,7 +27,7 @@ SDK и Dear ImGui сюда не включены. Исходников закр�
    - repair/src/hud_module_list.h
    - repair/src/hud_theme.h
    - repair/tests/check_hud_visual_style.py
-   - repair/tests/check_menu_embed.py
+   - repair/tests/check_menu_rml.py
    - repair/tests/hud_visual_kit.cpp
    - repair/src/hud_visual_kit.h
    - repair/src/settings.h
@@ -80,8 +85,9 @@ SDK и Dear ImGui сюда не включены. Исходников закр�
    - repair/src/menu_mouse_policy.h
    - repair/src/menu_mouse_native.cpp
    - repair/src/menu_mouse_native.h
-   - repair/src/menu_embed.h
-   - repair/src/menu_embed.cpp
+   - repair/src/menu_rml.h
+   - repair/src/menu_rml.cpp
+   - repair/src/menu_rml_data.h
    - repair/src/page_scroll.h
    - repair/src/wheel_bridge.h
    - repair/src/wheel_counter.h
@@ -289,7 +295,7 @@ UPDATE: HUD redesign — visual layer
 #include "disable_hotkey.h"
 #include "china_hat_native.h"
 #include "menu_mouse_native.h"
-#include "menu_embed.h"
+#include "menu_rml.h"
 #include "visual_avatar_preview.h"
 #include "visual_color.h"
 #include "visual_player_skin.h"
@@ -1401,13 +1407,13 @@ static void patchedDrawGui(void* runtime) {
     const bool menuOpen=runtime && *(reinterpret_cast<unsigned char*>(runtime)+0x551);
     SetMenuMouseOpen(menuOpen);
     if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }
-    menu_embed::SetGameMenuOpen(menuOpen);
+    menu_rml::SetGameMenuOpen(menuOpen);
     // While the embedded new menu is alive it replaces the legacy click GUI
     // and the old test panels; if its initialization ever failed, everything
     // below falls back to the previous interface unchanged.
-    const bool replaced=menuOpen && menu_embed::ReplacesLegacyMenu();
-    if (menuOpen && menu_embed::ConsumeHudEditorRequest()) hudEditorOpen=true;
-    menu_embed::DrainModuleToggles(&toggleGameModule);
+    const bool replaced=menuOpen && menu_rml::ReplacesLegacyMenu();
+    if (menuOpen && menu_rml::ConsumeHudEditorRequest()) hudEditorOpen=true;
+    menu_rml::DrainModuleToggles(&toggleGameModule);
     const bool editingVisual=menuOpen && visualEditor!=VisualEditor::None && canVisualPreview();
     SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory && visualEditor!=VisualEditor::Katana);
     SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory && visualEditor!=VisualEditor::Katana && previewGameModelTest);
@@ -1457,7 +1463,7 @@ static void patchedNewFrame() {
     takeExternalWheel(wheelX, wheelY);
     if (pointerInUse && (wheelX || wheelY)) {
         addWheel(&io, wheelX / 120.0f, wheelY / 120.0f);
-        menu_embed::AddWheel(wheelX / 120.0f, wheelY / 120.0f);
+        menu_rml::AddWheel(wheelX / 120.0f, wheelY / 120.0f);
     }
     const float pageWheel = pageScroll.step(pointerInUse && pageKeysReady,
         pageKeysReady && keyDown(VK_PRIOR), pageKeysReady && keyDown(VK_NEXT), GetTickCount64());
@@ -1514,7 +1520,7 @@ static bool patchedPointerImpl(float& x, float& y, float& w, float& h) {
 // The same cursor sample also feeds the embedded new menu overlay.
 static bool patchedPointer(float& x, float& y, float& w, float& h) {
     const bool ok = patchedPointerImpl(x, y, w, h);
-    if (ok) menu_embed::SetPointer(x, y, w, h);
+    if (ok) menu_rml::SetPointer(x, y, w, h);
     return ok;
 }
 
@@ -1549,15 +1555,15 @@ static void draw(IDXGISwapChain* chain, UINT flags) {
                 frameDevice = device; frameContext = context;
                 frameWidth = desc.Width; frameHeight = desc.Height; seenInput = false; pointerInUse = false;
                 legacyPresent(chain, 0, flags);
-                // The embedded new menu renders after the legacy overlay with
-                // its own ImGui context; the back buffer is bound explicitly
-                // because the ImGui renderer never sets targets itself.
+                // The RmlUi menu renders after the legacy overlay through its
+                // own DX11 renderer. It binds the back-buffer target view
+                // itself during EndFrame and restores the DirectX state, so
+                // only the view has to be handed over here.
                 ID3D11RenderTargetView* overlayTarget = nullptr;
                 if (SUCCEEDED(device->CreateRenderTargetView(back, nullptr, &overlayTarget)) && overlayTarget) {
-                    context->OMSetRenderTargets(1, &overlayTarget, nullptr);
+                    menu_rml::RenderOverlay(device, overlayTarget, desc.Width, desc.Height);
                     overlayTarget->Release();
                 }
-                menu_embed::RenderOverlay(device, context, desc.Width, desc.Height);
                 release(previewFrameView);
                 frameDevice = nullptr; frameContext = nullptr;
             }
@@ -1690,8 +1696,8 @@ static DWORD WINAPI bootstrap(void*) {
     getIO = symbol<GetIOFn>("_ZN5ImGui5GetIOEv");
     // The embedded new menu shares the resolved key state and the HUD module
     // flags observed by patchedDrawGui; it never resolves symbols itself.
-    menu_embed::SetKeyQuery(keyDown);
-    menu_embed::SetModuleStateReader(&readGameModule);
+    menu_rml::SetKeyQuery(keyDown);
+    menu_rml::SetModuleStateReader(&readGameModule);
     if (!mhInit || !mhCreate || !mhQueueEnable || !mhApply || !mhDisable || !bridgeInit || !bridgeActive || !newFrameTarget || !updateTarget || !pointerTarget || !settingsTarget || !findGameWindow || !addFont || !addWheel || !legacyPresent || !rendererInit || !getIO) { log("legacy DLL exports do not match expected version"); return 1; }
     log(suppressMouseDiagnostic() ? "mouse diagnostic suppressed" : "mouse diagnostic patch skipped: core mismatch or protection failure");
     void* present = nullptr; void* present1 = nullptr;
@@ -1768,9 +1774,10 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID) {
     }
     return TRUE;
 }
+
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/compat.cpp
-================================================================================
+================================================================================================================================================================
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/hud_module_list.h
@@ -2144,7 +2151,7 @@ assert 'OMSetDepthStencilState' not in u
 
 # 5. Scoped style survives through actual widgets, and restores on return.
 # The legacy click GUI keeps its scoped style whenever it is drawn; the
-# embedded new menu can replace it (see check_menu_embed.py) without removing
+# embedded new menu can replace it (see check_menu_rml.py) without removing
 # this path for the not-replaced case and any embed failure fallback.
 assert 'if (menuOpen && !replaced) { VisualStyleScope style; realDrawGui(runtime); }' in u
 assert '~VisualStyleScope()' in u and 'guiPopColor(pushedColors)' in u and 'guiPopVar(pushedVars)' in u
@@ -2171,120 +2178,155 @@ assert 'UPDATE: HUD redesign — visual layer' in doc
 assert 'hud_visual_kit.h' in doc
 
 print('HUD visual-only checks OK; Windows/Minecraft verification required')
+
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_hud_visual_style.py
+================================================================================================================================================================
 ================================================================================
+НАЧАЛО ФАЙЛА: repair/tests/check_menu_rml.py
 ================================================================================
-НАЧАЛО ФАЙЛА: repair/tests/check_menu_embed.py
-================================================================================
-"""Static wiring checks for the embedded new GAYClient menu; no Windows here."""
+"""Static wiring checks for the RmlUi game menu; no Windows here."""
 from pathlib import Path
-import re
-r=Path(__file__).resolve().parents[1]
-root=r.parent
-u=(r/'src/compat.cpp').read_text()
-m=(r/'src/menu_embed.cpp').read_text()
-h=(r/'src/menu_embed.h').read_text()
-menu=(root/'GAYClientMenu.h').read_text()
-menucpp=(root/'GAYClientMenu.cpp').read_text()
+r = Path(__file__).resolve().parents[1]
+root = r.parent
+u = (r/'src/compat.cpp').read_text(encoding='utf-8')
+m = (r/'src/menu_rml.cpp').read_text(encoding='utf-8')
+h = (r/'src/menu_rml.h').read_text(encoding='utf-8')
+d = (r/'src/menu_rml_data.h').read_text(encoding='utf-8')
+b = (r/'tools/build_adapter.py').read_text(encoding='utf-8')
 
-# The user-provided menu sources stay the integration contract: only the
-# ModuleId enum gained the adapter test modules, everything else is wired
-# through MenuState/MenuActions callbacks.
-assert '#include "GAYClientMenu.h"' in m and '#include "menu_embed.h"' in u
-assert 'Katana,' in menu and 'Crown' in menu
-assert menu.count('ModuleId::') >= 1 and 'RenderMenu(MenuState& state, const MenuActions& actions)' in menu
-# The menu itself never touches D3D or creates contexts.
-assert 'CreateContext' not in menucpp and 'ID3D11' not in menucpp
+# 1. The old ImGui embed is gone everywhere: no menu_embed, no GAYClientMenu,
+#    no vendored ImGui sources in the internal DLL build.
+assert 'menu_embed' not in u and 'menu_embed' not in m
+assert '#include "menu_rml.h"' in u and 'menu_rml::SetGameMenuOpen(menuOpen)' in u
+assert 'menu_rml::RenderOverlay(device, overlayTarget, desc.Width, desc.Height)' in u
+assert 'menu_rml::AddWheel(wheelX / 120.0f, wheelY / 120.0f)' in u
+assert 'menu_rml::SetPointer(x, y, w, h)' in u
+assert 'menu_rml::SetKeyQuery(keyDown)' in u
+assert 'menu_rml::SetModuleStateReader(&readGameModule)' in u
+assert 'menu_rml::DrainModuleToggles(&toggleGameModule)' in u
+assert 'GAYClientMenu' not in u and 'GAYClientMenu' not in b
+assert 'imgui_impl_dx11.cpp' not in b and 'vendor/imgui/imgui.cpp' not in b
+assert not (r/'src/menu_embed.cpp').exists() and not (r/'src/menu_embed.h').exists()
+assert not (r/'tests/check_menu_embed.py').exists()
 
-# Private ImGui context: created once, no ini writes, cyrillic font through
-# the menu's own loader, and the DX11 backend initialized from the same
-# device/context the legacy overlay already uses.
-assert 'ImGui::CreateContext()' in m and 'io.IniFilename = nullptr' in m
-assert 'LoadCyrillicFont(io, 17.0f)' in m
-assert 'ImGui_ImplDX11_Init(device, context)' in m
-assert 'g_context = nullptr' in m and 'g_initFailed = true' in m
-assert 'ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData())' in m
-# The backend's NewFrame hook must run before ImGui::NewFrame: it creates the
-# shaders, states and font texture, and RenderDrawData maps them without null
-# checks (a missing call crashed the game at startup).
-assert m.index('ImGui_ImplDX11_NewFrame();') < m.index('ImGui::NewFrame();')
-# Draw only once the backend really owns its device objects, and replace the
-# legacy interface only after the first successful frame.
-assert 'ImGui::GetIO().Fonts->TexID != 0' in m
+# 2. Public contract: same surface as the old embed, except the render call
+#    takes the back-buffer render target view instead of the device context.
+for name in ('RenderOverlay', 'SetPointer', 'AddWheel', 'SetKeyQuery',
+             'SetGameMenuOpen', 'SetModuleStateReader', 'DrainModuleToggles',
+             'ReplacesLegacyMenu', 'ConsumeHudEditorRequest'):
+    assert name in h and name in m
+assert 'ID3D11RenderTargetView* rtv' in h and 'ID3D11DeviceContext' not in h
+assert 'void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,' in m
+
+# 3. RmlUi bootstrap order: renderer installed before Initialise, fonts loaded
+#    from memory buffers that outlive everything, contexts created from the
+#    markup with the RCSS injected into the empty <style> element.
+assert 'Rml::SetRenderInterface(g_renderer);' in m
+assert m.index('Rml::SetRenderInterface(g_renderer);') < m.index('Rml::Initialise()')
+assert 'CreateContext("gayclient"' in m
+assert 'segoeui.ttf' in m and 'segoeuib.ttf' in m
+assert 'LoadFontFace' in m and 'Rml::Style::FontWeight::Bold' in m
+assert '"GAY"' in m
+assert 'LoadDocumentFromMemory' in m and 'text.find("<style>")' in m
+assert 'kMenuRml' in m and 'kMenuRcss' in m and 'kTestToolsRml' in m and 'kTestToolsRcss' in m
+
+# 4. Render loop discipline: dimensions follow the viewport, the RTV is passed
+#    to EndFrame, and the legacy interface is replaced only after a complete
+#    first frame (automatic fallback if RmlUi ever fails).
+assert 'SetDimensions' in m and 'SetViewport' in m
+assert 'g_renderer->BeginFrame();' in m and 'g_rmlContext->Render();' in m
+assert 'g_renderer->EndFrame(rtv);' in m
 assert 'bool ReplacesLegacyMenu() { return g_renderOk.load' in m
+assert 'g_initFailed = true' in m
+assert 'if (!menuVisible) return;' in m
 
-# The legacy client's ImGui context is never touched: the embed only uses its
-# own context and its own compiled backend.
-assert 'SetCurrentContext' in m and 'getIO' not in m
+# 5. Input is fed from the existing hooks only: cursor DIPs are scaled to
+#    pixels like the old embed, buttons/keys are forwarded on transitions only
+#    (RmlUi processes every call as a fresh event), the wheel keeps the
+#    one-unit-per-notch convention of the adapter.
+assert 'static_cast<float>(width) / w' in m
+assert 'if (down == g_mouseStates[button]) continue;' in m
+assert 'ProcessMouseButtonDown(button, 0)' in m and 'ProcessMouseButtonUp(button, 0)' in m
+assert 'ProcessMouseWheel(Rml::Vector2f(wheelX, wheelY), 0)' in m
+assert 'KI_ESCAPE' in m
 
-# Input comes from the existing hooks only; no new game hooks.
-assert 'menu_embed::SetPointer(x, y, w, h)' in u
-assert 'menu_embed::AddWheel(wheelX / 120.0f, wheelY / 120.0f)' in u
-assert 'menu_embed::SetKeyQuery(keyDown)' in u
-assert 'GetAsyncKeyState(vk) & 0x8000' in m  # mouse buttons fallback
+# 6. Verified setter surface only: the module toggles go through the queued
+#    ag::Runtime::SetModule bridge, the effect toggles through the direct
+#    setters, and every slider writes one VisualParam.
+assert 'queueAgModule' in m and 'g_pendingToggles.size() < 32' in m
+assert 'SetChinaHatEnabled(on)' in m and 'SetTrailEnabled(on)' in m
+assert 'SetJumpEnabled(on)' in m and 'SetKatanaEnabled(on)' in m and 'SetAccessoryEnabled(on)' in m
+assert 'SetHatFillEnabled(on)' in m and 'SetHatRainbowEnabled(on)' in m
+assert 'SetTrailFillEnabled(on)' in m and 'SetTrailRainbowEnabled(on)' in m
+assert 'SetJumpRainbowEnabled(on)' in m
+assert 'SetVisualParam(m_def->param, paramFromDom(*m_def, dom));' in m
+assert 'percentToRange(dom, 0.03f, 0.80f)' in m
 
-# Game-module toggles are queued and drained on the legacy GUI thread where
-# setModule is already used; the runtime pointer comes from patchedDrawGui.
-assert 'queueAgModule' in m and 'DrainModuleToggles' in h and 'void DrainModuleToggles' in m
-assert 'menu_embed::DrainModuleToggles(&toggleGameModule)' in u
-assert 'setModule(menuEmbedRuntime' in u and 'static_cast<ag::ModuleId>(static_cast<std::size_t>(moduleId))' in u
+# 7. The DOM registry covers every interactive element of both documents.
+for switch_id in ('sw-fps', 'sw-cps', 'sw-clock', 'sw-keys', 'sw-watermark',
+                  'sw-coords', 'sw-res', 'sw-perf', 'sw-modlist',
+                  'sw-chinahat', 'sw-trail', 'sw-jump', 'sw-katana', 'sw-crown',
+                  'sw-gfx-chinahat', 'sw-gfx-trail', 'sw-gfx-jump',
+                  'sw-ch-fill', 'sw-ch-rainbow', 'sw-tr-fill', 'sw-tr-rainbow',
+                  'sw-jr-rainbow', 'hud-sw-fps', 'hud-sw-modlist'):
+    assert f'"{switch_id}"' in m, switch_id
+    assert f'id="{switch_id}"' in d, switch_id
+for slider_id in ('sl-ch-rainbow', 'sl-ch-opacity', 'sl-ch-radius', 'sl-ch-height',
+                  'sl-ch-offset', 'sl-ch-amp', 'sl-ch-floatspeed',
+                  'sl-tr-rainbow', 'sl-tr-opacity', 'sl-tr-height', 'sl-tr-life',
+                  'sl-jr-rainbow', 'sl-jr-opacity', 'sl-jr-radius', 'sl-jr-duration',
+                  'sl-kt-scale', 'sl-kt-tilt', 'sl-kt-side', 'sl-kt-height',
+                  'sl-kt-forward', 'sl-kt-opacity', 'sl-kt-fpside', 'sl-kt-fpforward',
+                  'sl-cr-scale', 'sl-cr-offset', 'sl-cr-opacity',
+                  'sl-kt2-scale', 'sl-cr2-scale'):
+    assert f'"{slider_id}"' in m, slider_id
+    assert f'id="{slider_id}"' in d, slider_id
+# Every slider id in the markup is registered and has a readout counterpart.
+slider_ids = set(re.findall(r'id="(sl-[a-z0-9-]+)"', d)) if (re := __import__('re')) else set()
+for slider_id in slider_ids:
+    assert f'"{slider_id}"' in m, slider_id
+    readout = 'ro' + slider_id[2:]
+    assert f'id="{readout}"' in d, readout
+# Every switch id in the markup is registered.
+for switch_id in set(re.findall(r'id="((?:sw|hud-sw)-[a-z0-9-]+)"', d)):
+    assert f'"{switch_id}"' in m, switch_id
 
-# Present path: the overlay renders after the legacy, with the back buffer
-# bound explicitly because ImGui never sets targets itself.
-assert u.index('legacyPresent(chain, 0, flags);') < u.index('menu_embed::RenderOverlay(device, context, desc.Width, desc.Height)')
-assert 'CreateRenderTargetView(back, nullptr, &overlayTarget)' in u
-assert 'context->OMSetRenderTargets(1, &overlayTarget, nullptr)' in u
+# 8. Tabs, collapsible sections, close and HUD editor buttons are wired.
+assert 'btn-close' in m and 'btn-hudeditor' in m and 'btn-hudeditor2' in m
+assert 'activateTab' in m and '"tab-modules"' in m and '"panel-modules"' in m
+assert 'head-sec-' in m and 'SetClass("collapsed"' in m
+assert 'SetClass("on"' in m and 'IsClassSet("on")' in m
+assert 'SetClass("active"' in m and 'SetClass("selected"' in m
+assert 'g_hudEditorRequest.store(true, std::memory_order_relaxed);' in m
 
-# Replacement gating: the old interface survives any embed failure.
-assert 'const bool replaced=menuOpen && menu_embed::ReplacesLegacyMenu();' in u
-assert 'if (menuOpen && menu_embed::ConsumeHudEditorRequest()) hudEditorOpen=true;' in u
-assert 'bool ReplacesLegacyMenu();' in h and 'bool ConsumeHudEditorRequest();' in h
+# 9. Test tools window: separate document, draggable, katana/crown only while
+#    enabled, status/diagnostics updated only when the text actually changed.
+assert 'toolsVisible = menuVisible && (KatanaEnabled() || AccessoryEnabled())' in m
+assert 'katanaStatusText' in m and 'KatanaDebugSnapshot()' in m
+assert 'g_ttStatusCache != status' not in m and 'if (status != g_ttStatusCache)' in m
+assert 'id="tt"' in d and 'drag: drag;' in d and 'tt-status' in d and 'tt-diag' in d
 
-# Module wiring: every menu module maps to an existing tested setter; the
-# test modules (katana/crown) keep their controls in the test tools window.
-for wiring in ('case ModuleId::ChinaHat: SetChinaHatEnabled(enable); return;',
-               'case ModuleId::Trail: SetTrailEnabled(enable); return;',
-               'case ModuleId::JumpRings: SetJumpEnabled(enable); return;',
-               'case ModuleId::Katana: SetKatanaEnabled(enable); return;',
-               'case ModuleId::Crown: SetAccessoryEnabled(enable); return;'):
-    assert wiring in m, wiring
-assert 'g_state.modules.push_back({ModuleId::Katana' in m
-assert 'g_state.modules.push_back({ModuleId::Crown' in m
-assert 'SetVisualParam(VisualParam::HatRed' in m and 'SetVisualParam(VisualParam::JumpSeconds' in m
-assert 'SetHatRainbowEnabled' in m and 'SetTrailRainbowEnabled' in m and 'SetJumpRainbowEnabled' in m
-assert 'SetHatFillEnabled' in m and 'SetTrailFillEnabled' in m
+# 10. Build script discipline: static RmlUi without export leaks, the DX11
+#     renderer with non-multisampled targets, the minimal FreeType module set.
+assert '"-DRMLUI_STATIC_LIB"' in b
+assert 'RMLUI_CORE_EXPORTS' not in b.replace('without -DRMLUI_CORE_EXPORTS', '')
+assert '"-DNUM_MSAA_SAMPLES=0"' in b
+assert 'ftmodule.h' in b and 'ftgzip.c' in b and 'ftmm.c' in b
+assert 'menu_rml.cpp' in b and 'menu_embed.cpp' not in b
+assert 'GAYClientInternal.dll' in b
 
-# The HUD tab toggles route through the same queued SetModule path as the
-# modules tab; without this the flags snapped back to the live state.
-for wiring in ('"hud.showFps") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::Fps)',
-               '"hud.showWatermark") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::Watermark)',
-               '"hud.showPerformance") == 0) {',
-               '"hud.showModuleList") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::ActiveModules)'):
-    assert wiring in m, wiring
-# Module flags come from the menu-owned shadow (seeded once from the live
-# state) so the toggles never race the queued SetModule calls.
-assert 'g_moduleShadow[ag::kModuleCount]' in m and 'g_moduleShadowReady' in m
-assert 'syncModuleShadow();' in m and 'shadowModule(static_cast<int>(ag::ModuleId::Fps))' in m
+# 11. The markup keeps the launcher look: big shell, accent color, animations.
+assert '1140px' in d and '716px' in d
+assert 'std::min(1140, static_cast<int>(width) - 24)' in m
+assert '#3ae882' in d and 'transition:' in d
+assert 'font-size: 20px' in d
 
-# The design canvas was tuned so the menu lands near 1.5x on 1080p-class
-# game screens (17 px text was unreadable at the old 1:1 fit).
-assert 'constexpr float kShellWidth = 1040.0f;' in menucpp
-assert 'constexpr float kShellHeight = 580.0f;' in menucpp
-assert 'std::clamp(fit, 0.55f, 1.80f)' in menucpp
-assert 'std::clamp(state.ui.menuScale / 100.0f, 0.70f, 1.50f)' in menucpp
+print('check_menu_rml: ok')
 
-# The vendored Dear ImGui implementation matches the header version the menu
-# was developed against (the shipped DLL links these exact sources).
-version=re.search(r'#define IMGUI_VERSION\s+"([^"]+)"',(r/'vendor/imgui/imgui.h').read_text()).group(1)
-assert version=='1.91.9b', version
-for source in ('imgui.cpp','imgui_draw.cpp','imgui_tables.cpp','imgui_widgets.cpp',
-               'backends/imgui_impl_dx11.cpp','backends/imgui_impl_dx11.h'):
-    assert (r/'vendor/imgui'/source).exists(), source
-print('Embedded GAYClient menu wiring OK; Windows in-game test still required')
 ================================================================================
-КОНЕЦ ФАЙЛА: repair/tests/check_menu_embed.py
-================================================================================
+КОНЕЦ ФАЙЛА: repair/tests/check_menu_rml.py
+================================================================================================================================================================
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/hud_theme.h
@@ -5213,25 +5255,27 @@ bool InitializeMenuMouse(HatCreateHook create,HatToggleHook enable,HatToggleHook
 КОНЕЦ ФАЙЛА: repair/src/menu_mouse_native.cpp
 ================================================================================
 ================================================================================
-НАЧАЛО ФАЙЛА: repair/src/menu_embed.h
+НАЧАЛО ФАЙЛА: repair/src/menu_rml.h
 ================================================================================
 #pragma once
 #include <cstdint>
 struct ID3D11Device;
-struct ID3D11DeviceContext;
+struct ID3D11RenderTargetView;
 
-// Embedding of the new GAYClient menu (GAYClientMenu.h/.cpp, Dear ImGui
-// 1.91.9b) into the adapter. The menu renders with its own private ImGui
-// context and its own DX11 backend objects, created from the same device and
-// immediate context the legacy overlay already uses; the legacy client's
-// ImGui context is never touched. Everything below is called from existing
-// adapter hooks, so no new game hooks are introduced.
-namespace menu_embed {
+// Full replacement of the adapter's game menu, built on RmlUi (HTML/CSS with
+// animations) instead of Dear ImGui. The markup and styling live in
+// menu_rml_data.h; this module owns the RmlUi context, the DX11 render
+// interface, the input plumbing and the wiring onto the adapter's existing,
+// verified setters. Everything below is called from existing adapter hooks,
+// so no new game hooks are introduced.
+namespace menu_rml {
 
 // Called at the end of the Present-path draw, after the legacy overlay has
-// rendered. Renders the new menu plus the test-tools window with a private
-// ImGui context. Safe no-op until initialization succeeds once.
-void RenderOverlay(ID3D11Device* device, ID3D11DeviceContext* context,
+// rendered. Creates and renders the RmlUi menu plus the katana/crown test
+// tools window. The caller provides the back-buffer render target view; the
+// RmlUi DX11 renderer binds it during EndFrame and restores all DirectX
+// state afterwards. Safe no-op until initialization succeeds once.
+void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
                    unsigned width, unsigned height);
 
 // Input plumbing from the existing adapter hooks. All cross-thread safe.
@@ -5247,74 +5291,74 @@ void SetGameMenuOpen(bool open);
 void SetModuleStateReader(bool (*reader)(int moduleId));
 void DrainModuleToggles(void (*toggler)(int moduleId, bool));
 
-// True once the new menu is alive; the legacy click GUI and the old test
-// panels stay hidden while this holds, falling back automatically otherwise.
+// True once the RmlUi menu has rendered a full frame; the legacy click GUI
+// and the old test panels stay hidden while this holds, falling back
+// automatically otherwise.
 bool ReplacesLegacyMenu();
 
-// One-shot request from the menu's HUD-editor button.
+// One-shot request from the menu's HUD-editor buttons.
 bool ConsumeHudEditorRequest();
 
-} // namespace menu_embed
-================================================================================
-КОНЕЦ ФАЙЛА: repair/src/menu_embed.h
-================================================================================
-================================================================================
-НАЧАЛО ФАЙЛА: repair/src/menu_embed.cpp
-================================================================================
-#include "menu_embed.h"
+} // namespace menu_rml
 
+================================================================================
+КОНЕЦ ФАЙЛА: repair/src/menu_rml.h
+================================================================================================================================================================
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/menu_rml.cpp
+================================================================================
+#include "menu_rml.h"
+
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <initializer_list>
+#include <memory>
 #include <mutex>
 #include <utility>
 #include <vector>
 
-#include "imgui.h"
-#include "backends/imgui_impl_dx11.h"
+#include <RmlUi/Core/Context.h>
+#include <RmlUi/Core/Core.h>
+#include <RmlUi/Core/Element.h>
+#include <RmlUi/Core/ElementDocument.h>
+#include <RmlUi/Core/Event.h>
+#include <RmlUi/Core/EventListener.h>
+#include <RmlUi/Core/Input.h>
+#include <RmlUi/Core/StringUtilities.h>
+#include <RmlUi/Core/Types.h>
 
-#include "GAYClientMenu.h"
+#include "RmlUi_Renderer_DX11.h"
+
 #include "china_hat_native.h"
+#include "menu_rml_data.h"
 #include "settings.h"
 #include "visual_settings.h"
 
-// This translation unit links the user-provided GAYClientMenu (pure Dear
-// ImGui code) into the adapter:
+// RmlUi-based replacement of the adapter's game menu. The document markup and
+// styling come from menu_rml_data.h; this translation unit:
 //
-//  - a private ImGui context + DX11 backend is created on the same device and
-//    immediate context the legacy overlay already renders through, so no new
-//    hooks or swap chains are needed;
-//  - input is forwarded from the existing adapter hooks (patchedPointer for
-//    the cursor, the UWP wheel, the legacy key state export), never from new
-//    game hooks;
-//  - module toggles and graphics settings are mapped one-to-one onto the
-//    adapter's existing, tested setters (SetChinaHatEnabled, SetVisualParam,
-//    ag::Runtime::SetModule through the compat bridge);
-//  - the katana/crown test controls that have no place in the new menu live
-//    in a small separate "test tools" window drawn by this module.
+//  - creates one RmlUi context with the vendored DX11 render interface on the
+//    same device the legacy overlay already renders through (the back-buffer
+//    render target view is passed in by the caller; RmlUi binds it during
+//    EndFrame and restores the DirectX state afterwards);
+//  - feeds input from the existing adapter hooks (patchedPointer, the UWP
+//    wheel, the legacy key state export), never from new game hooks;
+//  - maps switches and sliders one-to-one onto the adapter's existing,
+//    verified setters (SetChinaHatEnabled, SetVisualParam, and
+//    ag::Runtime::SetModule through the queued compat bridge);
+//  - keeps the katana/crown diagnostics window as a separate draggable
+//    RmlUi document.
 //
 // Failure of anything above only means the new menu stays hidden and the
 // previous interface keeps working.
-namespace menu_embed {
+namespace menu_rml {
 namespace {
 
-using gayclient::MenuActions;
-using gayclient::MenuState;
-using gayclient::ModuleId;
-
-MenuState g_state;
-MenuActions g_actions;
-ImGuiContext* g_context = nullptr;
-bool g_backendReady = false;
-bool g_initFailed = false;
-// Set once the backend has actually built its device objects (font texture
-// uploaded); only then does the embed replace the legacy interface.
-std::atomic<bool> g_renderOk{false};
-// The menu's own copy of the game's HUD module flags (indexed by ag::ModuleId).
-bool g_moduleShadow[ag::kModuleCount] = {};
-bool g_moduleShadowReady = false;
+// ---------------------------------------------------------------------------
+// Cross-thread input and state plumbing (mirrors the previous menu embed).
+// ---------------------------------------------------------------------------
 
 std::atomic<bool> g_gameMenuOpen{false};
 std::atomic<bool> g_hiddenByClose{false};
@@ -5325,13 +5369,42 @@ std::atomic<float> g_pointerW{0.0f}, g_pointerH{0.0f};
 std::atomic<float> g_wheelX{0.0f}, g_wheelY{0.0f};
 bool (*g_keyDown)(int) = nullptr;
 bool (*g_moduleStateReader)(int) = nullptr;
+
 // Toggles for the game's own HUD modules must run on the legacy GUI thread
-// (ag::Runtime::SetModule is not documented as thread-safe), so the menu
-// callback only queues them; the compat layer drains the queue each frame.
+// (ag::Runtime::SetModule is not documented as thread-safe), so the menu only
+// queues them; the compat layer drains the queue each frame.
 std::mutex g_pendingMutex;
 std::vector<std::pair<int, bool>> g_pendingToggles;
-ULONGLONG g_lastFrameTick = 0;
-bool g_keyStates[256] = {};
+
+// The menu's own copy of the game's HUD module flags (indexed by
+// ag::ModuleId): it initializes from the live state once and then follows the
+// user's toggles, because re-reading the game state every frame raced the
+// queued SetModule calls and the switch visibly jumped back.
+bool g_moduleShadow[ag::kModuleCount] = {};
+bool g_moduleShadowReady = false;
+
+bool g_ready = false;
+bool g_initFailed = false;
+std::atomic<bool> g_renderOk{false};
+
+bool g_mouseStates[2] = {};
+bool g_escState = false;
+
+RenderInterface_DX11* g_renderer = nullptr;
+Rml::Context* g_rmlContext = nullptr;
+Rml::ElementDocument* g_menuDoc = nullptr;
+Rml::ElementDocument* g_ttDoc = nullptr;
+Rml::Element* g_shell = nullptr;
+Rml::Element* g_ttStatus = nullptr;
+Rml::Element* g_ttDiag = nullptr;
+unsigned g_width = 0, g_height = 0;
+bool g_menuShown = false;
+bool g_ttShown = false;
+std::string g_ttStatusCache;
+std::string g_ttDiagCache;
+
+std::vector<char> g_fontNormal;
+std::vector<char> g_fontBold;
 
 float clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
 
@@ -5344,86 +5417,12 @@ float rangeToPercent(float value, float low, float high) {
     return clamp01((value - low) / (high - low)) * 100.0f;
 }
 
-// Initialize the menu's graphics values from the adapter's live parameters so
-// the tab shows what is actually rendered instead of the design defaults.
-void initLiveDefaults() {
-    auto& hat = g_state.graphics.chinaHat;
-    hat.fill = HatFillEnabled();
-    hat.rainbow = HatRainbowEnabled();
-    hat.rainbowSpeed = rangeToPercent(GetVisualParam(VisualParam::HatRainbowSpeed), 0.03f, 0.80f);
-    hat.opacity = GetVisualParam(VisualParam::HatOpacity) * 100.0f;
-    hat.radius = GetVisualParam(VisualParam::HatRadius);
-    hat.height = GetVisualParam(VisualParam::HatConeHeight);
-    hat.offset = GetVisualParam(VisualParam::HatOffset);
-    hat.floatAmplitude = GetVisualParam(VisualParam::HatBobAmplitude);
-    hat.floatSpeed = GetVisualParam(VisualParam::HatBobSpeed);
-    hat.color = ImVec4(GetVisualParam(VisualParam::HatRed), GetVisualParam(VisualParam::HatGreen),
-                       GetVisualParam(VisualParam::HatBlue), 1.0f);
-    auto& trail = g_state.graphics.trail;
-    trail.fill = TrailFillEnabled();
-    trail.rainbow = TrailRainbowEnabled();
-    trail.rainbowSpeed = rangeToPercent(GetVisualParam(VisualParam::TrailRainbowSpeed), 0.03f, 0.80f);
-    trail.opacity = GetVisualParam(VisualParam::TrailOpacity) * 100.0f;
-    trail.height = GetVisualParam(VisualParam::TrailHeight);
-    trail.life = GetVisualParam(VisualParam::TrailSeconds);
-    trail.color = ImVec4(GetVisualParam(VisualParam::TrailRed), GetVisualParam(VisualParam::TrailGreen),
-                         GetVisualParam(VisualParam::TrailBlue), 1.0f);
-    auto& jump = g_state.graphics.jumpRings;
-    jump.rainbow = JumpRainbowEnabled();
-    jump.rainbowSpeed = rangeToPercent(GetVisualParam(VisualParam::JumpRainbowSpeed), 0.03f, 0.80f);
-    jump.opacity = GetVisualParam(VisualParam::JumpOpacity) * 100.0f;
-    jump.radius = GetVisualParam(VisualParam::JumpRadius);
-    jump.duration = GetVisualParam(VisualParam::JumpSeconds);
-    jump.color = ImVec4(GetVisualParam(VisualParam::JumpRed), GetVisualParam(VisualParam::JumpGreen),
-                        GetVisualParam(VisualParam::JumpBlue), 1.0f);
-}
-
-void pushChinaHat() {
-    const auto& hat = g_state.graphics.chinaHat;
-    SetHatFillEnabled(hat.fill);
-    SetHatRainbowEnabled(hat.rainbow);
-    SetVisualParam(VisualParam::HatRainbowSpeed, percentToRange(hat.rainbowSpeed, 0.03f, 0.80f));
-    SetVisualParam(VisualParam::HatOpacity, clamp01(hat.opacity / 100.0f));
-    SetVisualParam(VisualParam::HatRadius, hat.radius);
-    SetVisualParam(VisualParam::HatConeHeight, hat.height);
-    SetVisualParam(VisualParam::HatOffset, hat.offset);
-    SetVisualParam(VisualParam::HatBobAmplitude, hat.floatAmplitude);
-    SetVisualParam(VisualParam::HatBobSpeed, hat.floatSpeed);
-    SetVisualParam(VisualParam::HatRed, clamp01(hat.color.x));
-    SetVisualParam(VisualParam::HatGreen, clamp01(hat.color.y));
-    SetVisualParam(VisualParam::HatBlue, clamp01(hat.color.z));
-}
-
-void pushTrail() {
-    const auto& trail = g_state.graphics.trail;
-    SetTrailFillEnabled(trail.fill);
-    SetTrailRainbowEnabled(trail.rainbow);
-    SetVisualParam(VisualParam::TrailRainbowSpeed, percentToRange(trail.rainbowSpeed, 0.03f, 0.80f));
-    SetVisualParam(VisualParam::TrailOpacity, clamp01(trail.opacity / 100.0f));
-    SetVisualParam(VisualParam::TrailHeight, trail.height);
-    SetVisualParam(VisualParam::TrailSeconds, trail.life);
-    SetVisualParam(VisualParam::TrailRed, clamp01(trail.color.x));
-    SetVisualParam(VisualParam::TrailGreen, clamp01(trail.color.y));
-    SetVisualParam(VisualParam::TrailBlue, clamp01(trail.color.z));
-}
-
-void pushJumpRings() {
-    const auto& jump = g_state.graphics.jumpRings;
-    SetJumpRainbowEnabled(jump.rainbow);
-    SetVisualParam(VisualParam::JumpRainbowSpeed, percentToRange(jump.rainbowSpeed, 0.03f, 0.80f));
-    SetVisualParam(VisualParam::JumpOpacity, clamp01(jump.opacity / 100.0f));
-    SetVisualParam(VisualParam::JumpRadius, jump.radius);
-    SetVisualParam(VisualParam::JumpSeconds, jump.duration);
-    SetVisualParam(VisualParam::JumpRed, clamp01(jump.color.x));
-    SetVisualParam(VisualParam::JumpGreen, clamp01(jump.color.y));
-    SetVisualParam(VisualParam::JumpBlue, clamp01(jump.color.z));
+bool keyIsDown(int vk) {
+    if (g_keyDown && g_keyDown(vk)) return true;
+    return (GetAsyncKeyState(vk) & 0x8000) != 0;
 }
 
 void queueAgModule(int moduleId, bool enable) {
-    // The shadow is the menu's own view of the module flags: it initializes
-    // from the live state once and then follows the user's toggles, because
-    // re-reading the game state every frame raced the queued SetModule calls
-    // and the switch visibly jumped back to its old position.
     const int index = moduleId;
     if (index >= 0 && index < static_cast<int>(ag::kModuleCount))
         g_moduleShadow[index] = enable;
@@ -5443,233 +5442,566 @@ bool shadowModule(int moduleId) {
     return g_moduleShadow[moduleId];
 }
 
-void onSettingChanged(const char* path) {
-    if (!path) return;
-    // The HUD tab toggles are the game's own HUD modules: route them through
-    // the same queued SetModule path as the modules tab, otherwise the flags
-    // below would immediately snap back to the live game state.
-    if (std::strcmp(path, "hud.showFps") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::Fps), g_state.hud.showFps); return; }
-    if (std::strcmp(path, "hud.showCps") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::Cps), g_state.hud.showCps); return; }
-    if (std::strcmp(path, "hud.showClock") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::Clock), g_state.hud.showClock); return; }
-    if (std::strcmp(path, "hud.showKeystrokes") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::Keystrokes), g_state.hud.showKeystrokes); return; }
-    if (std::strcmp(path, "hud.showWatermark") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::Watermark), g_state.hud.showWatermark); return; }
-    if (std::strcmp(path, "hud.showCoordinates") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::Coordinates), g_state.hud.showCoordinates); return; }
-    if (std::strcmp(path, "hud.showResolution") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::Resolution), g_state.hud.showResolution); return; }
-    if (std::strcmp(path, "hud.showPerformance") == 0) {
-        queueAgModule(static_cast<int>(ag::ModuleId::Cpu), g_state.hud.showPerformance);
-        queueAgModule(static_cast<int>(ag::ModuleId::Ram), g_state.hud.showPerformance);
+// ---------------------------------------------------------------------------
+// Switch registry: every <button class="switch"> in both documents.
+// ---------------------------------------------------------------------------
+
+enum class SwKind {
+    AgModule, ChinaHat, Trail, Jump, Katana, Crown,
+    ChFill, ChRainbow, TrFill, TrRainbow, JrRainbow
+};
+
+struct SwitchDef {
+    const char* id;
+    SwKind kind;
+    int ag;  // ag::ModuleId for SwKind::AgModule
+};
+
+const SwitchDef kSwitches[] = {
+    // Modules tab.
+    {"sw-fps", SwKind::AgModule, static_cast<int>(ag::ModuleId::Fps)},
+    {"sw-cps", SwKind::AgModule, static_cast<int>(ag::ModuleId::Cps)},
+    {"sw-clock", SwKind::AgModule, static_cast<int>(ag::ModuleId::Clock)},
+    {"sw-keys", SwKind::AgModule, static_cast<int>(ag::ModuleId::Keystrokes)},
+    {"sw-watermark", SwKind::AgModule, static_cast<int>(ag::ModuleId::Watermark)},
+    {"sw-coords", SwKind::AgModule, static_cast<int>(ag::ModuleId::Coordinates)},
+    {"sw-res", SwKind::AgModule, static_cast<int>(ag::ModuleId::Resolution)},
+    {"sw-perf", SwKind::AgModule, static_cast<int>(ag::ModuleId::Cpu)},
+    {"sw-perf", SwKind::AgModule, static_cast<int>(ag::ModuleId::Ram)},
+    {"sw-modlist", SwKind::AgModule, static_cast<int>(ag::ModuleId::ActiveModules)},
+    {"sw-chinahat", SwKind::ChinaHat, 0},
+    {"sw-trail", SwKind::Trail, 0},
+    {"sw-jump", SwKind::Jump, 0},
+    {"sw-katana", SwKind::Katana, 0},
+    {"sw-crown", SwKind::Crown, 0},
+    // Graphics tab.
+    {"sw-gfx-chinahat", SwKind::ChinaHat, 0},
+    {"sw-gfx-trail", SwKind::Trail, 0},
+    {"sw-gfx-jump", SwKind::Jump, 0},
+    {"sw-ch-fill", SwKind::ChFill, 0},
+    {"sw-ch-rainbow", SwKind::ChRainbow, 0},
+    {"sw-tr-fill", SwKind::TrFill, 0},
+    {"sw-tr-rainbow", SwKind::TrRainbow, 0},
+    {"sw-jr-rainbow", SwKind::JrRainbow, 0},
+    // HUD tab duplicates.
+    {"hud-sw-fps", SwKind::AgModule, static_cast<int>(ag::ModuleId::Fps)},
+    {"hud-sw-cps", SwKind::AgModule, static_cast<int>(ag::ModuleId::Cps)},
+    {"hud-sw-clock", SwKind::AgModule, static_cast<int>(ag::ModuleId::Clock)},
+    {"hud-sw-keys", SwKind::AgModule, static_cast<int>(ag::ModuleId::Keystrokes)},
+    {"hud-sw-watermark", SwKind::AgModule, static_cast<int>(ag::ModuleId::Watermark)},
+    {"hud-sw-coords", SwKind::AgModule, static_cast<int>(ag::ModuleId::Coordinates)},
+    {"hud-sw-res", SwKind::AgModule, static_cast<int>(ag::ModuleId::Resolution)},
+    {"hud-sw-perf", SwKind::AgModule, static_cast<int>(ag::ModuleId::Cpu)},
+    {"hud-sw-perf", SwKind::AgModule, static_cast<int>(ag::ModuleId::Ram)},
+    {"hud-sw-modlist", SwKind::AgModule, static_cast<int>(ag::ModuleId::ActiveModules)},
+};
+
+const SwitchDef* findSwitch(const Rml::String& id) {
+    for (const SwitchDef& def : kSwitches)
+        if (id == def.id) return &def;
+    return nullptr;
+}
+
+bool readSwitch(const SwitchDef& def) {
+    switch (def.kind) {
+        case SwKind::AgModule: return shadowModule(def.ag);
+        case SwKind::ChinaHat: return ChinaHatEnabled();
+        case SwKind::Trail: return TrailEnabled();
+        case SwKind::Jump: return JumpEnabled();
+        case SwKind::Katana: return KatanaEnabled();
+        case SwKind::Crown: return AccessoryEnabled();
+        case SwKind::ChFill: return HatFillEnabled();
+        case SwKind::ChRainbow: return HatRainbowEnabled();
+        case SwKind::TrFill: return TrailFillEnabled();
+        case SwKind::TrRainbow: return TrailRainbowEnabled();
+        case SwKind::JrRainbow: return JumpRainbowEnabled();
+    }
+    return false;
+}
+
+void applySwitch(const SwitchDef& def, bool on) {
+    switch (def.kind) {
+        case SwKind::AgModule: queueAgModule(def.ag, on); break;
+        case SwKind::ChinaHat: SetChinaHatEnabled(on); break;
+        case SwKind::Trail: SetTrailEnabled(on); break;
+        case SwKind::Jump: SetJumpEnabled(on); break;
+        case SwKind::Katana: SetKatanaEnabled(on); break;
+        case SwKind::Crown: SetAccessoryEnabled(on); break;
+        case SwKind::ChFill: SetHatFillEnabled(on); break;
+        case SwKind::ChRainbow: SetHatRainbowEnabled(on); break;
+        case SwKind::TrFill: SetTrailFillEnabled(on); break;
+        case SwKind::TrRainbow: SetTrailRainbowEnabled(on); break;
+        case SwKind::JrRainbow: SetJumpRainbowEnabled(on); break;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Slider registry: every <input type="range"> in both documents.
+// ---------------------------------------------------------------------------
+
+enum class SlScale {
+    Direct,          // DOM value == parameter value
+    Percent,         // DOM 0..100 -> parameter 0..1
+    RainbowPercent   // DOM 0..100 -> parameter 0.03..0.8
+};
+
+struct SliderDef {
+    const char* id;       // DOM id of the <input type="range">
+    VisualParam param;    // adapter visual parameter
+    SlScale scale;
+    const char* fmt;      // readout printf format
+};
+
+const SliderDef kSliders[] = {
+    // China hat (graphics tab).
+    {"sl-ch-rainbow", VisualParam::HatRainbowSpeed, SlScale::RainbowPercent, "%.0f%%"},
+    {"sl-ch-opacity", VisualParam::HatOpacity, SlScale::Percent, "%.0f%%"},
+    {"sl-ch-radius", VisualParam::HatRadius, SlScale::Direct, "%.2f"},
+    {"sl-ch-height", VisualParam::HatConeHeight, SlScale::Direct, "%.2f"},
+    {"sl-ch-offset", VisualParam::HatOffset, SlScale::Direct, "%.2f"},
+    {"sl-ch-amp", VisualParam::HatBobAmplitude, SlScale::Direct, "%.2f"},
+    {"sl-ch-floatspeed", VisualParam::HatBobSpeed, SlScale::Direct, "%.2f"},
+    {"sl-ch-r", VisualParam::HatRed, SlScale::Direct, "%.2f"},
+    {"sl-ch-g", VisualParam::HatGreen, SlScale::Direct, "%.2f"},
+    {"sl-ch-b", VisualParam::HatBlue, SlScale::Direct, "%.2f"},
+    // Trail.
+    {"sl-tr-rainbow", VisualParam::TrailRainbowSpeed, SlScale::RainbowPercent, "%.0f%%"},
+    {"sl-tr-opacity", VisualParam::TrailOpacity, SlScale::Percent, "%.0f%%"},
+    {"sl-tr-height", VisualParam::TrailHeight, SlScale::Direct, "%.2f"},
+    {"sl-tr-life", VisualParam::TrailSeconds, SlScale::Direct, "%.2f"},
+    {"sl-tr-r", VisualParam::TrailRed, SlScale::Direct, "%.2f"},
+    {"sl-tr-g", VisualParam::TrailGreen, SlScale::Direct, "%.2f"},
+    {"sl-tr-b", VisualParam::TrailBlue, SlScale::Direct, "%.2f"},
+    // Jump rings.
+    {"sl-jr-rainbow", VisualParam::JumpRainbowSpeed, SlScale::RainbowPercent, "%.0f%%"},
+    {"sl-jr-opacity", VisualParam::JumpOpacity, SlScale::Percent, "%.0f%%"},
+    {"sl-jr-radius", VisualParam::JumpRadius, SlScale::Direct, "%.2f"},
+    {"sl-jr-duration", VisualParam::JumpSeconds, SlScale::Direct, "%.2f"},
+    {"sl-jr-r", VisualParam::JumpRed, SlScale::Direct, "%.2f"},
+    {"sl-jr-g", VisualParam::JumpGreen, SlScale::Direct, "%.2f"},
+    {"sl-jr-b", VisualParam::JumpBlue, SlScale::Direct, "%.2f"},
+    // Katana (graphics tab).
+    {"sl-kt-scale", VisualParam::KatanaScale, SlScale::Direct, "%.2f"},
+    {"sl-kt-tilt", VisualParam::KatanaTilt, SlScale::Direct, "%.2f"},
+    {"sl-kt-side", VisualParam::KatanaSide, SlScale::Direct, "%.2f"},
+    {"sl-kt-height", VisualParam::KatanaHeight, SlScale::Direct, "%.2f"},
+    {"sl-kt-forward", VisualParam::KatanaForward, SlScale::Direct, "%.2f"},
+    {"sl-kt-opacity", VisualParam::KatanaOpacity, SlScale::Direct, "%.2f"},
+    {"sl-kt-fpside", VisualParam::KatanaFirstSide, SlScale::Direct, "%.2f"},
+    {"sl-kt-fpforward", VisualParam::KatanaFirstForward, SlScale::Direct, "%.2f"},
+    // Crown (graphics tab).
+    {"sl-cr-scale", VisualParam::AccessoryScale, SlScale::Direct, "%.2f"},
+    {"sl-cr-offset", VisualParam::AccessoryOffset, SlScale::Direct, "%.2f"},
+    {"sl-cr-opacity", VisualParam::AccessoryOpacity, SlScale::Direct, "%.2f"},
+    {"sl-cr-r", VisualParam::AccessoryRed, SlScale::Direct, "%.2f"},
+    {"sl-cr-g", VisualParam::AccessoryGreen, SlScale::Direct, "%.2f"},
+    {"sl-cr-b", VisualParam::AccessoryBlue, SlScale::Direct, "%.2f"},
+    // Test tools: katana.
+    {"sl-kt2-scale", VisualParam::KatanaScale, SlScale::Direct, "%.2f"},
+    {"sl-kt2-tilt", VisualParam::KatanaTilt, SlScale::Direct, "%.2f"},
+    {"sl-kt2-side", VisualParam::KatanaSide, SlScale::Direct, "%.2f"},
+    {"sl-kt2-height", VisualParam::KatanaHeight, SlScale::Direct, "%.2f"},
+    {"sl-kt2-forward", VisualParam::KatanaForward, SlScale::Direct, "%.2f"},
+    {"sl-kt2-opacity", VisualParam::KatanaOpacity, SlScale::Direct, "%.2f"},
+    // Test tools: crown.
+    {"sl-cr2-scale", VisualParam::AccessoryScale, SlScale::Direct, "%.2f"},
+    {"sl-cr2-offset", VisualParam::AccessoryOffset, SlScale::Direct, "%.2f"},
+    {"sl-cr2-opacity", VisualParam::AccessoryOpacity, SlScale::Direct, "%.2f"},
+    {"sl-cr2-r", VisualParam::AccessoryRed, SlScale::Direct, "%.2f"},
+    {"sl-cr2-g", VisualParam::AccessoryGreen, SlScale::Direct, "%.2f"},
+    {"sl-cr2-b", VisualParam::AccessoryBlue, SlScale::Direct, "%.2f"},
+};
+
+float domFromParam(const SliderDef& def, float param) {
+    switch (def.scale) {
+        case SlScale::Direct: return param;
+        case SlScale::Percent: return clamp01(param) * 100.0f;
+        case SlScale::RainbowPercent: return rangeToPercent(param, 0.03f, 0.80f);
+    }
+    return param;
+}
+
+float paramFromDom(const SliderDef& def, float dom) {
+    switch (def.scale) {
+        case SlScale::Direct: return dom;
+        case SlScale::Percent: return clamp01(dom / 100.0f);
+        case SlScale::RainbowPercent: return percentToRange(dom, 0.03f, 0.80f);
+    }
+    return dom;
+}
+
+const SliderDef* findSlider(const Rml::String& id) {
+    for (const SliderDef& def : kSliders)
+        if (id == def.id) return &def;
+    return nullptr;
+}
+
+// Readout id: "sl-xxx" -> "ro-xxx".
+Rml::String readoutIdFrom(const char* sliderId) {
+    Rml::String out(sliderId);
+    if (out.size() >= 2) out[1] = 'o';
+    return out;
+}
+
+struct SliderElem {
+    Rml::Element* input = nullptr;
+    Rml::Element* readout = nullptr;
+    const SliderDef* def = nullptr;
+    std::string readoutCache;
+};
+
+struct SwitchElem {
+    Rml::Element* el = nullptr;
+    const SwitchDef* def = nullptr;
+};
+
+std::vector<SliderElem> g_sliderElems;
+std::vector<SwitchElem> g_switchElems;
+
+// ---------------------------------------------------------------------------
+// Event listeners.
+// ---------------------------------------------------------------------------
+
+class SliderChangeListener : public Rml::EventListener {
+public:
+    explicit SliderChangeListener(const SliderDef* def) : m_def(def) {}
+
+    void ProcessEvent(Rml::Event& event) override {
+        Rml::Element* element = event.GetCurrentElement();
+        if (!element || !m_def) return;
+        const Rml::Variant* value = element->GetAttribute("value");
+        if (!value) return;
+        const float dom = value->Get<float>();
+        SetVisualParam(m_def->param, paramFromDom(*m_def, dom));
+    }
+
+private:
+    const SliderDef* m_def;
+};
+
+class MenuClickListener : public Rml::EventListener {
+public:
+    void ProcessEvent(Rml::Event& event) override;
+};
+
+MenuClickListener g_clickListener;
+std::vector<std::unique_ptr<SliderChangeListener>> g_sliderListeners;
+
+void activateTab(const Rml::String& tabId) {
+    static const char* kTabs[] = {"tab-modules", "tab-graphics", "tab-hud", "tab-info"};
+    static const char* kPanels[] = {"panel-modules", "panel-graphics", "panel-hud", "panel-info"};
+    for (int i = 0; i < 4; ++i) {
+        if (Rml::Element* nav = g_menuDoc->GetElementById(kTabs[i]))
+            nav->SetClass("active", tabId == kTabs[i]);
+        if (Rml::Element* panel = g_menuDoc->GetElementById(kPanels[i]))
+            panel->SetClass("selected", tabId == kTabs[i]);
+    }
+}
+
+void MenuClickListener::ProcessEvent(Rml::Event& event) {
+    // Walk up from the click target to the nearest element with an id: clicks
+    // land on the switch knob span, the nav dot, the caret, etc.
+    Rml::Element* element = event.GetTargetElement();
+    while (element && element->GetId().empty()) element = element->GetParentNode();
+    if (!element || !g_menuDoc) return;
+    const Rml::String id = element->GetId();
+
+    if (id == "btn-close") {
+        g_hiddenByClose.store(true, std::memory_order_relaxed);
         return;
     }
-    if (std::strcmp(path, "hud.showModuleList") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::ActiveModules), g_state.hud.showModuleList); return; }
-    if (std::strcmp(path, "graphics.chinaHat.enabled") == 0) { SetChinaHatEnabled(g_state.graphics.chinaHat.enabled); return; }
-    if (std::strncmp(path, "graphics.chinaHat.", 18) == 0) { pushChinaHat(); return; }
-    if (std::strcmp(path, "graphics.trail.enabled") == 0) { SetTrailEnabled(g_state.graphics.trail.enabled); return; }
-    if (std::strncmp(path, "graphics.trail.", 15) == 0) { pushTrail(); return; }
-    if (std::strcmp(path, "graphics.jumpRings.enabled") == 0) { SetJumpEnabled(g_state.graphics.jumpRings.enabled); return; }
-    if (std::strncmp(path, "graphics.jumpRings.", 19) == 0) { pushJumpRings(); return; }
-    // Remaining hud.* look settings, ui.*, sound.* and controls.* stay in the
-    // menu state for now: the game HUD layout, sound and key bindings are not
-    // exposed by the adapter's verified surface, and nothing is guessed here.
-}
-
-void onModuleToggled(ModuleId id, bool enable) {
-    switch (id) {
-        case ModuleId::ChinaHat: SetChinaHatEnabled(enable); return;
-        case ModuleId::Trail: SetTrailEnabled(enable); return;
-        case ModuleId::JumpRings: SetJumpEnabled(enable); return;
-        case ModuleId::Katana: SetKatanaEnabled(enable); return;
-        case ModuleId::Crown: SetAccessoryEnabled(enable); return;
-        case ModuleId::Fps: queueAgModule(static_cast<int>(ag::ModuleId::Fps), enable); return;
-        case ModuleId::Cps: queueAgModule(static_cast<int>(ag::ModuleId::Cps), enable); return;
-        case ModuleId::Clock: queueAgModule(static_cast<int>(ag::ModuleId::Clock), enable); return;
-        case ModuleId::Keystrokes: queueAgModule(static_cast<int>(ag::ModuleId::Keystrokes), enable); return;
-        case ModuleId::Watermark: queueAgModule(static_cast<int>(ag::ModuleId::Watermark), enable); return;
-        case ModuleId::Coordinates: queueAgModule(static_cast<int>(ag::ModuleId::Coordinates), enable); return;
-        case ModuleId::Resolution: queueAgModule(static_cast<int>(ag::ModuleId::Resolution), enable); return;
-        case ModuleId::ModuleList: queueAgModule(static_cast<int>(ag::ModuleId::ActiveModules), enable); return;
-        case ModuleId::Performance:
-            queueAgModule(static_cast<int>(ag::ModuleId::Cpu), enable);
-            queueAgModule(static_cast<int>(ag::ModuleId::Ram), enable);
-            return;
+    if (id == "btn-hudeditor" || id == "btn-hudeditor2") {
+        g_hudEditorRequest.store(true, std::memory_order_relaxed);
+        g_hiddenByClose.store(true, std::memory_order_relaxed);
+        return;
+    }
+    if (id == "tab-modules" || id == "tab-graphics" || id == "tab-hud" || id == "tab-info") {
+        activateTab(id);
+        return;
+    }
+    if (id.size() > 9 && id.compare(0, 9, "head-sec-") == 0) {
+        if (Rml::Element* section = element->GetParentNode())
+            section->SetClass("collapsed", !section->IsClassSet("collapsed"));
+        return;
+    }
+    if (const SwitchDef* def = findSwitch(id)) {
+        applySwitch(*def, !readSwitch(*def));
+        return;
     }
 }
 
-// Mirror the live game state into the menu so the toggles never drift.
-// HUD module flags come from the shadow (see queueAgModule): the live read
-// only seeds it once, after that the user's own toggles are the truth.
-void syncLiveState() {
-    g_state.graphics.chinaHat.enabled = ChinaHatEnabled();
-    g_state.graphics.trail.enabled = TrailEnabled();
-    g_state.graphics.jumpRings.enabled = JumpEnabled();
-    if (!g_state.modules.empty() && g_state.modules.back().id != ModuleId::Crown) {
-        g_state.modules.push_back({ModuleId::Katana, "Katana (test)", "Графика",
-            "Замена алмазного меча катаной (испытание)", false});
-        g_state.modules.push_back({ModuleId::Crown, "3D crown (test)", "Графика",
-            "Пробная золотистая корона", false});
+// ---------------------------------------------------------------------------
+// Fonts and documents.
+// ---------------------------------------------------------------------------
+
+bool loadFontBuffer(const char* path, std::vector<char>& out) {
+    std::FILE* file = std::fopen(path, "rb");
+    if (!file) return false;
+    std::fseek(file, 0, SEEK_END);
+    const long size = std::ftell(file);
+    std::fseek(file, 0, SEEK_SET);
+    if (size <= 0) {
+        std::fclose(file);
+        return false;
     }
-    for (gayclient::ModuleEntry& module : g_state.modules) {
-        switch (module.id) {
-            case ModuleId::Katana: module.enabled = KatanaEnabled(); break;
-            case ModuleId::Crown: module.enabled = AccessoryEnabled(); break;
-            default: break;
+    out.resize(static_cast<std::size_t>(size));
+    const std::size_t read = out.empty() ? 0 : std::fread(out.data(), 1, out.size(), file);
+    std::fclose(file);
+    return read == out.size();
+}
+
+// LoadDocumentFromMemory does not fetch external style sheets, so the RCSS is
+// injected into the document's empty <style> element before parsing.
+Rml::ElementDocument* loadDocumentWithStyle(Rml::Context* context, const char* rml,
+                                            const char* rcss, const char* sourceName) {
+    std::string text(rml);
+    const std::size_t start = text.find("<style>");
+    if (start != std::string::npos) {
+        const std::size_t end = text.find("</style>", start);
+        if (end != std::string::npos) {
+            text.insert(start + 7, "\n");
+            text.insert(start + 8, rcss);
+            text.insert(start + 8 + std::strlen(rcss), "\n");
         }
     }
+    Rml::ElementDocument* document = context->LoadDocumentFromMemory(Rml::String(text), sourceName);
+    if (!document) return nullptr;
+    document->Hide();
+    // The context owns the document (it is a child of the context root), so
+    // the returned pointer stays valid for the context's lifetime.
+    return document;
+}
+
+bool buildRegistry() {
+    if (!g_menuDoc || !g_ttDoc) return false;
+    g_shell = g_menuDoc->GetElementById("shell");
+    g_ttStatus = g_ttDoc->GetElementById("tt-status");
+    g_ttDiag = g_ttDoc->GetElementById("tt-diag");
+    if (!g_shell || !g_ttStatus || !g_ttDiag) return false;
+
+    g_menuDoc->AddEventListener("click", &g_clickListener);
+    g_ttDoc->AddEventListener("click", &g_clickListener);
+
+    for (const SwitchDef& def : kSwitches) {
+        Rml::Element* element = nullptr;
+        // The menu document owns the sw-/hud-sw- switches, the test document
+        // owns none of them today, but both are searched so future markup
+        // stays free to place them anywhere.
+        element = g_menuDoc->GetElementById(def.id);
+        if (!element) continue;
+        SwitchElem item;
+        item.el = element;
+        item.def = &def;
+        g_switchElems.push_back(item);
+    }
+
+    for (const SliderDef& def : kSliders) {
+        Rml::Element* input = g_menuDoc->GetElementById(def.id);
+        if (!input) input = g_ttDoc->GetElementById(def.id);
+        if (!input) continue;
+        Rml::Element* readout = g_menuDoc->GetElementById(readoutIdFrom(def.id));
+        if (!readout) readout = g_ttDoc->GetElementById(readoutIdFrom(def.id));
+        SliderElem item;
+        item.input = input;
+        item.readout = readout;
+        item.def = &def;
+        g_sliderElems.push_back(item);
+        g_sliderListeners.push_back(std::make_unique<SliderChangeListener>(&def));
+        input->AddEventListener("change", g_sliderListeners.back().get());
+    }
+    return !g_switchElems.empty() && !g_sliderElems.empty();
+}
+
+bool initBackend(ID3D11Device* device, unsigned width, unsigned height) {
+    // Segoe UI covers Cyrillic and is present on every Windows install; the
+    // buffers must outlive Rml::Shutdown, so they are file-scope vectors.
+    if (!loadFontBuffer("C:/Windows/Fonts/segoeui.ttf", g_fontNormal)) return false;
+    if (!loadFontBuffer("C:/Windows/Fonts/segoeuib.ttf", g_fontBold)) return false;
+
+    g_renderer = new RenderInterface_DX11(device);
+    if (!g_renderer) return false;
+    Rml::SetRenderInterface(g_renderer);
+    // Default system and file interfaces are installed by Initialise(); they
+    // are only used for elapsed time and are never replaced here.
+    if (!Rml::Initialise()) return false;
+    g_rmlContext = Rml::CreateContext("gayclient", Rml::Vector2i(static_cast<int>(width),
+                                                                 static_cast<int>(height)));
+    if (!g_rmlContext) return false;
+
+    if (!Rml::LoadFontFace(Rml::Span<const Rml::byte>(
+            reinterpret_cast<const Rml::byte*>(g_fontNormal.data()), g_fontNormal.size()),
+            "GAY", Rml::Style::FontStyle::Normal, Rml::Style::FontWeight::Auto, true))
+        return false;
+    if (!Rml::LoadFontFace(Rml::Span<const Rml::byte>(
+            reinterpret_cast<const Rml::byte*>(g_fontBold.data()), g_fontBold.size()),
+            "GAY", Rml::Style::FontStyle::Normal, Rml::Style::FontWeight::Bold, true))
+        return false;
+
+    g_menuDoc = loadDocumentWithStyle(g_rmlContext, kMenuRml, kMenuRcss, "gayclient-menu.rml");
+    g_ttDoc = loadDocumentWithStyle(g_rmlContext, kTestToolsRml, kTestToolsRcss, "gayclient-tt.rml");
+    if (!g_menuDoc || !g_ttDoc) return false;
+    if (!buildRegistry()) return false;
+    g_width = width;
+    g_height = height;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame synchronization and input.
+// ---------------------------------------------------------------------------
+
+void syncSwitches() {
     syncModuleShadow();
-    if (g_moduleShadowReady) {
-        g_state.hud.showFps = shadowModule(static_cast<int>(ag::ModuleId::Fps));
-        g_state.hud.showCps = shadowModule(static_cast<int>(ag::ModuleId::Cps));
-        g_state.hud.showClock = shadowModule(static_cast<int>(ag::ModuleId::Clock));
-        g_state.hud.showKeystrokes = shadowModule(static_cast<int>(ag::ModuleId::Keystrokes));
-        g_state.hud.showWatermark = shadowModule(static_cast<int>(ag::ModuleId::Watermark));
-        g_state.hud.showCoordinates = shadowModule(static_cast<int>(ag::ModuleId::Coordinates));
-        g_state.hud.showResolution = shadowModule(static_cast<int>(ag::ModuleId::Resolution));
-        g_state.hud.showPerformance = shadowModule(static_cast<int>(ag::ModuleId::Cpu));
-        g_state.hud.showModuleList = shadowModule(static_cast<int>(ag::ModuleId::ActiveModules));
+    for (const SwitchElem& item : g_switchElems) {
+        if (!item.el || !item.def) continue;
+        const bool on = readSwitch(*item.def);
+        if (item.el->IsClassSet("on") != on) item.el->SetClass("on", on);
     }
 }
 
-void wireActions() {
-    g_actions.settingChanged = [](const char* path) { onSettingChanged(path); };
-    g_actions.moduleToggled = [](ModuleId id, bool enabled) { onModuleToggled(id, enabled); };
-    g_actions.closeRequested = [] { g_hiddenByClose.store(true, std::memory_order_relaxed); };
-    g_actions.hudEditorRequested = [] { g_hudEditorRequest.store(true, std::memory_order_relaxed); };
-    // Profiles, resets, statistics and preview textures have no verified
-    // counterpart in the adapter yet; the callbacks stay unset and the menu
-    // keeps its honest "no data" presentation for those.
+void syncSliders() {
+    for (SliderElem& item : g_sliderElems) {
+        if (!item.input || !item.def) continue;
+        const float dom = domFromParam(*item.def, GetVisualParam(item.def->param));
+        // Only write when the value actually moved, so the DOM never fights
+        // an in-progress drag; writes are stable round-trips by construction.
+        const Rml::Variant* current = item.input->GetAttribute("value");
+        if (!current || std::fabs(current->Get<float>() - dom) > 0.0005f)
+            item.input->SetAttribute("value", dom);
+        if (item.readout) {
+            char text[32];
+            std::snprintf(text, sizeof(text), item.def->fmt, dom);
+            if (item.readoutCache != text) {
+                item.readoutCache = text;
+                item.readout->SetInnerRML(text);
+            }
+        }
+    }
+    // Color chips follow the live RGB parameters.
+    struct ChipDef { const char* id; VisualParam r, g, b; };
+    static const ChipDef kChips[] = {
+        {"chip-ch", VisualParam::HatRed, VisualParam::HatGreen, VisualParam::HatBlue},
+        {"chip-tr", VisualParam::TrailRed, VisualParam::TrailGreen, VisualParam::TrailBlue},
+        {"chip-jr", VisualParam::JumpRed, VisualParam::JumpGreen, VisualParam::JumpBlue},
+    };
+    for (const ChipDef& chip : kChips) {
+        Rml::Element* element = g_menuDoc->GetElementById(chip.id);
+        if (!element) continue;
+        const int r = static_cast<int>(clamp01(GetVisualParam(chip.r)) * 255.0f + 0.5f);
+        const int g = static_cast<int>(clamp01(GetVisualParam(chip.g)) * 255.0f + 0.5f);
+        const int b = static_cast<int>(clamp01(GetVisualParam(chip.b)) * 255.0f + 0.5f);
+        element->SetProperty("background-color", Rml::CreateString("rgb(%d, %d, %d)", r, g, b));
+    }
 }
 
-bool keyIsDown(int vk) {
-    if (g_keyDown && g_keyDown(vk)) return true;
-    return (GetAsyncKeyState(vk) & 0x8000) != 0;
+const char* katanaStatusText(int status) {
+    switch (status) {
+        case 1: return "Katana: рисуется (world pass)";
+        case 2: return "Katana: отрисовка недоступна; оставлен оригинал";
+        case 9: return "Katana: локальный игрок не найден";
+        case 10: return "Katana: меч не сопоставлен";
+        case 11: return "Katana: кандидат меча";
+        case 12: return "Katana: третья персона ещё не подтверждена";
+        case 13: return "Katana: поворот нечитаем; оставлен оригинал";
+        case 14: return "Katana: виден; заменяю меч";
+        case 15: return "Katana: модель недействительна";
+        default: return "Katana: ожидание алмазного меча в руке";
+    }
 }
 
-struct KeyMap { int vk; ImGuiKey key; bool character; };
-const KeyMap kKeys[] = {
-    {VK_BACK, ImGuiKey_Backspace, false},   {VK_RETURN, ImGuiKey_Enter, false},
-    {VK_ESCAPE, ImGuiKey_Escape, false},    {VK_SPACE, ImGuiKey_Space, true},
-    {VK_DELETE, ImGuiKey_Delete, false},    {VK_LEFT, ImGuiKey_LeftArrow, false},
-    {VK_RIGHT, ImGuiKey_RightArrow, false}, {VK_UP, ImGuiKey_UpArrow, false},
-    {VK_DOWN, ImGuiKey_DownArrow, false},   {VK_PRIOR, ImGuiKey_PageUp, false},
-    {VK_NEXT, ImGuiKey_PageDown, false},    {VK_HOME, ImGuiKey_Home, false},
-    {VK_END, ImGuiKey_End, false},          {VK_SHIFT, ImGuiKey_LeftShift, false},
-    {VK_CONTROL, ImGuiKey_LeftCtrl, false},
-};
-constexpr int kKeyCount = sizeof(kKeys) / sizeof(kKeys[0]);
+void syncTtStatus() {
+    if (!g_ttShown || !g_ttStatus || !g_ttDiag) return;
+    const std::string status = katanaStatusText(KatanaStatus());
+    if (status != g_ttStatusCache) {
+        g_ttStatusCache = status;
+        g_ttStatus->SetInnerRML(status);
+    }
+    std::string diag;
+    if (KatanaEnabled()) {
+        const KatanaDiagnostics d = KatanaDebugSnapshot();
+        char line[256];
+        std::snprintf(line, sizeof(line),
+            "P:%u A:%u B:%u H:%u%s yaw %+.2f pitch %+.2f",
+            d.sources & 1 ? 1u : 0u, d.sources & 2 ? 1u : 0u,
+            d.sources & 4 ? 1u : 0u, d.sources & 8 ? 1u : 0u,
+            d.wrapped ? " (wrap)" : "", d.yaw, d.pitchUp);
+        diag = line;
+        std::snprintf(line, sizeof(line), "<br/>F:%u V:%u S:%u C:%u R:%u X:%u D:%u O:%u P:%u",
+            KatanaEvidence() ? 1u : 0u, !!(KatanaEvidence() & 2), !!(KatanaEvidence() & 16),
+            static_cast<unsigned>((!!(KatanaEvidence() & 32)) | (!!(KatanaEvidence() & 64) << 1)),
+            !!(KatanaEvidence() & 256), !!(KatanaEvidence() & 512), !!(KatanaEvidence() & 128),
+            !!(KatanaEvidence() & 2048),
+            static_cast<unsigned>((!!(KatanaEvidence() & 4096)) | (!!(KatanaEvidence() & 8192) << 1)));
+        diag += line;
+        std::snprintf(line, sizeof(line), "<br/>CI:%llX PL:%llX H58:%llX",
+            d.clientInstance, d.player, d.rotationHolder);
+        diag += line;
+        std::snprintf(line, sizeof(line), "<br/>TP in:%d out:%d tex:%llX learned:%llX",
+            d.tpCallsInPass, d.tpCallsOutOfPass, d.tpLastTexture, d.learnedTexture);
+        diag += line;
+    } else {
+        diag = "Katana выключен";
+    }
+    if (diag != g_ttDiagCache) {
+        g_ttDiagCache = diag;
+        g_ttDiag->SetInnerRML(diag);
+    }
+}
 
 void feedInput(unsigned width, unsigned height) {
-    ImGuiIO& io = ImGui::GetIO();
-    io.DisplaySize = ImVec2(static_cast<float>(width), static_cast<float>(height));
-    const ULONGLONG now = GetTickCount64();
-    io.DeltaTime = g_lastFrameTick && now > g_lastFrameTick
-        ? static_cast<float>(now - g_lastFrameTick) / 1000.0f
-        : 1.0f / 60.0f;
-    if (io.DeltaTime <= 0.0f || io.DeltaTime > 0.25f) io.DeltaTime = 1.0f / 60.0f;
-    g_lastFrameTick = now;
-
     if (g_pointerValid.load(std::memory_order_relaxed)) {
         const float w = g_pointerW.load(std::memory_order_relaxed);
         const float h = g_pointerH.load(std::memory_order_relaxed);
         if (w > 1.0f && h > 1.0f) {
-            const float mx = g_pointerX.load(std::memory_order_relaxed) * (static_cast<float>(width) / w);
-            const float my = g_pointerY.load(std::memory_order_relaxed) * (static_cast<float>(height) / h);
-            io.AddMousePosEvent(mx, my);
+            const float mx = g_pointerX.load(std::memory_order_relaxed) *
+                (static_cast<float>(width) / w);
+            const float my = g_pointerY.load(std::memory_order_relaxed) *
+                (static_cast<float>(height) / h);
+            g_rmlContext->ProcessMouseMove(static_cast<int>(mx), static_cast<int>(my), 0);
         }
     }
-    io.AddMouseButtonEvent(0, keyIsDown(VK_LBUTTON));
-    io.AddMouseButtonEvent(1, keyIsDown(VK_RBUTTON));
+    // RmlUi processes every call as a fresh event, so buttons and keys are
+    // forwarded on state transitions only (mirroring the window event model).
+    for (int button = 0; button < 2; ++button) {
+        const bool down = keyIsDown(button == 0 ? VK_LBUTTON : VK_RBUTTON);
+        if (down == g_mouseStates[button]) continue;
+        g_mouseStates[button] = down;
+        if (down) g_rmlContext->ProcessMouseButtonDown(button, 0);
+        else g_rmlContext->ProcessMouseButtonUp(button, 0);
+    }
     const float wheelX = g_wheelX.exchange(0.0f, std::memory_order_relaxed);
     const float wheelY = g_wheelY.exchange(0.0f, std::memory_order_relaxed);
-    if (wheelX != 0.0f || wheelY != 0.0f) io.AddMouseWheelEvent(wheelX, wheelY);
+    // compat sends one unit per wheel notch; RmlUi scrolls 80dp per unit.
+    if (wheelX != 0.0f || wheelY != 0.0f)
+        g_rmlContext->ProcessMouseWheel(Rml::Vector2f(wheelX, wheelY), 0);
 
-    const bool shift = keyIsDown(VK_SHIFT);
-    for (int i = 0; i < kKeyCount; ++i) {
-        const bool down = keyIsDown(kKeys[i].vk);
-        if (down == g_keyStates[kKeys[i].vk]) continue;
-        g_keyStates[kKeys[i].vk] = down;
-        io.AddKeyEvent(kKeys[i].key, down);
-        if (down && kKeys[i].character)
-            io.AddInputCharacter(static_cast<unsigned int>(shift ? kKeys[i].vk : (kKeys[i].vk | 0x20)));
-    }
-    for (int vk = '0'; vk <= '9'; ++vk) {
-        const bool down = keyIsDown(vk);
-        if (down == g_keyStates[vk]) continue;
-        g_keyStates[vk] = down;
-        io.AddKeyEvent(static_cast<ImGuiKey>(ImGuiKey_0 + (vk - '0')), down);
-        if (down) io.AddInputCharacter(static_cast<unsigned int>(vk));
-    }
-    for (int vk = 'A'; vk <= 'Z'; ++vk) {
-        const bool down = keyIsDown(vk);
-        if (down == g_keyStates[vk]) continue;
-        g_keyStates[vk] = down;
-        io.AddKeyEvent(static_cast<ImGuiKey>(ImGuiKey_A + (vk - 'A')), down);
-        if (down) io.AddInputCharacter(static_cast<unsigned int>(shift ? vk : (vk | 0x20)));
+    const bool escape = keyIsDown(VK_ESCAPE);
+    if (escape != g_escState) {
+        g_escState = escape;
+        if (escape) g_rmlContext->ProcessKeyDown(Rml::Input::KeyIdentifier::KI_ESCAPE, 0);
+        else g_rmlContext->ProcessKeyUp(Rml::Input::KeyIdentifier::KI_ESCAPE, 0);
     }
 }
 
-void drawTestToolsWindow() {
-    const bool katana = KatanaEnabled();
-    const bool crown = AccessoryEnabled();
-    if (!katana && !crown) return;
-    ImGui::SetNextWindowPos(ImVec2(18.0f, ImGui::GetIO().DisplaySize.y - 320.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(330.0f, 300.0f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Test tools (adapter)", nullptr,
-                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
-        ImGui::End();
-        return;
+void clampShell(unsigned width, unsigned height) {
+    if (!g_shell) return;
+    const float shellW = static_cast<float>(std::min(1140, static_cast<int>(width) - 24));
+    const float shellH = static_cast<float>(std::min(716, static_cast<int>(height) - 24));
+    g_shell->SetProperty("width", Rml::CreateString("%fpx", shellW));
+    g_shell->SetProperty("height", Rml::CreateString("%fpx", shellH));
+}
+
+void updateDocVisibility(bool menuVisible, bool toolsVisible) {
+    if (menuVisible != g_menuShown) {
+        g_menuShown = menuVisible;
+        if (menuVisible) g_menuDoc->Show();
+        else g_menuDoc->Hide();
     }
-    if (katana && ImGui::CollapsingHeader("Katana (test)", ImGuiTreeNodeFlags_DefaultOpen)) {
-        const int status = KatanaStatus();
-        ImGui::TextUnformatted(status == 1 ? "Katana: drawing (world pass)"
-            : status == 2 ? "Katana: draw unavailable; original kept"
-            : status == 9 ? "Katana: local player not matched"
-            : status == 10 ? "Katana: sword not matched"
-            : status == 11 ? "Katana: sword candidate"
-            : status == 12 ? "Katana: third person not confirmed yet"
-            : status == 13 ? "Katana: rotation unreadable; original kept"
-            : status == 14 ? "Katana: visible; replacing sword"
-            : status == 15 ? "Katana: model invalid"
-            : "Katana: waiting for held diamond sword");
-        const unsigned e = KatanaEvidence();
-        ImGui::Text("F:%u V:%u S:%u C:%u", !!e, !!(e & 2), !!(e & 16), !!(e & 32) | !!(e & 64));
-        ImGui::Text("R:%u X:%u D:%u O:%u P:%u", !!(e & 256), !!(e & 512), !!(e & 128), !!(e & 2048), !!(e & 4096) | !!(e & 8192));
-        const auto d = KatanaDebugSnapshot();
-        ImGui::Text("Rot P:%u A:%u B:%u H:%u%s yaw:%+.2f pitch:%+.2f",
-            d.sources & 1 ? 1u : 0u, d.sources & 2 ? 1u : 0u, d.sources & 4 ? 1u : 0u, d.sources & 8 ? 1u : 0u,
-            d.wrapped ? " (wrapped)" : "", d.yaw, d.pitchUp);
-        ImGui::Text("CI:%llX PL:%llX H58:%llX", d.clientInstance, d.player, d.rotationHolder);
-        ImGui::Text("TP in:%d out:%d tex:%llX learned:%llX",
-            d.tpCallsInPass, d.tpCallsOutOfPass, d.tpLastTexture, d.learnedTexture);
-        struct Slider { const char* label; VisualParam param; float low, high; };
-        const Slider sliders[] = {
-            {"Scale", VisualParam::KatanaScale, 0.4f, 1.0f},
-            {"Blade tilt", VisualParam::KatanaTilt, 0.2f, 1.55f},
-            {"Side", VisualParam::KatanaSide, 0.0f, 0.8f},
-            {"Hand height", VisualParam::KatanaHeight, 0.6f, 1.8f},
-            {"Forward", VisualParam::KatanaForward, -0.5f, 1.0f},
-            {"Opacity", VisualParam::KatanaOpacity, 0.3f, 1.0f},
-            {"Side (FP)", VisualParam::KatanaFirstSide, 0.0f, 0.8f},
-            {"Forward (FP)", VisualParam::KatanaFirstForward, -0.3f, 1.0f},
-        };
-        for (const Slider& slider : sliders) {
-            float value = GetVisualParam(slider.param);
-            if (ImGui::SliderFloat(slider.label, &value, slider.low, slider.high, "%.2f"))
-                SetVisualParam(slider.param, value);
-        }
+    if (toolsVisible != g_ttShown) {
+        g_ttShown = toolsVisible;
+        if (toolsVisible) g_ttDoc->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
+        else g_ttDoc->Hide();
     }
-    if (crown && ImGui::CollapsingHeader("3D crown (test)")) {
-        struct Slider { const char* label; VisualParam param; };
-        const Slider sliders[] = {
-            {"Scale", VisualParam::AccessoryScale}, {"Offset", VisualParam::AccessoryOffset},
-            {"Opacity", VisualParam::AccessoryOpacity}, {"Red", VisualParam::AccessoryRed},
-            {"Green", VisualParam::AccessoryGreen}, {"Blue", VisualParam::AccessoryBlue},
-        };
-        for (const Slider& slider : sliders) {
-            float value = GetVisualParam(slider.param);
-            if (ImGui::SliderFloat(slider.label, &value, 0.0f, 2.0f, "%.2f"))
-                SetVisualParam(slider.param, value);
-        }
-    }
-    ImGui::End();
 }
 
 } // namespace
@@ -5711,57 +6043,686 @@ void SetGameMenuOpen(bool open) {
 bool ReplacesLegacyMenu() { return g_renderOk.load(std::memory_order_relaxed); }
 bool ConsumeHudEditorRequest() { return g_hudEditorRequest.exchange(false, std::memory_order_relaxed); }
 
-void RenderOverlay(ID3D11Device* device, ID3D11DeviceContext* context,
+void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
                    unsigned width, unsigned height) {
-    if (g_initFailed || !device || !context || width < 200 || height < 200) return;
-    if (!g_backendReady) {
-        ImGuiContext* created = ImGui::CreateContext();
-        ImGui::SetCurrentContext(created);
-        g_context = created;
-        ImGuiIO& io = ImGui::GetIO();
-        io.IniFilename = nullptr;  // no ini file writes from inside the game
-        g_state.cyrillicFontLoaded = gayclient::LoadCyrillicFont(io, 17.0f);
-        if (!ImGui_ImplDX11_Init(device, context)) {
-            ImGui::DestroyContext(created);
-            g_context = nullptr;
+    if (g_initFailed || !device || !rtv || width < 200 || height < 200) return;
+    if (!g_ready) {
+        if (!initBackend(device, width, height)) {
             g_initFailed = true;
             return;
         }
-        g_state.dataConnected = true;
-        wireActions();
-        initLiveDefaults();
-        g_backendReady = true;
+        g_ready = true;
+        clampShell(width, height);
     }
-    ImGui::SetCurrentContext(g_context);
+    if (width != g_width || height != g_height) {
+        g_width = width;
+        g_height = height;
+        g_rmlContext->SetDimensions(Rml::Vector2i(static_cast<int>(width),
+                                                  static_cast<int>(height)));
+        g_renderer->SetViewport(static_cast<int>(width), static_cast<int>(height));
+        clampShell(width, height);
+    }
+
+    const bool menuVisible = g_gameMenuOpen.load(std::memory_order_relaxed) &&
+        !g_hiddenByClose.load(std::memory_order_relaxed);
+    const bool toolsVisible = menuVisible && (KatanaEnabled() || AccessoryEnabled());
+    updateDocVisibility(menuVisible, toolsVisible);
+    if (!menuVisible) return;
+
     feedInput(width, height);
-    // The DX11 backend creates its shaders, states and font texture from its
-    // own NewFrame hook; skipping it left every backend object null and the
-    // first RenderDrawData dereferenced a null constant buffer (startup crash).
-    ImGui_ImplDX11_NewFrame();
-    ImGui::NewFrame();
-    const bool open = g_gameMenuOpen.load(std::memory_order_relaxed) &&
-                      !g_hiddenByClose.load(std::memory_order_relaxed);
-    g_state.visible = open;
-    if (open) {
-        syncLiveState();
-        gayclient::RenderMenu(g_state, g_actions);
-        drawTestToolsWindow();
-    }
-    ImGui::Render();
-    // RenderDrawData maps backend buffers unconditionally: only draw once the
-    // backend actually owns its device objects (atlas texture uploaded). If
-    // shader compilation ever fails the overlay stays hidden, keeps retrying
-    // each frame and the legacy interface remains in charge.
-    if (ImGui::GetIO().Fonts->TexID != 0) {
-        g_renderOk.store(true, std::memory_order_relaxed);
-        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-    }
+    syncSwitches();
+    syncSliders();
+    syncTtStatus();
+    g_rmlContext->Update();
+    g_renderer->BeginFrame();
+    g_rmlContext->Render();
+    // EndFrame binds the back-buffer render target view, resolves the frame
+    // and restores the DirectX state it changed, so the game's own Present
+    // path is untouched.
+    g_renderer->EndFrame(rtv);
+    g_renderOk.store(true, std::memory_order_relaxed);
 }
 
-} // namespace menu_embed
+} // namespace menu_rml
+
 ================================================================================
-КОНЕЦ ФАЙЛА: repair/src/menu_embed.cpp
+КОНЕЦ ФАЙЛА: repair/src/menu_rml.cpp
 ================================================================================
+================================================================================
+НАЧАЛО ФАЙЛА: repair/src/menu_rml_data.h
+================================================================================
+// Design of the embedded menu: RmlUi documents (HTML + RCSS), launcher-style.
+// Kept as raw strings so the DLL stays a single file with no disk access.
+// Colors follow the web launcher: dark background, bright green accent.
+#pragma once
+
+static const char kMenuRcss[] = R"RCSS(
+body {
+    font-family: GAY;
+    font-size: 20px;
+    color: #e6f2ea;
+    background-color: rgba(4, 8, 6, 0.42);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+#shell {
+    width: 1140px;
+    height: 716px;
+    display: flex;
+    flex-direction: column;
+    background-color: rgba(10, 16, 13, 0.97);
+    border: 1px rgba(58, 232, 130, 0.26);
+    border-radius: 18px;
+}
+#titlebar {
+    height: 66px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 0 22px;
+    border-bottom: 1px rgba(255, 255, 255, 0.05);
+}
+#brand {
+    font-size: 27px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    color: #f2fbf5;
+}
+#brand-accent {
+    font-size: 27px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    color: #3ae882;
+}
+#brand-sub {
+    margin-left: 14px;
+    margin-top: 6px;
+    font-size: 13px;
+    letter-spacing: 2px;
+    color: #7e9889;
+}
+#title-flex { flex-grow: 1; }
+.iconbtn {
+    width: 36px;
+    height: 36px;
+    font-size: 20px;
+    color: #7e9889;
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px rgba(255, 255, 255, 0.07);
+    border-radius: 10px;
+    text-align: center;
+    vertical-align: middle;
+    line-height: 36px;
+    cursor: pointer;
+    transition: background-color 0.12s, color 0.12s;
+}
+.iconbtn:hover {
+    background-color: rgba(255, 90, 90, 0.14);
+    color: #ff9c9c;
+    border-color: rgba(255, 90, 90, 0.35);
+}
+#layout {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: row;
+}
+#nav {
+    width: 216px;
+    display: flex;
+    flex-direction: column;
+    padding: 16px 12px;
+    border-right: 1px rgba(255, 255, 255, 0.05);
+}
+.nav-label {
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: #69816f;
+    padding: 6px 12px;
+}
+.nav-item {
+    position: relative;
+    height: 46px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 0 14px;
+    margin-bottom: 4px;
+    border-radius: 11px;
+    font-size: 19px;
+    color: #8fa697;
+    cursor: pointer;
+    transition: background-color 0.13s, color 0.13s;
+}
+.nav-item:hover {
+    background-color: rgba(255, 255, 255, 0.045);
+    color: #d7e8dd;
+}
+.nav-item.active {
+    background-color: rgba(58, 232, 130, 0.10);
+    color: #eafff1;
+}
+.nav-bar {
+    position: absolute;
+    left: 0px;
+    top: 11px;
+    width: 3px;
+    height: 24px;
+    border-radius: 2px;
+    background-color: #3ae882;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.nav-item.active .nav-bar { opacity: 1; }
+.nav-dot {
+    width: 8px;
+    height: 8px;
+    margin-right: 12px;
+    border-radius: 4px;
+    background-color: #3d4a43;
+    transition: background-color 0.15s;
+}
+.nav-item.active .nav-dot { background-color: #3ae882; }
+#nav-flex { flex-grow: 1; }
+.greenbtn {
+    height: 48px;
+    font-size: 18px;
+    font-weight: bold;
+    color: #06240f;
+    background-color: #3ae882;
+    border: 1px rgba(255, 255, 255, 0.22);
+    border-radius: 12px;
+    text-align: center;
+    cursor: pointer;
+    transition: background-color 0.13s;
+}
+.greenbtn:hover { background-color: #63f59d; }
+.greenbtn:active { background-color: #2cc06c; }
+#content {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 20px 22px;
+    overflow-y: auto;
+}
+#content scrollbarvertical { width: 10px; }
+#content scrollbarvertical slidertrack {
+    background-color: rgba(255, 255, 255, 0.04);
+    border-radius: 5px;
+}
+#content scrollbarvertical sliderbar {
+    width: 8px;
+    border-radius: 4px;
+    background-color: rgba(58, 232, 130, 0.45);
+}
+.panel { display: none; }
+.panel.selected { display: block; }
+.card {
+    padding: 8px 18px 14px 18px;
+    margin-bottom: 14px;
+    background-color: rgba(255, 255, 255, 0.028);
+    border: 1px rgba(255, 255, 255, 0.06);
+    border-radius: 14px;
+}
+.card-title {
+    font-size: 22px;
+    font-weight: bold;
+    color: #f0f8f3;
+    padding: 12px 0 2px 0;
+}
+.card-sub {
+    font-size: 14px;
+    color: #7e9889;
+    padding-bottom: 8px;
+}
+.section-head {
+    height: 46px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    cursor: pointer;
+    border-radius: 9px;
+    padding: 0 6px;
+    transition: background-color 0.12s;
+}
+.section-head:hover { background-color: rgba(255, 255, 255, 0.035); }
+.section-title {
+    font-size: 15px;
+    font-weight: bold;
+    letter-spacing: 1.5px;
+    color: #9fb8a9;
+}
+.caret {
+    font-size: 13px;
+    color: #69816f;
+    margin-left: 8px;
+    transition: transform 0.15s;
+}
+.section.collapsed .caret { transform: rotate(-90deg); }
+.section-body { padding: 2px 0 6px 0; }
+.section.collapsed .section-body { display: none; }
+.module-row {
+    height: 60px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 0 8px;
+    border-radius: 11px;
+    transition: background-color 0.12s;
+}
+.module-row:hover { background-color: rgba(255, 255, 255, 0.03); }
+.m-chip {
+    width: 40px;
+    height: 40px;
+    border-radius: 11px;
+    font-size: 20px;
+    font-weight: bold;
+    color: #3ae882;
+    background-color: rgba(58, 232, 130, 0.10);
+    text-align: center;
+    line-height: 40px;
+}
+.m-text { flex-grow: 1; padding-left: 14px; }
+.m-name { font-size: 20px; color: #e9f4ed; }
+.m-desc { font-size: 14px; color: #7e9889; margin-top: 1px; }
+.switch {
+    position: relative;
+    width: 58px;
+    height: 32px;
+    border: 1px rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+    background-color: #20281f;
+    cursor: pointer;
+    transition: background-color 0.16s, border-color 0.16s;
+}
+.switch .knob {
+    position: absolute;
+    left: 3px;
+    top: 3px;
+    width: 24px;
+    height: 24px;
+    border-radius: 12px;
+    background-color: #5a6c60;
+    transition: left 0.16s, background-color 0.16s;
+}
+.switch.on {
+    background-color: rgba(58, 232, 130, 0.24);
+    border-color: rgba(58, 232, 130, 0.55);
+}
+.switch.on .knob {
+    left: 29px;
+    background-color: #3ae882;
+}
+.slider-row {
+    height: 44px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 0 8px;
+    border-radius: 9px;
+    transition: background-color 0.12s;
+}
+.slider-row:hover { background-color: rgba(255, 255, 255, 0.025); }
+.slider-label { width: 300px; font-size: 18px; color: #cfe3d6; }
+.slider-label small { font-size: 13px; color: #7e9889; }
+input[type="range"] {
+    width: 260px;
+    height: 26px;
+}
+input[type="range"] slidertrack {
+    height: 6px;
+    margin-top: 10px;
+    background-color: #1d221f;
+    border-radius: 3px;
+}
+input[type="range"] sliderbar {
+    width: 18px;
+    height: 18px;
+    top: -6px;
+    border-radius: 9px;
+    background-color: #3ae882;
+    transition: background-color 0.1s;
+}
+input[type="range"] sliderbar:hover { background-color: #7bf5a8; }
+input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
+    width: 0px;
+    height: 0px;
+}
+.slider-value {
+    width: 86px;
+    text-align: right;
+    font-size: 17px;
+    color: #9fb8a9;
+}
+.color-chip {
+    width: 26px;
+    height: 26px;
+    margin-left: 10px;
+    border-radius: 7px;
+    border: 1px rgba(255, 255, 255, 0.18);
+}
+.note {
+    font-size: 15px;
+    color: #7e9889;
+    padding: 6px 4px 10px 4px;
+}
+.tag {
+    display: inline-block;
+    font-size: 12px;
+    letter-spacing: 1px;
+    color: #3ae882;
+    background-color: rgba(58, 232, 130, 0.10);
+    border: 1px rgba(58, 232, 130, 0.25);
+    border-radius: 7px;
+    padding: 2px 8px;
+    margin-left: 10px;
+}
+.info-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    height: 34px;
+    font-size: 18px;
+}
+.info-key { width: 320px; color: #8fa697; }
+.info-val { color: #e9f4ed; }
+.danger { color: #ff8a8a; }
+.ok { color: #3ae882; }
+)RCSS";
+
+static const char kMenuRml[] = R"RML(
+<rml>
+<head>
+    <title>GAYClient</title>
+    <style>
+    </style>
+</head>
+<body>
+<div id="shell">
+    <div id="titlebar">
+        <div id="brand">GAY<span id="brand-accent">CLIENT</span></div>
+        <div id="brand-sub">GAME MENU · BEDROCK 1.1.5</div>
+        <div id="title-flex"/>
+        <div id="brand-sub">v1.2</div>
+        <button class="iconbtn" id="btn-close">&#215;</button>
+    </div>
+    <div id="layout">
+        <div id="nav">
+            <div class="nav-label">НАВИГАЦИЯ</div>
+            <div class="nav-item active" id="tab-modules"><span class="nav-bar"/><span class="nav-dot"/>Модули</div>
+            <div class="nav-item" id="tab-graphics"><span class="nav-bar"/><span class="nav-dot"/>Графика</div>
+            <div class="nav-item" id="tab-hud"><span class="nav-bar"/><span class="nav-dot"/>HUD</div>
+            <div class="nav-item" id="tab-info"><span class="nav-bar"/><span class="nav-dot"/>Инфо</div>
+            <div id="nav-flex"/>
+            <button class="greenbtn" id="btn-hudeditor">Настроить HUD</button>
+        </div>
+        <div id="content">
+
+            <div class="panel selected" id="panel-modules">
+                <div class="card">
+                    <div class="card-title">Игровые модули<span class="tag">9 модулей</span></div>
+                    <div class="card-sub">Стандартные HUD-модули клиента</div>
+                    <div class="section" id="sec-hud">
+                        <div class="section-head" id="head-sec-hud"><span class="section-title">HUD</span><span class="caret">&#9662;</span></div>
+                        <div class="section-body">
+                            <div class="module-row"><div class="m-chip">F</div><div class="m-text"><div class="m-name">FPS</div><div class="m-desc">Счётчик кадров в секунду</div></div><button class="switch" id="sw-fps"><span class="knob"/></button></div>
+                            <div class="module-row"><div class="m-chip">C</div><div class="m-text"><div class="m-name">CPS</div><div class="m-desc">Клики в секунду</div></div><button class="switch" id="sw-cps"><span class="knob"/></button></div>
+                            <div class="module-row"><div class="m-chip">&#9201;</div><div class="m-text"><div class="m-name">Часы</div><div class="m-desc">Текущее время</div></div><button class="switch" id="sw-clock"><span class="knob"/></button></div>
+                            <div class="module-row"><div class="m-chip">K</div><div class="m-text"><div class="m-name">Клавиши</div><div class="m-desc">Отображение нажатых клавиш</div></div><button class="switch" id="sw-keys"><span class="knob"/></button></div>
+                            <div class="module-row"><div class="m-chip">G</div><div class="m-text"><div class="m-name">Водяной знак</div><div class="m-desc">Надпись GAYClient на экране</div></div><button class="switch" id="sw-watermark"><span class="knob"/></button></div>
+                            <div class="module-row"><div class="m-chip">XY</div><div class="m-text"><div class="m-name">Координаты</div><div class="m-desc">Позиция в мире</div></div><button class="switch" id="sw-coords"><span class="knob"/></button></div>
+                            <div class="module-row"><div class="m-chip">R</div><div class="m-text"><div class="m-name">Разрешение</div><div class="m-desc">Размер окна игры</div></div><button class="switch" id="sw-res"><span class="knob"/></button></div>
+                            <div class="module-row"><div class="m-chip">%</div><div class="m-text"><div class="m-name">Производительность</div><div class="m-desc">Загрузка CPU и RAM</div></div><button class="switch" id="sw-perf"><span class="knob"/></button></div>
+                            <div class="module-row"><div class="m-chip">&#9776;</div><div class="m-text"><div class="m-name">Список модулей</div><div class="m-desc">Активные модули на экране</div></div><button class="switch" id="sw-modlist"><span class="knob"/></button></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Эффекты<span class="tag">испытания</span></div>
+                    <div class="card-sub">Визуальные эффекты персонажа</div>
+                    <div class="section" id="sec-effects">
+                        <div class="section-head" id="head-sec-effects"><span class="section-title">ЭФФЕКТЫ</span><span class="caret">&#9662;</span></div>
+                        <div class="section-body">
+                            <div class="module-row"><div class="m-chip">&#9660;</div><div class="m-text"><div class="m-name">China Hat</div><div class="m-desc">Конус над головой</div></div><button class="switch" id="sw-chinahat"><span class="knob"/></button></div>
+                            <div class="module-row"><div class="m-chip">&#8776;</div><div class="m-text"><div class="m-name">След</div><div class="m-desc">Цветной след за игроком</div></div><button class="switch" id="sw-trail"><span class="knob"/></button></div>
+                            <div class="module-row"><div class="m-chip">O</div><div class="m-text"><div class="m-name">Кольца прыжка</div><div class="m-desc">Круги при прыжке</div></div><button class="switch" id="sw-jump"><span class="knob"/></button></div>
+                            <div class="module-row"><div class="m-chip">&#9876;</div><div class="m-text"><div class="m-name">Катана</div><div class="m-desc">Замена алмазного меча</div></div><button class="switch" id="sw-katana"><span class="knob"/></button></div>
+                            <div class="module-row"><div class="m-chip">&#9733;</div><div class="m-text"><div class="m-name">Корона</div><div class="m-desc">3D-корона над головой</div></div><button class="switch" id="sw-crown"><span class="knob"/></button></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel" id="panel-graphics">
+                <div class="card">
+                    <div class="card-title">Графика<span class="tag">живые настройки</span></div>
+                    <div class="card-sub">Параметры эффектов применяются сразу</div>
+
+                    <div class="section" id="sec-g-ch">
+                        <div class="section-head" id="head-sec-g-ch"><span class="section-title">CHINA HAT</span><span class="caret">&#9662;</span></div>
+                        <div class="section-body">
+                            <div class="slider-row"><div class="slider-label">Включение эффекта</div><button class="switch" id="sw-gfx-chinahat"><span class="knob"/></button></div>
+                            <div class="slider-row"><div class="slider-label">Заливка конуса</div><button class="switch" id="sw-ch-fill"><span class="knob"/></button></div>
+                            <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="switch" id="sw-ch-rainbow"><span class="knob"/></button></div>
+                            <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-ch-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-ch-rainbow"/><div class="color-chip" id="chip-ch"/></div>
+                            <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-ch-opacity" min="0" max="100" step="1" value="70"/><div class="slider-value" id="ro-ch-opacity"/></div>
+                            <div class="slider-row"><div class="slider-label">Радиус</div><input type="range" id="sl-ch-radius" min="0.2" max="3" step="0.01" value="0.85"/><div class="slider-value" id="ro-ch-radius"/></div>
+                            <div class="slider-row"><div class="slider-label">Высота конуса</div><input type="range" id="sl-ch-height" min="0.2" max="3" step="0.01" value="0.6"/><div class="slider-value" id="ro-ch-height"/></div>
+                            <div class="slider-row"><div class="slider-label">Смещение над головой</div><input type="range" id="sl-ch-offset" min="0" max="2" step="0.01" value="0.1"/><div class="slider-value" id="ro-ch-offset"/></div>
+                            <div class="slider-row"><div class="slider-label">Амплитуда плавания</div><input type="range" id="sl-ch-amp" min="0" max="1" step="0.01" value="0.05"/><div class="slider-value" id="ro-ch-amp"/></div>
+                            <div class="slider-row"><div class="slider-label">Скорость плавания</div><input type="range" id="sl-ch-floatspeed" min="0" max="3" step="0.01" value="1"/><div class="slider-value" id="ro-ch-floatspeed"/></div>
+                            <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-ch-r" min="0" max="1" step="0.01" value="0.16"/><div class="slider-value" id="ro-ch-r"/></div>
+                            <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-ch-g" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-ch-g"/></div>
+                            <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-ch-b" min="0" max="1" step="0.01" value="0.21"/><div class="slider-value" id="ro-ch-b"/></div>
+                        </div>
+                    </div>
+
+                    <div class="section" id="sec-g-tr">
+                        <div class="section-head" id="head-sec-g-tr"><span class="section-title">СЛЕД</span><span class="caret">&#9662;</span></div>
+                        <div class="section-body">
+                            <div class="slider-row"><div class="slider-label">Включение эффекта</div><button class="switch" id="sw-gfx-trail"><span class="knob"/></button></div>
+                            <div class="slider-row"><div class="slider-label">Заливка</div><button class="switch" id="sw-tr-fill"><span class="knob"/></button></div>
+                            <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="switch" id="sw-tr-rainbow"><span class="knob"/></button></div>
+                            <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-tr-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-tr-rainbow"/><div class="color-chip" id="chip-tr"/></div>
+                            <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-tr-opacity" min="0" max="100" step="1" value="60"/><div class="slider-value" id="ro-tr-opacity"/></div>
+                            <div class="slider-row"><div class="slider-label">Высота следа</div><input type="range" id="sl-tr-height" min="0.2" max="3" step="0.01" value="1"/><div class="slider-value" id="ro-tr-height"/></div>
+                            <div class="slider-row"><div class="slider-label">Время жизни следа</div><input type="range" id="sl-tr-life" min="0.2" max="4" step="0.05" value="1.5"/><div class="slider-value" id="ro-tr-life"/></div>
+                            <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-tr-r" min="0" max="1" step="0.01" value="0.16"/><div class="slider-value" id="ro-tr-r"/></div>
+                            <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-tr-g" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-tr-g"/></div>
+                            <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-tr-b" min="0" max="1" step="0.01" value="0.21"/><div class="slider-value" id="ro-tr-b"/></div>
+                        </div>
+                    </div>
+
+                    <div class="section" id="sec-g-jr">
+                        <div class="section-head" id="head-sec-g-jr"><span class="section-title">КОЛЬЦА ПРЫЖКА</span><span class="caret">&#9662;</span></div>
+                        <div class="section-body">
+                            <div class="slider-row"><div class="slider-label">Включение эффекта</div><button class="switch" id="sw-gfx-jump"><span class="knob"/></button></div>
+                            <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="switch" id="sw-jr-rainbow"><span class="knob"/></button></div>
+                            <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-jr-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-jr-rainbow"/><div class="color-chip" id="chip-jr"/></div>
+                            <div class="slider-row"><div class="slider-label">Радиус</div><input type="range" id="sl-jr-radius" min="0.2" max="3" step="0.01" value="0.7"/><div class="slider-value" id="ro-jr-radius"/></div>
+                            <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-jr-opacity" min="0" max="100" step="1" value="60"/><div class="slider-value" id="ro-jr-opacity"/></div>
+                            <div class="slider-row"><div class="slider-label">Длительность</div><input type="range" id="sl-jr-duration" min="0.1" max="3" step="0.05" value="0.8"/><div class="slider-value" id="ro-jr-duration"/></div>
+                            <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-jr-r" min="0" max="1" step="0.01" value="0.16"/><div class="slider-value" id="ro-jr-r"/></div>
+                            <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-jr-g" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-jr-g"/></div>
+                            <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-jr-b" min="0" max="1" step="0.01" value="0.21"/><div class="slider-value" id="ro-jr-b"/></div>
+                        </div>
+                    </div>
+
+                    <div class="section" id="sec-g-kt">
+                        <div class="section-head" id="head-sec-g-kt"><span class="section-title">КАТАНА</span><span class="caret">&#9662;</span></div>
+                        <div class="section-body">
+                            <div class="slider-row"><div class="slider-label">Размер</div><input type="range" id="sl-kt-scale" min="0.4" max="1" step="0.01" value="0.7"/><div class="slider-value" id="ro-kt-scale"/></div>
+                            <div class="slider-row"><div class="slider-label">Наклон клинка</div><input type="range" id="sl-kt-tilt" min="0.2" max="1.55" step="0.01" value="0.9"/><div class="slider-value" id="ro-kt-tilt"/></div>
+                            <div class="slider-row"><div class="slider-label">Смещение в сторону</div><input type="range" id="sl-kt-side" min="0" max="0.8" step="0.01" value="0.25"/><div class="slider-value" id="ro-kt-side"/></div>
+                            <div class="slider-row"><div class="slider-label">Высота в руке</div><input type="range" id="sl-kt-height" min="0.6" max="1.8" step="0.01" value="1.1"/><div class="slider-value" id="ro-kt-height"/></div>
+                            <div class="slider-row"><div class="slider-label">Смещение вперёд</div><input type="range" id="sl-kt-forward" min="-0.5" max="1" step="0.01" value="0.2"/><div class="slider-value" id="ro-kt-forward"/></div>
+                            <div class="slider-row"><div class="slider-label">Непрозрачность</div><input type="range" id="sl-kt-opacity" min="0.3" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-kt-opacity"/></div>
+                            <div class="slider-row"><div class="slider-label">Сторона (1-е лицо)</div><input type="range" id="sl-kt-fpside" min="0" max="0.8" step="0.01" value="0.3"/><div class="slider-value" id="ro-kt-fpside"/></div>
+                            <div class="slider-row"><div class="slider-label">Вперёд (1-е лицо)</div><input type="range" id="sl-kt-fpforward" min="-0.3" max="1" step="0.01" value="0.25"/><div class="slider-value" id="ro-kt-fpforward"/></div>
+                        </div>
+                    </div>
+
+                    <div class="section" id="sec-g-cr">
+                        <div class="section-head" id="head-sec-g-cr"><span class="section-title">КОРОНА</span><span class="caret">&#9662;</span></div>
+                        <div class="section-body">
+                            <div class="slider-row"><div class="slider-label">Размер</div><input type="range" id="sl-cr-scale" min="0" max="2" step="0.01" value="1"/><div class="slider-value" id="ro-cr-scale"/></div>
+                            <div class="slider-row"><div class="slider-label">Смещение</div><input type="range" id="sl-cr-offset" min="0" max="2" step="0.01" value="0.5"/><div class="slider-value" id="ro-cr-offset"/></div>
+                            <div class="slider-row"><div class="slider-label">Непрозрачность</div><input type="range" id="sl-cr-opacity" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-cr-opacity"/></div>
+                            <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-cr-r" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-cr-r"/></div>
+                            <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-cr-g" min="0" max="1" step="0.01" value="0.8"/><div class="slider-value" id="ro-cr-g"/></div>
+                            <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-cr-b" min="0" max="1" step="0.01" value="0.2"/><div class="slider-value" id="ro-cr-b"/></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel" id="panel-hud">
+                <div class="card">
+                    <div class="card-title">HUD<span class="tag">быстрые переключатели</span></div>
+                    <div class="card-sub">Элементы на экране во время игры</div>
+                    <div class="module-row"><div class="m-chip">F</div><div class="m-text"><div class="m-name">FPS</div></div><button class="switch" id="hud-sw-fps"><span class="knob"/></button></div>
+                    <div class="module-row"><div class="m-chip">C</div><div class="m-text"><div class="m-name">CPS</div></div><button class="switch" id="hud-sw-cps"><span class="knob"/></button></div>
+                    <div class="module-row"><div class="m-chip">&#9201;</div><div class="m-text"><div class="m-name">Часы</div></div><button class="switch" id="hud-sw-clock"><span class="knob"/></button></div>
+                    <div class="module-row"><div class="m-chip">K</div><div class="m-text"><div class="m-name">Клавиши</div></div><button class="switch" id="hud-sw-keys"><span class="knob"/></button></div>
+                    <div class="module-row"><div class="m-chip">G</div><div class="m-text"><div class="m-name">Водяной знак</div></div><button class="switch" id="hud-sw-watermark"><span class="knob"/></button></div>
+                    <div class="module-row"><div class="m-chip">XY</div><div class="m-text"><div class="m-name">Координаты</div></div><button class="switch" id="hud-sw-coords"><span class="knob"/></button></div>
+                    <div class="module-row"><div class="m-chip">%</div><div class="m-text"><div class="m-name">Производительность</div></div><button class="switch" id="hud-sw-perf"><span class="knob"/></button></div>
+                    <div class="module-row"><div class="m-chip">&#9776;</div><div class="m-text"><div class="m-name">Список модулей</div></div><button class="switch" id="hud-sw-modlist"><span class="knob"/></button></div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Редактор</div>
+                    <div class="card-sub">Перетаскивание элементов HUD мышью</div>
+                    <button class="greenbtn" id="btn-hudeditor2">Настроить HUD</button>
+                    <div class="note">Все панели скроются — останется только HUD. Перетаскивай элементы, чтобы изменить их позицию. Esc или кнопка меню вернёт обычный режим.</div>
+                </div>
+            </div>
+
+            <div class="panel" id="panel-info">
+                <div class="card">
+                    <div class="card-title">О клиенте</div>
+                    <div class="info-row"><div class="info-key">Клиент</div><div class="info-val">GAYClient v1.2</div></div>
+                    <div class="info-row"><div class="info-key">Игра</div><div class="info-val">Minecraft Bedrock 1.1.5 (Windows)</div></div>
+                    <div class="info-row"><div class="info-key">Интерфейс</div><div class="info-val ok">RmlUi · HTML/CSS</div></div>
+                    <div class="info-row"><div class="info-key">Сборка</div><div class="info-val" id="info-build">—</div></div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Статус</div>
+                    <div class="info-row"><div class="info-key">Соединение с ядром</div><div class="info-val ok" id="info-conn">подключено</div></div>
+                    <div class="info-row"><div class="info-key">Профили</div><div class="info-val danger">пока не подключены</div></div>
+                    <div class="info-row"><div class="info-key">Звук</div><div class="info-val danger">пока не подключён</div></div>
+                    <div class="info-row"><div class="info-key">Статистика</div><div class="info-val danger">пока не подключена</div></div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Управление</div>
+                    <div class="info-row"><div class="info-key">Открыть меню</div><div class="info-val">клавиша меню игры</div></div>
+                    <div class="info-row"><div class="info-key">Выключить оверлей</div><div class="info-val danger">Delete (полное отключение)</div></div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+</body>
+</rml>
+)RML";
+
+static const char kTestToolsRcss[] = R"RCSS(
+body {
+    font-family: GAY;
+    font-size: 17px;
+    color: #e6f2ea;
+}
+#tt {
+    position: absolute;
+    left: 18px;
+    top: 240px;
+    width: 360px;
+    background-color: rgba(10, 16, 13, 0.96);
+    border: 1px rgba(58, 232, 130, 0.30);
+    border-radius: 14px;
+    drag: drag;
+}
+#tt-head {
+    height: 40px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 0 14px;
+    border-bottom: 1px rgba(255, 255, 255, 0.06);
+    font-size: 15px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    color: #9fb8a9;
+    cursor: move;
+}
+#tt-body { padding: 10px 14px 14px 14px; }
+#tt-status { font-size: 17px; color: #3ae882; padding-bottom: 4px; }
+#tt-diag { font-size: 13px; color: #7e9889; padding-bottom: 8px; }
+.tt-row {
+    height: 38px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+}
+.tt-label { width: 150px; font-size: 16px; color: #cfe3d6; }
+input[type="range"] { width: 130px; height: 24px; }
+input[type="range"] slidertrack {
+    height: 5px;
+    margin-top: 9px;
+    background-color: #1d221f;
+    border-radius: 3px;
+}
+input[type="range"] sliderbar {
+    width: 15px;
+    height: 15px;
+    top: -5px;
+    border-radius: 8px;
+    background-color: #3ae882;
+}
+input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
+    width: 0px;
+    height: 0px;
+}
+.tt-val { width: 62px; text-align: right; font-size: 15px; color: #9fb8a9; }
+.tt-head-label { font-size: 13px; letter-spacing: 1.5px; color: #69816f; padding-top: 6px; }
+)RCSS";
+
+static const char kTestToolsRml[] = R"RML(
+<rml>
+<head>
+    <title>Test tools</title>
+    <style>
+    </style>
+</head>
+<body>
+<div id="tt">
+    <div id="tt-head">TEST TOOLS (ADAPTER)</div>
+    <div id="tt-body">
+        <div id="tt-status">Katana: ожидание</div>
+        <div id="tt-diag">—</div>
+        <div class="tt-head-label">КАТАНА</div>
+        <div class="tt-row"><div class="tt-label">Размер</div><input type="range" id="sl-kt2-scale" min="0.4" max="1" step="0.01" value="0.7"/><div class="tt-val" id="ro-kt2-scale"/></div>
+        <div class="tt-row"><div class="tt-label">Наклон</div><input type="range" id="sl-kt2-tilt" min="0.2" max="1.55" step="0.01" value="0.9"/><div class="tt-val" id="ro-kt2-tilt"/></div>
+        <div class="tt-row"><div class="tt-label">Сторона</div><input type="range" id="sl-kt2-side" min="0" max="0.8" step="0.01" value="0.25"/><div class="tt-val" id="ro-kt2-side"/></div>
+        <div class="tt-row"><div class="tt-label">Высота</div><input type="range" id="sl-kt2-height" min="0.6" max="1.8" step="0.01" value="1.1"/><div class="tt-val" id="ro-kt2-height"/></div>
+        <div class="tt-row"><div class="tt-label">Вперёд</div><input type="range" id="sl-kt2-forward" min="-0.5" max="1" step="0.01" value="0.2"/><div class="tt-val" id="ro-kt2-forward"/></div>
+        <div class="tt-row"><div class="tt-label">Непрозр.</div><input type="range" id="sl-kt2-opacity" min="0.3" max="1" step="0.01" value="1"/><div class="tt-val" id="ro-kt2-opacity"/></div>
+        <div class="tt-head-label">КОРОНА</div>
+        <div class="tt-row"><div class="tt-label">Размер</div><input type="range" id="sl-cr2-scale" min="0" max="2" step="0.01" value="1"/><div class="tt-val" id="ro-cr2-scale"/></div>
+        <div class="tt-row"><div class="tt-label">Смещение</div><input type="range" id="sl-cr2-offset" min="0" max="2" step="0.01" value="0.5"/><div class="tt-val" id="ro-cr2-offset"/></div>
+        <div class="tt-row"><div class="tt-label">Непрозр.</div><input type="range" id="sl-cr2-opacity" min="0" max="1" step="0.01" value="1"/><div class="tt-val" id="ro-cr2-opacity"/></div>
+        <div class="tt-row"><div class="tt-label">Красный</div><input type="range" id="sl-cr2-r" min="0" max="1" step="0.01" value="1"/><div class="tt-val" id="ro-cr2-r"/></div>
+        <div class="tt-row"><div class="tt-label">Зелёный</div><input type="range" id="sl-cr2-g" min="0" max="1" step="0.01" value="0.8"/><div class="tt-val" id="ro-cr2-g"/></div>
+        <div class="tt-row"><div class="tt-label">Синий</div><input type="range" id="sl-cr2-b" min="0" max="1" step="0.01" value="0.2"/><div class="tt-val" id="ro-cr2-b"/></div>
+    </div>
+</div>
+</body>
+</rml>
+)RML";
+
+================================================================================
+КОНЕЦ ФАЙЛА: repair/src/menu_rml_data.h
+================================================================================================================================================================
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/menu_mouse_policy.h
@@ -6986,8 +7947,8 @@ assert 'if (menuOpen && !replaced) { VisualStyleScope style; realDrawGui(runtime
 assert 'else if (!menuOpen) realDrawGui(runtime);' in u
 # The embedded new menu replaces the legacy GUI only while it is alive; the
 # old panels stay hidden then and reappear automatically if the embed fails.
-assert 'menu_embed::SetGameMenuOpen(menuOpen)' in u and 'if (replaced) return;' in u
-assert 'menu_embed::RenderOverlay(device, context, desc.Width, desc.Height)' in u
+assert 'menu_rml::SetGameMenuOpen(menuOpen)' in u and 'if (replaced) return;' in u
+assert 'menu_rml::RenderOverlay(device, overlayTarget, desc.Width, desc.Height)' in u
 assert u.index('if (hudHookCreated) {') > u.index('mhApply())')
 for name in ('HatOpacity','TrailOpacity'):
     assert 'VisualParam::'+name in n and 'VisualParam::'+name in u and name in settings
@@ -7084,9 +8045,10 @@ assert 'inHatCapture && replayable' in gpu and 'submitted.fetch_add(1,std::memor
 assert 'struct EntityScope { ~EntityScope() { visual_player_replay::end();' in n
 for palette in ('Aogiri Green','Emerald','Graphite'): assert palette in theme
 print('Manual camera, hat replay and HUD palette wiring: static OK; Windows test required')
+
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_hud_visual_update.py
-================================================================================
+================================================================================================================================================================
 
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/check_china_hat.py

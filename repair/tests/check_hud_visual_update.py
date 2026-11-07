@@ -16,8 +16,8 @@ assert 'if (menuOpen && !replaced) { VisualStyleScope style; realDrawGui(runtime
 assert 'else if (!menuOpen) realDrawGui(runtime);' in u
 # The embedded new menu replaces the legacy GUI only while it is alive; the
 # old panels stay hidden then and reappear automatically if the embed fails.
-assert 'menu_embed::SetGameMenuOpen(menuOpen)' in u and 'if (replaced) return;' in u
-assert 'menu_embed::RenderOverlay(device, context, desc.Width, desc.Height)' in u
+assert 'menu_rml::SetGameMenuOpen(menuOpen)' in u and 'if (replaced) return;' in u
+assert 'menu_rml::RenderOverlay(device, overlayTarget, desc.Width, desc.Height)' in u
 assert u.index('if (hudHookCreated) {') > u.index('mhApply())')
 for name in ('HatOpacity','TrailOpacity'):
     assert 'VisualParam::'+name in n and 'VisualParam::'+name in u and name in settings

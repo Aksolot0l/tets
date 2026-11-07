@@ -1,0 +1,138 @@
+"""Static wiring checks for the RmlUi game menu; no Windows here."""
+from pathlib import Path
+r = Path(__file__).resolve().parents[1]
+root = r.parent
+u = (r/'src/compat.cpp').read_text(encoding='utf-8')
+m = (r/'src/menu_rml.cpp').read_text(encoding='utf-8')
+h = (r/'src/menu_rml.h').read_text(encoding='utf-8')
+d = (r/'src/menu_rml_data.h').read_text(encoding='utf-8')
+b = (r/'tools/build_adapter.py').read_text(encoding='utf-8')
+
+# 1. The old ImGui embed is gone everywhere: no menu_embed, no GAYClientMenu,
+#    no vendored ImGui sources in the internal DLL build.
+assert 'menu_embed' not in u and 'menu_embed' not in m
+assert '#include "menu_rml.h"' in u and 'menu_rml::SetGameMenuOpen(menuOpen)' in u
+assert 'menu_rml::RenderOverlay(device, overlayTarget, desc.Width, desc.Height)' in u
+assert 'menu_rml::AddWheel(wheelX / 120.0f, wheelY / 120.0f)' in u
+assert 'menu_rml::SetPointer(x, y, w, h)' in u
+assert 'menu_rml::SetKeyQuery(keyDown)' in u
+assert 'menu_rml::SetModuleStateReader(&readGameModule)' in u
+assert 'menu_rml::DrainModuleToggles(&toggleGameModule)' in u
+assert 'GAYClientMenu' not in u and 'GAYClientMenu' not in b
+assert 'imgui_impl_dx11.cpp' not in b and 'vendor/imgui/imgui.cpp' not in b
+assert not (r/'src/menu_embed.cpp').exists() and not (r/'src/menu_embed.h').exists()
+assert not (r/'tests/check_menu_embed.py').exists()
+
+# 2. Public contract: same surface as the old embed, except the render call
+#    takes the back-buffer render target view instead of the device context.
+for name in ('RenderOverlay', 'SetPointer', 'AddWheel', 'SetKeyQuery',
+             'SetGameMenuOpen', 'SetModuleStateReader', 'DrainModuleToggles',
+             'ReplacesLegacyMenu', 'ConsumeHudEditorRequest'):
+    assert name in h and name in m
+assert 'ID3D11RenderTargetView* rtv' in h and 'ID3D11DeviceContext' not in h
+assert 'void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,' in m
+
+# 3. RmlUi bootstrap order: renderer installed before Initialise, fonts loaded
+#    from memory buffers that outlive everything, contexts created from the
+#    markup with the RCSS injected into the empty <style> element.
+assert 'Rml::SetRenderInterface(g_renderer);' in m
+assert m.index('Rml::SetRenderInterface(g_renderer);') < m.index('Rml::Initialise()')
+assert 'CreateContext("gayclient"' in m
+assert 'segoeui.ttf' in m and 'segoeuib.ttf' in m
+assert 'LoadFontFace' in m and 'Rml::Style::FontWeight::Bold' in m
+assert '"GAY"' in m
+assert 'LoadDocumentFromMemory' in m and 'text.find("<style>")' in m
+assert 'kMenuRml' in m and 'kMenuRcss' in m and 'kTestToolsRml' in m and 'kTestToolsRcss' in m
+
+# 4. Render loop discipline: dimensions follow the viewport, the RTV is passed
+#    to EndFrame, and the legacy interface is replaced only after a complete
+#    first frame (automatic fallback if RmlUi ever fails).
+assert 'SetDimensions' in m and 'SetViewport' in m
+assert 'g_renderer->BeginFrame();' in m and 'g_rmlContext->Render();' in m
+assert 'g_renderer->EndFrame(rtv);' in m
+assert 'bool ReplacesLegacyMenu() { return g_renderOk.load' in m
+assert 'g_initFailed = true' in m
+assert 'if (!menuVisible) return;' in m
+
+# 5. Input is fed from the existing hooks only: cursor DIPs are scaled to
+#    pixels like the old embed, buttons/keys are forwarded on transitions only
+#    (RmlUi processes every call as a fresh event), the wheel keeps the
+#    one-unit-per-notch convention of the adapter.
+assert 'static_cast<float>(width) / w' in m
+assert 'if (down == g_mouseStates[button]) continue;' in m
+assert 'ProcessMouseButtonDown(button, 0)' in m and 'ProcessMouseButtonUp(button, 0)' in m
+assert 'ProcessMouseWheel(Rml::Vector2f(wheelX, wheelY), 0)' in m
+assert 'KI_ESCAPE' in m
+
+# 6. Verified setter surface only: the module toggles go through the queued
+#    ag::Runtime::SetModule bridge, the effect toggles through the direct
+#    setters, and every slider writes one VisualParam.
+assert 'queueAgModule' in m and 'g_pendingToggles.size() < 32' in m
+assert 'SetChinaHatEnabled(on)' in m and 'SetTrailEnabled(on)' in m
+assert 'SetJumpEnabled(on)' in m and 'SetKatanaEnabled(on)' in m and 'SetAccessoryEnabled(on)' in m
+assert 'SetHatFillEnabled(on)' in m and 'SetHatRainbowEnabled(on)' in m
+assert 'SetTrailFillEnabled(on)' in m and 'SetTrailRainbowEnabled(on)' in m
+assert 'SetJumpRainbowEnabled(on)' in m
+assert 'SetVisualParam(m_def->param, paramFromDom(*m_def, dom));' in m
+assert 'percentToRange(dom, 0.03f, 0.80f)' in m
+
+# 7. The DOM registry covers every interactive element of both documents.
+for switch_id in ('sw-fps', 'sw-cps', 'sw-clock', 'sw-keys', 'sw-watermark',
+                  'sw-coords', 'sw-res', 'sw-perf', 'sw-modlist',
+                  'sw-chinahat', 'sw-trail', 'sw-jump', 'sw-katana', 'sw-crown',
+                  'sw-gfx-chinahat', 'sw-gfx-trail', 'sw-gfx-jump',
+                  'sw-ch-fill', 'sw-ch-rainbow', 'sw-tr-fill', 'sw-tr-rainbow',
+                  'sw-jr-rainbow', 'hud-sw-fps', 'hud-sw-modlist'):
+    assert f'"{switch_id}"' in m, switch_id
+    assert f'id="{switch_id}"' in d, switch_id
+for slider_id in ('sl-ch-rainbow', 'sl-ch-opacity', 'sl-ch-radius', 'sl-ch-height',
+                  'sl-ch-offset', 'sl-ch-amp', 'sl-ch-floatspeed',
+                  'sl-tr-rainbow', 'sl-tr-opacity', 'sl-tr-height', 'sl-tr-life',
+                  'sl-jr-rainbow', 'sl-jr-opacity', 'sl-jr-radius', 'sl-jr-duration',
+                  'sl-kt-scale', 'sl-kt-tilt', 'sl-kt-side', 'sl-kt-height',
+                  'sl-kt-forward', 'sl-kt-opacity', 'sl-kt-fpside', 'sl-kt-fpforward',
+                  'sl-cr-scale', 'sl-cr-offset', 'sl-cr-opacity',
+                  'sl-kt2-scale', 'sl-cr2-scale'):
+    assert f'"{slider_id}"' in m, slider_id
+    assert f'id="{slider_id}"' in d, slider_id
+# Every slider id in the markup is registered and has a readout counterpart.
+slider_ids = set(re.findall(r'id="(sl-[a-z0-9-]+)"', d)) if (re := __import__('re')) else set()
+for slider_id in slider_ids:
+    assert f'"{slider_id}"' in m, slider_id
+    readout = 'ro' + slider_id[2:]
+    assert f'id="{readout}"' in d, readout
+# Every switch id in the markup is registered.
+for switch_id in set(re.findall(r'id="((?:sw|hud-sw)-[a-z0-9-]+)"', d)):
+    assert f'"{switch_id}"' in m, switch_id
+
+# 8. Tabs, collapsible sections, close and HUD editor buttons are wired.
+assert 'btn-close' in m and 'btn-hudeditor' in m and 'btn-hudeditor2' in m
+assert 'activateTab' in m and '"tab-modules"' in m and '"panel-modules"' in m
+assert 'head-sec-' in m and 'SetClass("collapsed"' in m
+assert 'SetClass("on"' in m and 'IsClassSet("on")' in m
+assert 'SetClass("active"' in m and 'SetClass("selected"' in m
+assert 'g_hudEditorRequest.store(true, std::memory_order_relaxed);' in m
+
+# 9. Test tools window: separate document, draggable, katana/crown only while
+#    enabled, status/diagnostics updated only when the text actually changed.
+assert 'toolsVisible = menuVisible && (KatanaEnabled() || AccessoryEnabled())' in m
+assert 'katanaStatusText' in m and 'KatanaDebugSnapshot()' in m
+assert 'g_ttStatusCache != status' not in m and 'if (status != g_ttStatusCache)' in m
+assert 'id="tt"' in d and 'drag: drag;' in d and 'tt-status' in d and 'tt-diag' in d
+
+# 10. Build script discipline: static RmlUi without export leaks, the DX11
+#     renderer with non-multisampled targets, the minimal FreeType module set.
+assert '"-DRMLUI_STATIC_LIB"' in b
+assert 'RMLUI_CORE_EXPORTS' not in b.replace('without -DRMLUI_CORE_EXPORTS', '')
+assert '"-DNUM_MSAA_SAMPLES=0"' in b
+assert 'ftmodule.h' in b and 'ftgzip.c' in b and 'ftmm.c' in b
+assert 'menu_rml.cpp' in b and 'menu_embed.cpp' not in b
+assert 'GAYClientInternal.dll' in b
+
+# 11. The markup keeps the launcher look: big shell, accent color, animations.
+assert '1140px' in d and '716px' in d
+assert 'std::min(1140, static_cast<int>(width) - 24)' in m
+assert '#3ae882' in d and 'transition:' in d
+assert 'font-size: 20px' in d
+
+print('check_menu_rml: ok')
