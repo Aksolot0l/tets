@@ -119,6 +119,13 @@
       "previousSha256": [
         "8223c363f04c68360b61893dbf6f1aa0ae14edbd5fc33555e19bfc6af1e02a20"
       ]
+    },
+    {
+      "source": "index.html",
+      "destination": "web-menu.html",
+      "size": 1171913,
+      "sha256": "a43b524ab30a9f20806ec4bb38aa2ab230648f3c587a6f50e20f8bbf3e12c681",
+      "previousSha256": []
     }
   ]
 }
