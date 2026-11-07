@@ -1,121 +1,122 @@
 {
- "schema": 1,
- "files": [
-  {
-   "source": "repair/GAYClientLauncher.dll",
-   "destination": "GAYClientLauncher.dll",
-   "size": 2795520,
-   "sha256": "553f77fb882921458634ada671176c8721833501df84790d768f29b2fb2c9cda",
-   "previousSha256": [
-    "f96bfdf8788b85bad0ffc5b6632dbc8d792c3e487da00ed82aa6b82d85026afc",
-    "5623f671bc96ee0f3f32ced35c5f821c8699cb020224fc75f629dbd4436fe06c",
-    "a24ca7236568aebdb6659a62a21944fd7dd441c50cff1e32a157c431f35eedee",
-    "5e25e5e8c791f2a255b626fa894f64163c7b986125592b824e5f4ac6e4cfbce4",
-    "1be94471de07695d7251c12f3bc2285ed44acaec3f28f52291bc6c9e85a960e5",
-    "0f1f885eb7a656d06aa42aaaac1ff78c85e5cf506a743d1c99681bae16c7dbb4",
-    "16c6baab1f6cee4e6585b84a7b15bbdd6e09ea934e7810c48b62c40349b3c710",
-    "c377f9278174e9eb7088e59b2e981be2b080a57a66f76aaf2a46c687e2e74549",
-    "67ca23153c11c3b5824feaeeb033d15ad08930aad2c52686d01c3b91f98adcd7"
-   ]
-  },
-  {
-   "source": "repair/client.exe",
-   "destination": "client.exe",
-   "size": 4703232,
-   "sha256": "1230ca6952be96a418f684b99aace91bcb298c39329964b095191e2b820b3d57",
-   "previousSha256": [
-    "e0f90e9aa78e417f0337acbb8f84162e27b9fb9396cf2c22af5950a16db11b19"
-   ]
-  },
-  {
-   "source": "GAYClientInternal.dll",
-   "destination": "GAYClientCore.dll",
-   "size": 4228404,
-   "sha256": "f74a42c4aedd1c9d1f0c92200e9c7e977d800ab686d108114b2711c0c81835c5",
-   "previousSha256": []
-  },
-  {
-   "source": "repair/GAYClientInternal.dll",
-   "destination": "GAYClientInternal.dll",
-   "size": 3171328,
-   "sha256": "76351d303e3b02fef98f7b70896852a34e86d0843425e309ab6663841f2a792b",
-   "previousSha256": [
-    "f9877cfbdc8de4309900dd7d3115f21dd0bfc3f173a299c76281d6a348740555",
-    "428137a1c8101b190617656fad106082cfd1db37ae17ce401aaa2f615d09b34a",
-    "6abe37ad990a9d077c2d8554c83de3fe290f7ca00c0aca18795c788c958803bb",
-    "bf4e4f03d976573fa11a6e32d29c4c43491a3fa782e6aa81f435032650b5b4ab",
-    "b1053d8c273971365932f7c18e51fdfcbb8f713929f44b43061be92813597cde",
-    "f07e264ccc06cb9f99207b379a508a3120b5e51cb4c09bffece29920ac82f134",
-    "32aee8bee8945616a95855756e36337c41f69160c0d9c947d26f13f20539a8dd",
-    "7ef07fb836ac9593d56c6d0eecb32badf558e36436ba56710e3e46175dfae29b",
-    "ba939b876c3e4feaf9cb7639853c482a6ab9653b7735bfddbd9ea1da4541c96a",
-    "e0655ebf15d97d33325ad7de317b2c932b1cf4b776214fcc1fa5c7d24dc12d1a",
-    "b0a7d82f2ea68e02fd66067242fa34ecdf18a82fa15b95e8a7f6f8d4fb190754",
-    "7a722966f891c85f913a9d46caf63cf98bf3ee6984cbb54c13b9a1944caf9b34",
-    "b9fff9341c955cbe2bf26fd65e78ba048d908e3ddc07a5ea516ce9d3c293663f",
-    "29b9af94d6737d7dd41f1c160fbbf47a3514c2d7219bdbc72fb25b52928a0c56",
-    "10a7b4e5ab6247927d5d2253dc97e750403b1cb6c4ea7c4904be2dfe150a0164",
-    "c4c6a7934dafcd3ea039f7e7b11fff2818113e58629120d54c7c2670ffc4c4bd",
-    "be23956b607dc1dc668f67403d8c44e5c9c41a2e3f658108062a2321281fd0c9",
-    "1b3347dbed5ee6e817f6ad0210361058316430c3a83573ff2d8f2b2ba8231fcf",
-    "b94ba7cbcf00e46534726b4237e0de7acafc552cfad3cf0cd075a6068dc837fa",
-    "af7321b4c20429c1b50bd4f031fc9a78d36417138e21d355edce82e6a58814cb",
-    "f073548d28752e5e768d22f964ed9e82aca4b1dd764ea9b372311bea4b47d612",
-    "55ab5fae84d334edce229c894c981eb7b3b9547990c1239c7c5e70c04d2cc858",
-    "b5bf97d3029c94ff9d819ee5f2ba24163a735056146b0a654add396d797b7640",
-    "71c89108a43952f10b566e730d4b3b4b1c2cea59d34f343b5e7f836eed69c38a",
-    "4c3bae24a301dc8c75c8131708774e2175b9193eea223d6fb1f77e96cffaf477",
-    "d5a707f0645ca2e1d0498b6b8fb780bf6d130717bbb68b590f10e02841eb1a5f",
-    "91f2c72d26dc98e2df70f857c73ca4b8f352608f59d490fba9e09041fa24407b",
-    "da058244bc2599d6910058efaade7a6d82e5f166a8b72f246bbdf16da0932294",
-    "25b74e0703ad040483881a2eaaa8ef50eb3defcc829d341837e70713f52e42d3",
-    "e3c6682298d7fcd329f9a6a7f835a269d365e27226bc6b44116dc8f9d0ecc71c",
-    "8039ab70dca5fea8295d14009c668d6ba422e08d4720151edcde99d8b6b4b7a7",
-    "a9e910547d69c555dcca63f654c4d43bbf4e7720b95a7f4d640010d46d97802a",
-    "6944b07094ccb4c54b7e6e8639882d7e4ea4683d7ede3290e1662031656f5674",
-    "9fc8330f32f815e65803b37ec9e2dc2e6c75a1aa312255392a811cfd0d147dd0",
-    "b5bd25923ab9eafc49899193649aa74562315ce87438ea119ef9c975d590b970",
-    "26c7bd26034aa640a41899ed9396efbad0e94a13cf90bcb6566157c98bbafa18",
-    "a28f812b034bb39b1b9fe639b8c2da47691ae6fc45a52f79582ddbf280c6fd8b",
-    "69b2c417e049d49a9804b1dbf3385c47a44075ca9c132427b7e2026943338e35",
-    "2b68bc117f59b85254b32605dac50c1e3426c2e255457a1a074eaf110e5acc21",
-    "256b6fb884516ddca60158fa18ce929e76ff08418e027438c1709afe52118c4f",
-    "d69f88439e6bfa5648f86548b34c18e50a96e2430094a6fc217a037429cd70e1",
-    "1fed35141dcedf649eed67667d3c38528e47b9c58ffcd459c2a855067fab7c55",
-    "c98e8d3eb7a2e34dea177be998fde2c24bc172a4a875120770db0da06a00ccd9",
-    "cfed7c06a77b35e8799ff393d744b00f103aec8c0c8882ec9d4873fe5cbeea34",
-    "cd80dd80712131572fdbf5989ff6a2ffaa1f9993437a226265ad97631fbf19c1"
-   ]
-  },
-  {
-   "source": "repair/ENABLE_ACCESS.cmd",
-   "destination": "ENABLE_ACCESS.cmd",
-   "size": 1440,
-   "sha256": "c106b456540d9c373cd9e968081245091515e46cf9c8a92dcd22843f011439a0",
-   "previousSha256": []
-  },
-  {
-   "source": "repair/RESTORE_ACCESS.cmd",
-   "destination": "RESTORE_ACCESS.cmd",
-   "size": 769,
-   "sha256": "5d3ef1a0a75f30a7e35a8c67213d8357659718c1c79a2489646f2f846b410eb6",
-   "previousSha256": []
-  },
-  {
-   "source": "repair/WebView2Loader.dll",
-   "destination": "WebView2Loader.dll",
-   "size": 165440,
-   "sha256": "ff490dd10ec4e7c92e09c443c9dbdc0f4454b841b383c4484d1a83fe33fe8cce",
-   "previousSha256": []
-  },
-  {
-   "source": "repair/THIRD_PARTY_NOTICES.txt",
-   "destination": "THIRD_PARTY_NOTICES.txt",
-   "size": 26495,
-   "sha256": "6b3a4303fd20af13defed108a38a266a43ccacd4ecfa3849a5f3747dc2f89064",
-   "previousSha256": [
-    "8223c363f04c68360b61893dbf6f1aa0ae14edbd5fc33555e19bfc6af1e02a20"
-   ]
-  }
- ]
+  "schema": 1,
+  "files": [
+    {
+      "source": "repair/GAYClientLauncher.dll",
+      "destination": "GAYClientLauncher.dll",
+      "size": 2795520,
+      "sha256": "553f77fb882921458634ada671176c8721833501df84790d768f29b2fb2c9cda",
+      "previousSha256": [
+        "f96bfdf8788b85bad0ffc5b6632dbc8d792c3e487da00ed82aa6b82d85026afc",
+        "5623f671bc96ee0f3f32ced35c5f821c8699cb020224fc75f629dbd4436fe06c",
+        "a24ca7236568aebdb6659a62a21944fd7dd441c50cff1e32a157c431f35eedee",
+        "5e25e5e8c791f2a255b626fa894f64163c7b986125592b824e5f4ac6e4cfbce4",
+        "1be94471de07695d7251c12f3bc2285ed44acaec3f28f52291bc6c9e85a960e5",
+        "0f1f885eb7a656d06aa42aaaac1ff78c85e5cf506a743d1c99681bae16c7dbb4",
+        "16c6baab1f6cee4e6585b84a7b15bbdd6e09ea934e7810c48b62c40349b3c710",
+        "c377f9278174e9eb7088e59b2e981be2b080a57a66f76aaf2a46c687e2e74549",
+        "67ca23153c11c3b5824feaeeb033d15ad08930aad2c52686d01c3b91f98adcd7"
+      ]
+    },
+    {
+      "source": "repair/client.exe",
+      "destination": "client.exe",
+      "size": 4703232,
+      "sha256": "1230ca6952be96a418f684b99aace91bcb298c39329964b095191e2b820b3d57",
+      "previousSha256": [
+        "e0f90e9aa78e417f0337acbb8f84162e27b9fb9396cf2c22af5950a16db11b19"
+      ]
+    },
+    {
+      "source": "GAYClientInternal.dll",
+      "destination": "GAYClientCore.dll",
+      "size": 4228404,
+      "sha256": "f74a42c4aedd1c9d1f0c92200e9c7e977d800ab686d108114b2711c0c81835c5",
+      "previousSha256": []
+    },
+    {
+      "source": "repair/GAYClientInternal.dll",
+      "destination": "GAYClientInternal.dll",
+      "size": 3170816,
+      "sha256": "d5d8bf54c5909bddc748c0871468f033c6955da5b0540cf05aff935a7b82cf78",
+      "previousSha256": [
+        "f9877cfbdc8de4309900dd7d3115f21dd0bfc3f173a299c76281d6a348740555",
+        "428137a1c8101b190617656fad106082cfd1db37ae17ce401aaa2f615d09b34a",
+        "6abe37ad990a9d077c2d8554c83de3fe290f7ca00c0aca18795c788c958803bb",
+        "bf4e4f03d976573fa11a6e32d29c4c43491a3fa782e6aa81f435032650b5b4ab",
+        "b1053d8c273971365932f7c18e51fdfcbb8f713929f44b43061be92813597cde",
+        "f07e264ccc06cb9f99207b379a508a3120b5e51cb4c09bffece29920ac82f134",
+        "32aee8bee8945616a95855756e36337c41f69160c0d9c947d26f13f20539a8dd",
+        "7ef07fb836ac9593d56c6d0eecb32badf558e36436ba56710e3e46175dfae29b",
+        "ba939b876c3e4feaf9cb7639853c482a6ab9653b7735bfddbd9ea1da4541c96a",
+        "e0655ebf15d97d33325ad7de317b2c932b1cf4b776214fcc1fa5c7d24dc12d1a",
+        "b0a7d82f2ea68e02fd66067242fa34ecdf18a82fa15b95e8a7f6f8d4fb190754",
+        "7a722966f891c85f913a9d46caf63cf98bf3ee6984cbb54c13b9a1944caf9b34",
+        "b9fff9341c955cbe2bf26fd65e78ba048d908e3ddc07a5ea516ce9d3c293663f",
+        "29b9af94d6737d7dd41f1c160fbbf47a3514c2d7219bdbc72fb25b52928a0c56",
+        "10a7b4e5ab6247927d5d2253dc97e750403b1cb6c4ea7c4904be2dfe150a0164",
+        "c4c6a7934dafcd3ea039f7e7b11fff2818113e58629120d54c7c2670ffc4c4bd",
+        "be23956b607dc1dc668f67403d8c44e5c9c41a2e3f658108062a2321281fd0c9",
+        "1b3347dbed5ee6e817f6ad0210361058316430c3a83573ff2d8f2b2ba8231fcf",
+        "b94ba7cbcf00e46534726b4237e0de7acafc552cfad3cf0cd075a6068dc837fa",
+        "af7321b4c20429c1b50bd4f031fc9a78d36417138e21d355edce82e6a58814cb",
+        "f073548d28752e5e768d22f964ed9e82aca4b1dd764ea9b372311bea4b47d612",
+        "55ab5fae84d334edce229c894c981eb7b3b9547990c1239c7c5e70c04d2cc858",
+        "b5bf97d3029c94ff9d819ee5f2ba24163a735056146b0a654add396d797b7640",
+        "71c89108a43952f10b566e730d4b3b4b1c2cea59d34f343b5e7f836eed69c38a",
+        "4c3bae24a301dc8c75c8131708774e2175b9193eea223d6fb1f77e96cffaf477",
+        "d5a707f0645ca2e1d0498b6b8fb780bf6d130717bbb68b590f10e02841eb1a5f",
+        "91f2c72d26dc98e2df70f857c73ca4b8f352608f59d490fba9e09041fa24407b",
+        "da058244bc2599d6910058efaade7a6d82e5f166a8b72f246bbdf16da0932294",
+        "25b74e0703ad040483881a2eaaa8ef50eb3defcc829d341837e70713f52e42d3",
+        "e3c6682298d7fcd329f9a6a7f835a269d365e27226bc6b44116dc8f9d0ecc71c",
+        "8039ab70dca5fea8295d14009c668d6ba422e08d4720151edcde99d8b6b4b7a7",
+        "a9e910547d69c555dcca63f654c4d43bbf4e7720b95a7f4d640010d46d97802a",
+        "6944b07094ccb4c54b7e6e8639882d7e4ea4683d7ede3290e1662031656f5674",
+        "9fc8330f32f815e65803b37ec9e2dc2e6c75a1aa312255392a811cfd0d147dd0",
+        "b5bd25923ab9eafc49899193649aa74562315ce87438ea119ef9c975d590b970",
+        "26c7bd26034aa640a41899ed9396efbad0e94a13cf90bcb6566157c98bbafa18",
+        "a28f812b034bb39b1b9fe639b8c2da47691ae6fc45a52f79582ddbf280c6fd8b",
+        "69b2c417e049d49a9804b1dbf3385c47a44075ca9c132427b7e2026943338e35",
+        "2b68bc117f59b85254b32605dac50c1e3426c2e255457a1a074eaf110e5acc21",
+        "256b6fb884516ddca60158fa18ce929e76ff08418e027438c1709afe52118c4f",
+        "d69f88439e6bfa5648f86548b34c18e50a96e2430094a6fc217a037429cd70e1",
+        "1fed35141dcedf649eed67667d3c38528e47b9c58ffcd459c2a855067fab7c55",
+        "c98e8d3eb7a2e34dea177be998fde2c24bc172a4a875120770db0da06a00ccd9",
+        "cfed7c06a77b35e8799ff393d744b00f103aec8c0c8882ec9d4873fe5cbeea34",
+        "cd80dd80712131572fdbf5989ff6a2ffaa1f9993437a226265ad97631fbf19c1",
+        "76351d303e3b02fef98f7b70896852a34e86d0843425e309ab6663841f2a792b"
+      ]
+    },
+    {
+      "source": "repair/ENABLE_ACCESS.cmd",
+      "destination": "ENABLE_ACCESS.cmd",
+      "size": 1440,
+      "sha256": "c106b456540d9c373cd9e968081245091515e46cf9c8a92dcd22843f011439a0",
+      "previousSha256": []
+    },
+    {
+      "source": "repair/RESTORE_ACCESS.cmd",
+      "destination": "RESTORE_ACCESS.cmd",
+      "size": 769,
+      "sha256": "5d3ef1a0a75f30a7e35a8c67213d8357659718c1c79a2489646f2f846b410eb6",
+      "previousSha256": []
+    },
+    {
+      "source": "repair/WebView2Loader.dll",
+      "destination": "WebView2Loader.dll",
+      "size": 165440,
+      "sha256": "ff490dd10ec4e7c92e09c443c9dbdc0f4454b841b383c4484d1a83fe33fe8cce",
+      "previousSha256": []
+    },
+    {
+      "source": "repair/THIRD_PARTY_NOTICES.txt",
+      "destination": "THIRD_PARTY_NOTICES.txt",
+      "size": 26495,
+      "sha256": "6b3a4303fd20af13defed108a38a266a43ccacd4ecfa3849a5f3747dc2f89064",
+      "previousSha256": [
+        "8223c363f04c68360b61893dbf6f1aa0ae14edbd5fc33555e19bfc6af1e02a20"
+      ]
+    }
+  ]
 }

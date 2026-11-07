@@ -155,4 +155,26 @@ assert 'std::min(1140, static_cast<int>(width) - 24)' in m
 assert '#3ae882' in d and 'transition:' in d
 assert 'font-size: 20px' in d
 
+# 12. RmlUi 6.x rendering pitfalls found via the software-rasterizer repro
+#     must stay fixed:
+#     (a) default display is inline in RmlUi, so every block container needs
+#         an explicit display: block (or flex);
+#     (b) rgba(r,g,b,0.97) parses alpha with atoi -> 0 => invisible; all
+#         colors use #rrggbbaa hex instead;
+#     (c) a column flex child whose natural height exceeds the container
+#         collapses fixed siblings unless flex-basis: 0px is set;
+#     (d) element ids must be unique (GetElementById returns the first).
+import re as _re2
+block_divs = ('.card', '.section-body', '.m-text', '.m-name', '.m-desc',
+              '#tt-body', '.tt-head-label')
+for sel in block_divs:
+    pat = _re2.escape(sel) + r'\s*\{[^}]*display:\s*block'
+    assert _re2.search(pat, d), sel
+assert '#layout {\n    flex-basis: 0px;' in d
+assert 'rgba(' not in d
+import re as _re
+assert len(_re.findall(r'id="brand-sub"', d)) == 1
+assert 'id="brand-ver"' in d
+assert '#brand-sub, #brand-ver {' in d
+
 print('check_menu_rml: ok')

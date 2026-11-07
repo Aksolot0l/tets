@@ -8,18 +8,16 @@ body {
     font-family: GAY;
     font-size: 20px;
     color: #e6f2ea;
-    background-color: rgba(4, 8, 6, 0.42);
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    display: block;
 }
 #shell {
+    position: absolute;
     width: 1140px;
     height: 716px;
     display: flex;
     flex-direction: column;
-    background-color: rgba(10, 16, 13, 0.97);
-    border: 1px rgba(58, 232, 130, 0.26);
+    background-color: #0a100df7;
+    border: 1px #3ae88242;
     border-radius: 18px;
 }
 #titlebar {
@@ -28,7 +26,7 @@ body {
     flex-direction: row;
     align-items: center;
     padding: 0 22px;
-    border-bottom: 1px rgba(255, 255, 255, 0.05);
+    border-bottom: 1px #ffffff0d;
 }
 #brand {
     font-size: 27px;
@@ -42,7 +40,7 @@ body {
     letter-spacing: 1px;
     color: #3ae882;
 }
-#brand-sub {
+#brand-sub, #brand-ver {
     margin-left: 14px;
     margin-top: 6px;
     font-size: 13px;
@@ -55,8 +53,8 @@ body {
     height: 36px;
     font-size: 20px;
     color: #7e9889;
-    background-color: rgba(255, 255, 255, 0.03);
-    border: 1px rgba(255, 255, 255, 0.07);
+    background-color: #ffffff08;
+    border: 1px #ffffff12;
     border-radius: 10px;
     text-align: center;
     vertical-align: middle;
@@ -65,11 +63,12 @@ body {
     transition: background-color 0.12s, color 0.12s;
 }
 .iconbtn:hover {
-    background-color: rgba(255, 90, 90, 0.14);
+    background-color: #ff5a5a24;
     color: #ff9c9c;
-    border-color: rgba(255, 90, 90, 0.35);
+    border-color: #ff5a5a59;
 }
 #layout {
+    flex-basis: 0px;
     flex-grow: 1;
     display: flex;
     flex-direction: row;
@@ -79,7 +78,7 @@ body {
     display: flex;
     flex-direction: column;
     padding: 16px 12px;
-    border-right: 1px rgba(255, 255, 255, 0.05);
+    border-right: 1px #ffffff0d;
 }
 .nav-label {
     font-size: 11px;
@@ -102,11 +101,11 @@ body {
     transition: background-color 0.13s, color 0.13s;
 }
 .nav-item:hover {
-    background-color: rgba(255, 255, 255, 0.045);
+    background-color: #ffffff0b;
     color: #d7e8dd;
 }
 .nav-item.active {
-    background-color: rgba(58, 232, 130, 0.10);
+    background-color: #3ae8821a;
     color: #eafff1;
 }
 .nav-bar {
@@ -137,7 +136,7 @@ body {
     font-weight: bold;
     color: #06240f;
     background-color: #3ae882;
-    border: 1px rgba(255, 255, 255, 0.22);
+    border: 1px #ffffff38;
     border-radius: 12px;
     text-align: center;
     cursor: pointer;
@@ -147,40 +146,45 @@ body {
 .greenbtn:active { background-color: #2cc06c; }
 #content {
     flex-grow: 1;
-    display: flex;
-    flex-direction: column;
+    display: block;
     padding: 20px 22px;
     overflow-y: auto;
 }
 #content scrollbarvertical { width: 10px; }
 #content scrollbarvertical slidertrack {
-    background-color: rgba(255, 255, 255, 0.04);
+    background-color: #ffffff0a;
     border-radius: 5px;
 }
 #content scrollbarvertical sliderbar {
     width: 8px;
     border-radius: 4px;
-    background-color: rgba(58, 232, 130, 0.45);
+    background-color: #3ae88273;
 }
 .panel { display: none; }
 .panel.selected { display: block; }
 .card {
+    display: block;
     padding: 8px 18px 14px 18px;
     margin-bottom: 14px;
-    background-color: rgba(255, 255, 255, 0.028);
-    border: 1px rgba(255, 255, 255, 0.06);
+    background-color: #ffffff07;
+    border: 1px #ffffff0f;
     border-radius: 14px;
 }
 .card-title {
+    display: block;
     font-size: 22px;
     font-weight: bold;
     color: #f0f8f3;
     padding: 12px 0 2px 0;
 }
 .card-sub {
+    display: block;
     font-size: 14px;
     color: #7e9889;
     padding-bottom: 8px;
+}
+.section {
+    display: block;
 }
 .section-head {
     height: 46px;
@@ -192,7 +196,7 @@ body {
     padding: 0 6px;
     transition: background-color 0.12s;
 }
-.section-head:hover { background-color: rgba(255, 255, 255, 0.035); }
+.section-head:hover { background-color: #ffffff09; }
 .section-title {
     font-size: 15px;
     font-weight: bold;
@@ -206,7 +210,7 @@ body {
     transition: transform 0.15s;
 }
 .section.collapsed .caret { transform: rotate(-90deg); }
-.section-body { padding: 2px 0 6px 0; }
+.section-body { display: block; padding: 2px 0 6px 0; }
 .section.collapsed .section-body { display: none; }
 .module-row {
     height: 60px;
@@ -217,7 +221,7 @@ body {
     border-radius: 11px;
     transition: background-color 0.12s;
 }
-.module-row:hover { background-color: rgba(255, 255, 255, 0.03); }
+.module-row:hover { background-color: #ffffff08; }
 .m-chip {
     width: 40px;
     height: 40px;
@@ -225,18 +229,18 @@ body {
     font-size: 20px;
     font-weight: bold;
     color: #3ae882;
-    background-color: rgba(58, 232, 130, 0.10);
+    background-color: #3ae8821a;
     text-align: center;
     line-height: 40px;
 }
-.m-text { flex-grow: 1; padding-left: 14px; }
-.m-name { font-size: 20px; color: #e9f4ed; }
-.m-desc { font-size: 14px; color: #7e9889; margin-top: 1px; }
+.m-text { display: block; flex-grow: 1; padding-left: 14px; }
+.m-name { display: block; font-size: 20px; color: #e9f4ed; }
+.m-desc { display: block; font-size: 14px; color: #7e9889; margin-top: 1px; }
 .switch {
     position: relative;
     width: 58px;
     height: 32px;
-    border: 1px rgba(255, 255, 255, 0.08);
+    border: 1px #ffffff14;
     border-radius: 16px;
     background-color: #20281f;
     cursor: pointer;
@@ -253,8 +257,8 @@ body {
     transition: left 0.16s, background-color 0.16s;
 }
 .switch.on {
-    background-color: rgba(58, 232, 130, 0.24);
-    border-color: rgba(58, 232, 130, 0.55);
+    background-color: #3ae8823d;
+    border-color: #3ae8828c;
 }
 .switch.on .knob {
     left: 29px;
@@ -269,7 +273,7 @@ body {
     border-radius: 9px;
     transition: background-color 0.12s;
 }
-.slider-row:hover { background-color: rgba(255, 255, 255, 0.025); }
+.slider-row:hover { background-color: #ffffff06; }
 .slider-label { width: 300px; font-size: 18px; color: #cfe3d6; }
 .slider-label small { font-size: 13px; color: #7e9889; }
 input[type="range"] {
@@ -306,7 +310,7 @@ input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
     height: 26px;
     margin-left: 10px;
     border-radius: 7px;
-    border: 1px rgba(255, 255, 255, 0.18);
+    border: 1px #ffffff2e;
 }
 .note {
     font-size: 15px;
@@ -318,8 +322,8 @@ input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
     font-size: 12px;
     letter-spacing: 1px;
     color: #3ae882;
-    background-color: rgba(58, 232, 130, 0.10);
-    border: 1px rgba(58, 232, 130, 0.25);
+    background-color: #3ae8821a;
+    border: 1px #3ae88240;
     border-radius: 7px;
     padding: 2px 8px;
     margin-left: 10px;
@@ -350,7 +354,7 @@ static const char kMenuRml[] = R"RML(
         <div id="brand">GAY<span id="brand-accent">CLIENT</span></div>
         <div id="brand-sub">GAME MENU · BEDROCK 1.1.5</div>
         <div id="title-flex"/>
-        <div id="brand-sub">v1.2</div>
+        <div id="brand-ver">v1.2</div>
         <button class="iconbtn" id="btn-close">&#215;</button>
     </div>
     <div id="layout">
@@ -544,8 +548,8 @@ body {
     left: 18px;
     top: 240px;
     width: 360px;
-    background-color: rgba(10, 16, 13, 0.96);
-    border: 1px rgba(58, 232, 130, 0.30);
+    background-color: #0a100df5;
+    border: 1px #3ae8824c;
     border-radius: 14px;
     drag: drag;
 }
@@ -555,14 +559,14 @@ body {
     flex-direction: row;
     align-items: center;
     padding: 0 14px;
-    border-bottom: 1px rgba(255, 255, 255, 0.06);
+    border-bottom: 1px #ffffff0f;
     font-size: 15px;
     font-weight: bold;
     letter-spacing: 1px;
     color: #9fb8a9;
     cursor: move;
 }
-#tt-body { padding: 10px 14px 14px 14px; }
+#tt-body { display: block; padding: 10px 14px 14px 14px; }
 #tt-status { font-size: 17px; color: #3ae882; padding-bottom: 4px; }
 #tt-diag { font-size: 13px; color: #7e9889; padding-bottom: 8px; }
 .tt-row {
@@ -591,7 +595,7 @@ input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
     height: 0px;
 }
 .tt-val { width: 62px; text-align: right; font-size: 15px; color: #9fb8a9; }
-.tt-head-label { font-size: 13px; letter-spacing: 1.5px; color: #69816f; padding-top: 6px; }
+.tt-head-label { display: block; font-size: 13px; letter-spacing: 1.5px; color: #69816f; padding-top: 6px; }
 )RCSS";
 
 static const char kTestToolsRml[] = R"RML(

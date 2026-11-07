@@ -760,10 +760,17 @@ void feedInput(unsigned width, unsigned height) {
 
 void clampShell(unsigned width, unsigned height) {
     if (!g_shell) return;
-    const float shellW = static_cast<float>(std::min(1140, static_cast<int>(width) - 24));
-    const float shellH = static_cast<float>(std::min(716, static_cast<int>(height) - 24));
-    g_shell->SetProperty("width", Rml::CreateString("%fpx", shellW));
-    g_shell->SetProperty("height", Rml::CreateString("%fpx", shellH));
+    // The shell is absolutely positioned and centered from here: the RmlUi
+    // root body shrink-wraps its content, so CSS-only centering (flex body)
+    // does not work and would also collapse the column layout.
+    const int shellW = std::min(1140, static_cast<int>(width) - 24);
+    const int shellH = std::min(716, static_cast<int>(height) - 24);
+    g_shell->SetProperty("width", Rml::CreateString("%dpx", shellW));
+    g_shell->SetProperty("height", Rml::CreateString("%dpx", shellH));
+    g_shell->SetProperty("left", Rml::CreateString("%dpx",
+        (static_cast<int>(width) - shellW) / 2));
+    g_shell->SetProperty("top", Rml::CreateString("%dpx",
+        (static_cast<int>(height) - shellH) / 2));
 }
 
 void updateDocVisibility(bool menuVisible, bool toolsVisible) {

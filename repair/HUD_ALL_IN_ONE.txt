@@ -17,8 +17,12 @@ SDK, RmlUi и Dear ImGui сюда не включены. Исходников з
 UPDATE: внутриигровое меню полностью переделано на RmlUi (HTML/CSS, стиль
 лаунчера): мост src/menu_rml.cpp, дизайн src/menu_rml_data.h, сборка
 tools/build_adapter.py. Прежнее ImGui-меню (menu_embed + GAYClientMenu)
-удалено из сборки; легаси-интерфейс остаётся фолбэком. В реальной игре
-новое меню ещё не проверено пользователем.
+удалено из сборки; легаси-интерфейс остаётся фолбэком. Первый запуск у
+пользователя показал вид «только ползунки»; причины найдены в софт-
+растеризаторе на Linux (rgba-альфа парсится как atoi -> 0; дефолтный
+display = inline; схлопывание flex-колонки) и исправлены — кадры в
+репро теперь рисуются корректно (фон, тексты, тумблеры, слайдеры,
+скролл). Ожидается повторная проверка пользователем в реальной игре.
 
 СОДЕРЖАНИЕ:
 1. Описание модулей, промпт и сборка
@@ -2184,7 +2188,6 @@ print('HUD visual-only checks OK; Windows/Minecraft verification required')
 ================================================================================================================================================================
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/check_menu_rml.py
-================================================================================
 """Static wiring checks for the RmlUi game menu; no Windows here."""
 from pathlib import Path
 r = Path(__file__).resolve().parents[1]
@@ -2308,13 +2311,33 @@ assert 'g_ttStatusCache != status' not in m and 'if (status != g_ttStatusCache)'
 assert 'id="tt"' in d and 'drag: drag;' in d and 'tt-status' in d and 'tt-diag' in d
 
 # 10. Build script discipline: static RmlUi without export leaks, the DX11
-#     renderer with non-multisampled targets, the minimal FreeType module set.
+#     renderer with non-multisampled targets, the FreeType font engine
+#     actually compiled in, the minimal FreeType module set.
 assert '"-DRMLUI_STATIC_LIB"' in b
 assert 'RMLUI_CORE_EXPORTS' not in b.replace('without -DRMLUI_CORE_EXPORTS', '')
+assert '"-DRMLUI_FONT_ENGINE_FREETYPE"' in b
 assert '"-DNUM_MSAA_SAMPLES=0"' in b
 assert 'ftmodule.h' in b and 'ftgzip.c' in b and 'ftmm.c' in b
 assert 'menu_rml.cpp' in b and 'menu_embed.cpp' not in b
 assert 'GAYClientInternal.dll' in b
+
+# 10b. Init bugs found on the first user run must stay fixed: the viewport is
+# set before the first BeginFrame (the renderer defaults to 0x0 targets), and
+# every early return in initBackend logs its reason to gayclient-menu.log
+# through the custom SystemInterface (which also captures RmlUi's own
+# messages, e.g. RCSS parse errors).
+assert 'g_renderer->SetViewport(static_cast<int>(width), static_cast<int>(height));' in m
+assert m.index('g_renderer->SetViewport') < m.index('Rml::Initialise()')
+assert 'Rml::SetSystemInterface(&g_systemInterface);' in m
+assert m.index('Rml::SetSystemInterface(&g_systemInterface);') < m.index('Rml::Initialise()')
+assert 'bool LogMessage(Rml::Log::Type type, const Rml::String& message) override' in m
+assert 'gayclient-menu.log' in m
+for step in ('segoeui.ttf unreadable', 'Rml::Initialise returned false',
+             'CreateContext returned null', 'LoadFontFace (regular)',
+             'menu document did not parse', 'test tools document did not parse',
+             'element registry incomplete', 'init: complete'):
+    assert step in m, step
+assert 'first frame complete' in m
 
 # 11. The markup keeps the launcher look: big shell, accent color, animations.
 assert '1140px' in d and '716px' in d
@@ -2322,9 +2345,29 @@ assert 'std::min(1140, static_cast<int>(width) - 24)' in m
 assert '#3ae882' in d and 'transition:' in d
 assert 'font-size: 20px' in d
 
-print('check_menu_rml: ok')
+# 12. RmlUi 6.x rendering pitfalls found via the software-rasterizer repro
+#     must stay fixed:
+#     (a) default display is inline in RmlUi, so every block container needs
+#         an explicit display: block (or flex);
+#     (b) rgba(r,g,b,0.97) parses alpha with atoi -> 0 => invisible; all
+#         colors use #rrggbbaa hex instead;
+#     (c) a column flex child whose natural height exceeds the container
+#         collapses fixed siblings unless flex-basis: 0px is set;
+#     (d) element ids must be unique (GetElementById returns the first).
+import re as _re2
+block_divs = ('.card', '.section-body', '.m-text', '.m-name', '.m-desc',
+              '#tt-body', '.tt-head-label')
+for sel in block_divs:
+    pat = _re2.escape(sel) + r'\s*\{[^}]*display:\s*block'
+    assert _re2.search(pat, d), sel
+assert '#layout {\n    flex-basis: 0px;' in d
+assert 'rgba(' not in d
+import re as _re
+assert len(_re.findall(r'id="brand-sub"', d)) == 1
+assert 'id="brand-ver"' in d
+assert '#brand-sub, #brand-ver {' in d
 
-================================================================================
+print('check_menu_rml: ok')
 КОНЕЦ ФАЙЛА: repair/tests/check_menu_rml.py
 ================================================================================================================================================================
 
@@ -5306,7 +5349,6 @@ bool ConsumeHudEditorRequest();
 ================================================================================================================================================================
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/menu_rml.cpp
-================================================================================
 #include "menu_rml.h"
 
 #include <algorithm>
@@ -6069,10 +6111,17 @@ void feedInput(unsigned width, unsigned height) {
 
 void clampShell(unsigned width, unsigned height) {
     if (!g_shell) return;
-    const float shellW = static_cast<float>(std::min(1140, static_cast<int>(width) - 24));
-    const float shellH = static_cast<float>(std::min(716, static_cast<int>(height) - 24));
-    g_shell->SetProperty("width", Rml::CreateString("%fpx", shellW));
-    g_shell->SetProperty("height", Rml::CreateString("%fpx", shellH));
+    // The shell is absolutely positioned and centered from here: the RmlUi
+    // root body shrink-wraps its content, so CSS-only centering (flex body)
+    // does not work and would also collapse the column layout.
+    const int shellW = std::min(1140, static_cast<int>(width) - 24);
+    const int shellH = std::min(716, static_cast<int>(height) - 24);
+    g_shell->SetProperty("width", Rml::CreateString("%dpx", shellW));
+    g_shell->SetProperty("height", Rml::CreateString("%dpx", shellH));
+    g_shell->SetProperty("left", Rml::CreateString("%dpx",
+        (static_cast<int>(width) - shellW) / 2));
+    g_shell->SetProperty("top", Rml::CreateString("%dpx",
+        (static_cast<int>(height) - shellH) / 2));
 }
 
 void updateDocVisibility(bool menuVisible, bool toolsVisible) {
@@ -6169,13 +6218,10 @@ void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
 }
 
 } // namespace menu_rml
-
-================================================================================
 КОНЕЦ ФАЙЛА: repair/src/menu_rml.cpp
 ================================================================================================================================================================
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/menu_rml_data.h
-================================================================================
 // Design of the embedded menu: RmlUi documents (HTML + RCSS), launcher-style.
 // Kept as raw strings so the DLL stays a single file with no disk access.
 // Colors follow the web launcher: dark background, bright green accent.
@@ -6186,18 +6232,16 @@ body {
     font-family: GAY;
     font-size: 20px;
     color: #e6f2ea;
-    background-color: rgba(4, 8, 6, 0.42);
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    display: block;
 }
 #shell {
+    position: absolute;
     width: 1140px;
     height: 716px;
     display: flex;
     flex-direction: column;
-    background-color: rgba(10, 16, 13, 0.97);
-    border: 1px rgba(58, 232, 130, 0.26);
+    background-color: #0a100df7;
+    border: 1px #3ae88242;
     border-radius: 18px;
 }
 #titlebar {
@@ -6206,7 +6250,7 @@ body {
     flex-direction: row;
     align-items: center;
     padding: 0 22px;
-    border-bottom: 1px rgba(255, 255, 255, 0.05);
+    border-bottom: 1px #ffffff0d;
 }
 #brand {
     font-size: 27px;
@@ -6220,7 +6264,7 @@ body {
     letter-spacing: 1px;
     color: #3ae882;
 }
-#brand-sub {
+#brand-sub, #brand-ver {
     margin-left: 14px;
     margin-top: 6px;
     font-size: 13px;
@@ -6233,8 +6277,8 @@ body {
     height: 36px;
     font-size: 20px;
     color: #7e9889;
-    background-color: rgba(255, 255, 255, 0.03);
-    border: 1px rgba(255, 255, 255, 0.07);
+    background-color: #ffffff08;
+    border: 1px #ffffff12;
     border-radius: 10px;
     text-align: center;
     vertical-align: middle;
@@ -6243,11 +6287,12 @@ body {
     transition: background-color 0.12s, color 0.12s;
 }
 .iconbtn:hover {
-    background-color: rgba(255, 90, 90, 0.14);
+    background-color: #ff5a5a24;
     color: #ff9c9c;
-    border-color: rgba(255, 90, 90, 0.35);
+    border-color: #ff5a5a59;
 }
 #layout {
+    flex-basis: 0px;
     flex-grow: 1;
     display: flex;
     flex-direction: row;
@@ -6257,7 +6302,7 @@ body {
     display: flex;
     flex-direction: column;
     padding: 16px 12px;
-    border-right: 1px rgba(255, 255, 255, 0.05);
+    border-right: 1px #ffffff0d;
 }
 .nav-label {
     font-size: 11px;
@@ -6280,11 +6325,11 @@ body {
     transition: background-color 0.13s, color 0.13s;
 }
 .nav-item:hover {
-    background-color: rgba(255, 255, 255, 0.045);
+    background-color: #ffffff0b;
     color: #d7e8dd;
 }
 .nav-item.active {
-    background-color: rgba(58, 232, 130, 0.10);
+    background-color: #3ae8821a;
     color: #eafff1;
 }
 .nav-bar {
@@ -6315,7 +6360,7 @@ body {
     font-weight: bold;
     color: #06240f;
     background-color: #3ae882;
-    border: 1px rgba(255, 255, 255, 0.22);
+    border: 1px #ffffff38;
     border-radius: 12px;
     text-align: center;
     cursor: pointer;
@@ -6325,40 +6370,45 @@ body {
 .greenbtn:active { background-color: #2cc06c; }
 #content {
     flex-grow: 1;
-    display: flex;
-    flex-direction: column;
+    display: block;
     padding: 20px 22px;
     overflow-y: auto;
 }
 #content scrollbarvertical { width: 10px; }
 #content scrollbarvertical slidertrack {
-    background-color: rgba(255, 255, 255, 0.04);
+    background-color: #ffffff0a;
     border-radius: 5px;
 }
 #content scrollbarvertical sliderbar {
     width: 8px;
     border-radius: 4px;
-    background-color: rgba(58, 232, 130, 0.45);
+    background-color: #3ae88273;
 }
 .panel { display: none; }
 .panel.selected { display: block; }
 .card {
+    display: block;
     padding: 8px 18px 14px 18px;
     margin-bottom: 14px;
-    background-color: rgba(255, 255, 255, 0.028);
-    border: 1px rgba(255, 255, 255, 0.06);
+    background-color: #ffffff07;
+    border: 1px #ffffff0f;
     border-radius: 14px;
 }
 .card-title {
+    display: block;
     font-size: 22px;
     font-weight: bold;
     color: #f0f8f3;
     padding: 12px 0 2px 0;
 }
 .card-sub {
+    display: block;
     font-size: 14px;
     color: #7e9889;
     padding-bottom: 8px;
+}
+.section {
+    display: block;
 }
 .section-head {
     height: 46px;
@@ -6370,7 +6420,7 @@ body {
     padding: 0 6px;
     transition: background-color 0.12s;
 }
-.section-head:hover { background-color: rgba(255, 255, 255, 0.035); }
+.section-head:hover { background-color: #ffffff09; }
 .section-title {
     font-size: 15px;
     font-weight: bold;
@@ -6384,7 +6434,7 @@ body {
     transition: transform 0.15s;
 }
 .section.collapsed .caret { transform: rotate(-90deg); }
-.section-body { padding: 2px 0 6px 0; }
+.section-body { display: block; padding: 2px 0 6px 0; }
 .section.collapsed .section-body { display: none; }
 .module-row {
     height: 60px;
@@ -6395,7 +6445,7 @@ body {
     border-radius: 11px;
     transition: background-color 0.12s;
 }
-.module-row:hover { background-color: rgba(255, 255, 255, 0.03); }
+.module-row:hover { background-color: #ffffff08; }
 .m-chip {
     width: 40px;
     height: 40px;
@@ -6403,18 +6453,18 @@ body {
     font-size: 20px;
     font-weight: bold;
     color: #3ae882;
-    background-color: rgba(58, 232, 130, 0.10);
+    background-color: #3ae8821a;
     text-align: center;
     line-height: 40px;
 }
-.m-text { flex-grow: 1; padding-left: 14px; }
-.m-name { font-size: 20px; color: #e9f4ed; }
-.m-desc { font-size: 14px; color: #7e9889; margin-top: 1px; }
+.m-text { display: block; flex-grow: 1; padding-left: 14px; }
+.m-name { display: block; font-size: 20px; color: #e9f4ed; }
+.m-desc { display: block; font-size: 14px; color: #7e9889; margin-top: 1px; }
 .switch {
     position: relative;
     width: 58px;
     height: 32px;
-    border: 1px rgba(255, 255, 255, 0.08);
+    border: 1px #ffffff14;
     border-radius: 16px;
     background-color: #20281f;
     cursor: pointer;
@@ -6431,8 +6481,8 @@ body {
     transition: left 0.16s, background-color 0.16s;
 }
 .switch.on {
-    background-color: rgba(58, 232, 130, 0.24);
-    border-color: rgba(58, 232, 130, 0.55);
+    background-color: #3ae8823d;
+    border-color: #3ae8828c;
 }
 .switch.on .knob {
     left: 29px;
@@ -6447,7 +6497,7 @@ body {
     border-radius: 9px;
     transition: background-color 0.12s;
 }
-.slider-row:hover { background-color: rgba(255, 255, 255, 0.025); }
+.slider-row:hover { background-color: #ffffff06; }
 .slider-label { width: 300px; font-size: 18px; color: #cfe3d6; }
 .slider-label small { font-size: 13px; color: #7e9889; }
 input[type="range"] {
@@ -6484,7 +6534,7 @@ input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
     height: 26px;
     margin-left: 10px;
     border-radius: 7px;
-    border: 1px rgba(255, 255, 255, 0.18);
+    border: 1px #ffffff2e;
 }
 .note {
     font-size: 15px;
@@ -6496,8 +6546,8 @@ input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
     font-size: 12px;
     letter-spacing: 1px;
     color: #3ae882;
-    background-color: rgba(58, 232, 130, 0.10);
-    border: 1px rgba(58, 232, 130, 0.25);
+    background-color: #3ae8821a;
+    border: 1px #3ae88240;
     border-radius: 7px;
     padding: 2px 8px;
     margin-left: 10px;
@@ -6528,7 +6578,7 @@ static const char kMenuRml[] = R"RML(
         <div id="brand">GAY<span id="brand-accent">CLIENT</span></div>
         <div id="brand-sub">GAME MENU · BEDROCK 1.1.5</div>
         <div id="title-flex"/>
-        <div id="brand-sub">v1.2</div>
+        <div id="brand-ver">v1.2</div>
         <button class="iconbtn" id="btn-close">&#215;</button>
     </div>
     <div id="layout">
@@ -6722,8 +6772,8 @@ body {
     left: 18px;
     top: 240px;
     width: 360px;
-    background-color: rgba(10, 16, 13, 0.96);
-    border: 1px rgba(58, 232, 130, 0.30);
+    background-color: #0a100df5;
+    border: 1px #3ae8824c;
     border-radius: 14px;
     drag: drag;
 }
@@ -6733,14 +6783,14 @@ body {
     flex-direction: row;
     align-items: center;
     padding: 0 14px;
-    border-bottom: 1px rgba(255, 255, 255, 0.06);
+    border-bottom: 1px #ffffff0f;
     font-size: 15px;
     font-weight: bold;
     letter-spacing: 1px;
     color: #9fb8a9;
     cursor: move;
 }
-#tt-body { padding: 10px 14px 14px 14px; }
+#tt-body { display: block; padding: 10px 14px 14px 14px; }
 #tt-status { font-size: 17px; color: #3ae882; padding-bottom: 4px; }
 #tt-diag { font-size: 13px; color: #7e9889; padding-bottom: 8px; }
 .tt-row {
@@ -6769,7 +6819,7 @@ input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
     height: 0px;
 }
 .tt-val { width: 62px; text-align: right; font-size: 15px; color: #9fb8a9; }
-.tt-head-label { font-size: 13px; letter-spacing: 1.5px; color: #69816f; padding-top: 6px; }
+.tt-head-label { display: block; font-size: 13px; letter-spacing: 1.5px; color: #69816f; padding-top: 6px; }
 )RCSS";
 
 static const char kTestToolsRml[] = R"RML(
@@ -6804,8 +6854,6 @@ static const char kTestToolsRml[] = R"RML(
 </body>
 </rml>
 )RML";
-
-================================================================================
 КОНЕЦ ФАЙЛА: repair/src/menu_rml_data.h
 ================================================================================================================================================================
 
