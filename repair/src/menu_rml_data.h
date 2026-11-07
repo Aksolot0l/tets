@@ -7,7 +7,7 @@ static const char kMenuRcss[] = R"RCSS(
 body {
     font-family: GAY;
     font-size: 20px;
-    color: #e6f2ea;
+    color: #f0f8f3;
     display: block;
 }
 #shell {
@@ -16,8 +16,9 @@ body {
     height: 716px;
     display: flex;
     flex-direction: column;
-    background-color: #0a100df7;
-    border: 1px #3ae88242;
+    background-color: #06110bf7;
+    decorator: linear-gradient(160deg, #101e15f7, #050c08fd);
+    border: 1px #6ef58c42;
     border-radius: 18px;
 }
 #titlebar {
@@ -32,27 +33,27 @@ body {
     font-size: 27px;
     font-weight: bold;
     letter-spacing: 1px;
-    color: #f2fbf5;
+    color: #f4fff6;
 }
 #brand-accent {
     font-size: 27px;
     font-weight: bold;
     letter-spacing: 1px;
-    color: #3ae882;
+    color: #6ef58c;
 }
 #brand-sub, #brand-ver {
     margin-left: 14px;
     margin-top: 6px;
     font-size: 13px;
     letter-spacing: 2px;
-    color: #7e9889;
+    color: #89a792;
 }
 #title-flex { flex-grow: 1; }
 .iconbtn {
     width: 36px;
     height: 36px;
     font-size: 20px;
-    color: #7e9889;
+    color: #89a792;
     background-color: #ffffff08;
     border: 1px #ffffff12;
     border-radius: 10px;
@@ -83,7 +84,7 @@ body {
 .nav-label {
     font-size: 11px;
     letter-spacing: 2px;
-    color: #69816f;
+    color: #5f7a68;
     padding: 6px 12px;
 }
 .nav-item {
@@ -96,17 +97,18 @@ body {
     margin-bottom: 4px;
     border-radius: 11px;
     font-size: 19px;
-    color: #8fa697;
+    color: #8aa793;
     cursor: pointer;
     transition: background-color 0.13s, color 0.13s;
 }
 .nav-item:hover {
     background-color: #ffffff0b;
-    color: #d7e8dd;
+    color: #e2f8e7;
 }
 .nav-item.active {
-    background-color: #3ae8821a;
-    color: #eafff1;
+    background-color: #6ef58c1a;
+    decorator: linear-gradient(90deg, #6ef58c2b, #6ef58c0b);
+    color: #f2fff5;
 }
 .nav-bar {
     position: absolute;
@@ -115,7 +117,7 @@ body {
     width: 3px;
     height: 24px;
     border-radius: 2px;
-    background-color: #3ae882;
+    background-color: #6ef58c;
     opacity: 0;
     transition: opacity 0.15s;
 }
@@ -128,22 +130,23 @@ body {
     background-color: #3d4a43;
     transition: background-color 0.15s;
 }
-.nav-item.active .nav-dot { background-color: #3ae882; }
+.nav-item.active .nav-dot { background-color: #6ef58c; }
 #nav-flex { flex-grow: 1; }
 .greenbtn {
     height: 48px;
     font-size: 18px;
     font-weight: bold;
-    color: #06240f;
-    background-color: #3ae882;
-    border: 1px #ffffff38;
+    color: #05230f;
+    background-color: #6ef58c;
+    decorator: linear-gradient(180deg, #c4ff62, #6ef58c 52%, #2fa960);
+    border: 1px #e2ffc366;
     border-radius: 12px;
     text-align: center;
     cursor: pointer;
     transition: background-color 0.13s;
 }
-.greenbtn:hover { background-color: #63f59d; }
-.greenbtn:active { background-color: #2cc06c; }
+.greenbtn:hover { decorator: linear-gradient(180deg, #d9ff92, #83f5a5 52%, #3db870); }
+.greenbtn:active { decorator: linear-gradient(180deg, #b9ea63, #64d681 52%, #2b9a57); }
 #content {
     flex-grow: 1;
     display: block;
@@ -158,7 +161,7 @@ body {
 #content scrollbarvertical sliderbar {
     width: 8px;
     border-radius: 4px;
-    background-color: #3ae88273;
+    background-color: #6ef58c73;
 }
 .panel { display: none; }
 .panel.selected { display: block; }
@@ -167,6 +170,7 @@ body {
     padding: 8px 18px 14px 18px;
     margin-bottom: 14px;
     background-color: #ffffff07;
+    decorator: linear-gradient(155deg, #101e15d9, #08110cf2);
     border: 1px #ffffff0f;
     border-radius: 14px;
 }
@@ -180,7 +184,7 @@ body {
 .card-sub {
     display: block;
     font-size: 14px;
-    color: #7e9889;
+    color: #89a792;
     padding-bottom: 8px;
 }
 .section {
@@ -201,11 +205,11 @@ body {
     font-size: 15px;
     font-weight: bold;
     letter-spacing: 1.5px;
-    color: #9fb8a9;
+    color: #a5c5ae;
 }
 .caret {
     font-size: 13px;
-    color: #69816f;
+    color: #5f7a68;
     margin-left: 8px;
     transition: transform 0.15s;
 }
@@ -228,21 +232,21 @@ body {
     border-radius: 11px;
     font-size: 20px;
     font-weight: bold;
-    color: #3ae882;
-    background-color: #3ae8821a;
+    color: #6ef58c;
+    background-color: #6ef58c1a;
     text-align: center;
     line-height: 40px;
 }
 .m-text { display: block; flex-grow: 1; padding-left: 14px; }
-.m-name { display: block; font-size: 20px; color: #e9f4ed; }
-.m-desc { display: block; font-size: 14px; color: #7e9889; margin-top: 1px; }
+.m-name { display: block; font-size: 20px; color: #e9f5ec; }
+.m-desc { display: block; font-size: 14px; color: #89a792; margin-top: 1px; }
 .switch {
     position: relative;
     width: 58px;
     height: 32px;
     border: 1px #ffffff14;
     border-radius: 16px;
-    background-color: #20281f;
+    background-color: #182419;
     cursor: pointer;
     transition: background-color 0.16s, border-color 0.16s;
 }
@@ -257,12 +261,13 @@ body {
     transition: left 0.16s, background-color 0.16s;
 }
 .switch.on {
-    background-color: #3ae8823d;
-    border-color: #3ae8828c;
+    background-color: #6ef58c3d;
+    decorator: linear-gradient(90deg, #2fa960, #6ef58c);
+    border-color: #6ef58c8c;
 }
 .switch.on .knob {
     left: 29px;
-    background-color: #3ae882;
+    background-color: #6ef58c;
 }
 .slider-row {
     height: 44px;
@@ -275,7 +280,7 @@ body {
 }
 .slider-row:hover { background-color: #ffffff06; }
 .slider-label { width: 300px; font-size: 18px; color: #cfe3d6; }
-.slider-label small { font-size: 13px; color: #7e9889; }
+.slider-label small { font-size: 13px; color: #89a792; }
 input[type="range"] {
     width: 260px;
     height: 26px;
@@ -283,7 +288,7 @@ input[type="range"] {
 input[type="range"] slidertrack {
     height: 6px;
     margin-top: 10px;
-    background-color: #1d221f;
+    background-color: #151f18;
     border-radius: 3px;
 }
 input[type="range"] sliderbar {
@@ -291,10 +296,10 @@ input[type="range"] sliderbar {
     height: 18px;
     top: -6px;
     border-radius: 9px;
-    background-color: #3ae882;
+    background-color: #6ef58c;
     transition: background-color 0.1s;
 }
-input[type="range"] sliderbar:hover { background-color: #7bf5a8; }
+input[type="range"] sliderbar:hover { background-color: #c4ff62; }
 input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
     width: 0px;
     height: 0px;
@@ -303,7 +308,7 @@ input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
     width: 86px;
     text-align: right;
     font-size: 17px;
-    color: #9fb8a9;
+    color: #a5c5ae;
 }
 .color-chip {
     width: 26px;
@@ -314,16 +319,16 @@ input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
 }
 .note {
     font-size: 15px;
-    color: #7e9889;
+    color: #89a792;
     padding: 6px 4px 10px 4px;
 }
 .tag {
     display: inline-block;
     font-size: 12px;
     letter-spacing: 1px;
-    color: #3ae882;
-    background-color: #3ae8821a;
-    border: 1px #3ae88240;
+    color: #6ef58c;
+    background-color: #6ef58c1a;
+    border: 1px #6ef58c40;
     border-radius: 7px;
     padding: 2px 8px;
     margin-left: 10px;
@@ -335,10 +340,10 @@ input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
     height: 34px;
     font-size: 18px;
 }
-.info-key { width: 320px; color: #8fa697; }
-.info-val { color: #e9f4ed; }
+.info-key { width: 320px; color: #8aa793; }
+.info-val { color: #e9f5ec; }
 .danger { color: #ff8a8a; }
-.ok { color: #3ae882; }
+.ok { color: #6ef58c; }
 )RCSS";
 
 static const char kMenuRml[] = R"RML(
@@ -541,15 +546,16 @@ static const char kTestToolsRcss[] = R"RCSS(
 body {
     font-family: GAY;
     font-size: 17px;
-    color: #e6f2ea;
+    color: #f0f8f3;
 }
 #tt {
     position: absolute;
     left: 18px;
     top: 240px;
     width: 360px;
-    background-color: #0a100df5;
-    border: 1px #3ae8824c;
+    background-color: #06110bf5;
+    decorator: linear-gradient(160deg, #101e15f5, #050c08fa);
+    border: 1px #6ef58c4c;
     border-radius: 14px;
     drag: drag;
 }
@@ -563,12 +569,12 @@ body {
     font-size: 15px;
     font-weight: bold;
     letter-spacing: 1px;
-    color: #9fb8a9;
+    color: #a5c5ae;
     cursor: move;
 }
 #tt-body { display: block; padding: 10px 14px 14px 14px; }
-#tt-status { font-size: 17px; color: #3ae882; padding-bottom: 4px; }
-#tt-diag { font-size: 13px; color: #7e9889; padding-bottom: 8px; }
+#tt-status { font-size: 17px; color: #6ef58c; padding-bottom: 4px; }
+#tt-diag { font-size: 13px; color: #89a792; padding-bottom: 8px; }
 .tt-row {
     height: 38px;
     display: flex;
@@ -580,7 +586,7 @@ input[type="range"] { width: 130px; height: 24px; }
 input[type="range"] slidertrack {
     height: 5px;
     margin-top: 9px;
-    background-color: #1d221f;
+    background-color: #151f18;
     border-radius: 3px;
 }
 input[type="range"] sliderbar {
@@ -588,14 +594,14 @@ input[type="range"] sliderbar {
     height: 15px;
     top: -5px;
     border-radius: 8px;
-    background-color: #3ae882;
+    background-color: #6ef58c;
 }
 input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
     width: 0px;
     height: 0px;
 }
-.tt-val { width: 62px; text-align: right; font-size: 15px; color: #9fb8a9; }
-.tt-head-label { display: block; font-size: 13px; letter-spacing: 1.5px; color: #69816f; padding-top: 6px; }
+.tt-val { width: 62px; text-align: right; font-size: 15px; color: #a5c5ae; }
+.tt-head-label { display: block; font-size: 13px; letter-spacing: 1.5px; color: #5f7a68; padding-top: 6px; }
 )RCSS";
 
 static const char kTestToolsRml[] = R"RML(

@@ -152,7 +152,9 @@ assert 'first frame complete' in m
 # 11. The markup keeps the launcher look: big shell, accent color, animations.
 assert '1140px' in d and '716px' in d
 assert 'std::min(1140, static_cast<int>(width) - 24)' in m
-assert '#3ae882' in d and 'transition:' in d
+assert '#6ef58c' in d and 'transition:' in d
+assert 'decorator: linear-gradient(' in d
+assert '#3ae882' not in d
 assert 'font-size: 20px' in d
 
 # 12. RmlUi 6.x rendering pitfalls found via the software-rasterizer repro
