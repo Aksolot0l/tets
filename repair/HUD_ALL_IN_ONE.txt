@@ -5313,6 +5313,7 @@ bool ConsumeHudEditorRequest();
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstdarg>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -5327,6 +5328,7 @@ bool ConsumeHudEditorRequest();
 #include <RmlUi/Core/EventListener.h>
 #include <RmlUi/Core/Input.h>
 #include <RmlUi/Core/StringUtilities.h>
+#include <RmlUi/Core/SystemInterface.h>
 #include <RmlUi/Core/Types.h>
 
 #include "RmlUi_Renderer_DX11.h"
@@ -5407,6 +5409,49 @@ std::vector<char> g_fontNormal;
 std::vector<char> g_fontBold;
 
 float clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+
+// ---------------------------------------------------------------------------
+// Diagnostic log: appended next to this DLL as gayclient-menu.log, so init
+// failures and RmlUi parse errors are diagnosable on the user's machine
+// without a debugger.
+// ---------------------------------------------------------------------------
+
+std::mutex g_logMutex;
+
+void menuLog(const char* format, ...) {
+    char path[MAX_PATH] = {};
+    HMODULE module = nullptr;
+    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCSTR>(&menuLog), &module) || !module)
+        return;
+    const DWORD length = GetModuleFileNameA(module, path, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) return;
+    char* slash = std::strrchr(path, '\\');
+    if (!slash) return;
+    std::snprintf(slash + 1, MAX_PATH - (slash + 1 - path), "gayclient-menu.log");
+    char text[512];
+    va_list args;
+    va_start(args, format);
+    const int written = std::vsnprintf(text, sizeof(text) - 1, format, args);
+    va_end(args);
+    if (written <= 0) return;
+    std::lock_guard<std::mutex> lock(g_logMutex);
+    if (std::FILE* file = std::fopen(path, "a")) {
+        std::fprintf(file, "[%10u] %s\n", GetTickCount(), text);
+        std::fclose(file);
+    }
+}
+
+// Routes RmlUi's own log (font/document/RCSS/render errors) into the file.
+class MenuSystemInterface : public Rml::SystemInterface {
+public:
+    bool LogMessage(Rml::Log::Type type, const Rml::String& message) override {
+        menuLog("rmlui(%d): %s", static_cast<int>(type), message.c_str());
+        return true;
+    }
+};
+MenuSystemInterface g_systemInterface;
 
 // Menu percentages (0..100) to the adapter parameter ranges.
 float percentToRange(float percent, float low, float high) {
@@ -5813,36 +5858,75 @@ bool buildRegistry() {
 }
 
 bool initBackend(ID3D11Device* device, unsigned width, unsigned height) {
+    menuLog("init: begin, viewport %ux%u", width, height);
     // Segoe UI covers Cyrillic and is present on every Windows install; the
     // buffers must outlive Rml::Shutdown, so they are file-scope vectors.
-    if (!loadFontBuffer("C:/Windows/Fonts/segoeui.ttf", g_fontNormal)) return false;
-    if (!loadFontBuffer("C:/Windows/Fonts/segoeuib.ttf", g_fontBold)) return false;
+    if (!loadFontBuffer("C:/Windows/Fonts/segoeui.ttf", g_fontNormal)) {
+        menuLog("init: FAILED, C:/Windows/Fonts/segoeui.ttf unreadable");
+        return false;
+    }
+    if (!loadFontBuffer("C:/Windows/Fonts/segoeuib.ttf", g_fontBold)) {
+        menuLog("init: FAILED, C:/Windows/Fonts/segoeuib.ttf unreadable");
+        return false;
+    }
+    menuLog("init: fonts read, %zu + %zu bytes", g_fontNormal.size(), g_fontBold.size());
 
     g_renderer = new RenderInterface_DX11(device);
     if (!g_renderer) return false;
     Rml::SetRenderInterface(g_renderer);
-    // Default system and file interfaces are installed by Initialise(); they
-    // are only used for elapsed time and are never replaced here.
-    if (!Rml::Initialise()) return false;
+    // The custom system interface only routes RmlUi log messages into
+    // gayclient-menu.log; everything else (elapsed time) stays default.
+    Rml::SetSystemInterface(&g_systemInterface);
+    // The renderer's internal viewport defaults to zero; without this call
+    // BeginFrame would build 0x0 render targets and nothing would show.
+    g_renderer->SetViewport(static_cast<int>(width), static_cast<int>(height));
+    if (!Rml::Initialise()) {
+        menuLog("init: FAILED, Rml::Initialise returned false");
+        return false;
+    }
+    menuLog("init: Rml::Initialise ok");
     g_rmlContext = Rml::CreateContext("gayclient", Rml::Vector2i(static_cast<int>(width),
                                                                  static_cast<int>(height)));
-    if (!g_rmlContext) return false;
+    if (!g_rmlContext) {
+        menuLog("init: FAILED, CreateContext returned null");
+        return false;
+    }
+    menuLog("init: context created");
 
     if (!Rml::LoadFontFace(Rml::Span<const Rml::byte>(
             reinterpret_cast<const Rml::byte*>(g_fontNormal.data()), g_fontNormal.size()),
-            "GAY", Rml::Style::FontStyle::Normal, Rml::Style::FontWeight::Auto, true))
+            "GAY", Rml::Style::FontStyle::Normal, Rml::Style::FontWeight::Auto, true)) {
+        menuLog("init: FAILED, LoadFontFace (regular)");
         return false;
+    }
     if (!Rml::LoadFontFace(Rml::Span<const Rml::byte>(
             reinterpret_cast<const Rml::byte*>(g_fontBold.data()), g_fontBold.size()),
-            "GAY", Rml::Style::FontStyle::Normal, Rml::Style::FontWeight::Bold, true))
+            "GAY", Rml::Style::FontStyle::Normal, Rml::Style::FontWeight::Bold, true)) {
+        menuLog("init: FAILED, LoadFontFace (bold)");
         return false;
+    }
+    menuLog("init: font faces loaded");
 
     g_menuDoc = loadDocumentWithStyle(g_rmlContext, kMenuRml, kMenuRcss, "gayclient-menu.rml");
+    if (!g_menuDoc) {
+        menuLog("init: FAILED, menu document did not parse");
+        return false;
+    }
     g_ttDoc = loadDocumentWithStyle(g_rmlContext, kTestToolsRml, kTestToolsRcss, "gayclient-tt.rml");
-    if (!g_menuDoc || !g_ttDoc) return false;
-    if (!buildRegistry()) return false;
+    if (!g_ttDoc) {
+        menuLog("init: FAILED, test tools document did not parse");
+        return false;
+    }
+    menuLog("init: documents parsed");
+    if (!buildRegistry()) {
+        menuLog("init: FAILED, element registry incomplete (%zu switches, %zu sliders)",
+                g_switchElems.size(), g_sliderElems.size());
+        return false;
+    }
     g_width = width;
     g_height = height;
+    menuLog("init: complete, %zu switches, %zu sliders",
+            g_switchElems.size(), g_sliderElems.size());
     return true;
 }
 
@@ -6080,14 +6164,15 @@ void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
     // and restores the DirectX state it changed, so the game's own Present
     // path is untouched.
     g_renderer->EndFrame(rtv);
-    g_renderOk.store(true, std::memory_order_relaxed);
+    if (!g_renderOk.exchange(true, std::memory_order_relaxed))
+        menuLog("render: first frame complete, new menu is now live");
 }
 
 } // namespace menu_rml
 
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/menu_rml.cpp
-================================================================================
+================================================================================================================================================================
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/menu_rml_data.h
 ================================================================================

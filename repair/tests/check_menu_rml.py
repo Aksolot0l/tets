@@ -121,13 +121,33 @@ assert 'g_ttStatusCache != status' not in m and 'if (status != g_ttStatusCache)'
 assert 'id="tt"' in d and 'drag: drag;' in d and 'tt-status' in d and 'tt-diag' in d
 
 # 10. Build script discipline: static RmlUi without export leaks, the DX11
-#     renderer with non-multisampled targets, the minimal FreeType module set.
+#     renderer with non-multisampled targets, the FreeType font engine
+#     actually compiled in, the minimal FreeType module set.
 assert '"-DRMLUI_STATIC_LIB"' in b
 assert 'RMLUI_CORE_EXPORTS' not in b.replace('without -DRMLUI_CORE_EXPORTS', '')
+assert '"-DRMLUI_FONT_ENGINE_FREETYPE"' in b
 assert '"-DNUM_MSAA_SAMPLES=0"' in b
 assert 'ftmodule.h' in b and 'ftgzip.c' in b and 'ftmm.c' in b
 assert 'menu_rml.cpp' in b and 'menu_embed.cpp' not in b
 assert 'GAYClientInternal.dll' in b
+
+# 10b. Init bugs found on the first user run must stay fixed: the viewport is
+# set before the first BeginFrame (the renderer defaults to 0x0 targets), and
+# every early return in initBackend logs its reason to gayclient-menu.log
+# through the custom SystemInterface (which also captures RmlUi's own
+# messages, e.g. RCSS parse errors).
+assert 'g_renderer->SetViewport(static_cast<int>(width), static_cast<int>(height));' in m
+assert m.index('g_renderer->SetViewport') < m.index('Rml::Initialise()')
+assert 'Rml::SetSystemInterface(&g_systemInterface);' in m
+assert m.index('Rml::SetSystemInterface(&g_systemInterface);') < m.index('Rml::Initialise()')
+assert 'bool LogMessage(Rml::Log::Type type, const Rml::String& message) override' in m
+assert 'gayclient-menu.log' in m
+for step in ('segoeui.ttf unreadable', 'Rml::Initialise returned false',
+             'CreateContext returned null', 'LoadFontFace (regular)',
+             'menu document did not parse', 'test tools document did not parse',
+             'element registry incomplete', 'init: complete'):
+    assert step in m, step
+assert 'first frame complete' in m
 
 # 11. The markup keeps the launcher look: big shell, accent color, animations.
 assert '1140px' in d and '716px' in d

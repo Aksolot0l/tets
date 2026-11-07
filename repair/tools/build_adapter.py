@@ -12,6 +12,9 @@ Notes mirrored from the vendored sources:
   - RmlUi is compiled statically with -DRMLUI_STATIC_LIB so RMLUICORE_API
     is empty: no dllimport mismatches and no Rml exports leak into the DLL
     export table, which keeps exactly GAYClientConnectWheel.
+  - -DRMLUI_FONT_ENGINE_FREETYPE compiles in the default FreeType font
+    engine; without it Rml::Initialise() fails ("No font engine interface
+    set!") and the menu silently falls back to the legacy interface.
   - -DNUM_MSAA_SAMPLES=0 makes the DX11 renderer create plain TEXTURE2D
     render targets, matching its own post-process path; with samples=1 the
     view dimension (TEXTURE2DMS) would not match the non-multisampled
@@ -46,7 +49,7 @@ FREETYPE_FLAGS = [
 
 RMLUI_FLAGS = [
     "-std=c++17", "-c", "-O1", "-DNOMINMAX", "-DWIN32_LEAN_AND_MEAN",
-    "-DRMLUI_STATIC_LIB", "-DNUM_MSAA_SAMPLES=0",
+    "-DRMLUI_STATIC_LIB", "-DRMLUI_FONT_ENGINE_FREETYPE", "-DNUM_MSAA_SAMPLES=0",
     f"-I{VENDOR}{os.sep}rmlui{os.sep}Include",
     f"-I{VENDOR}{os.sep}rmlui{os.sep}Source",
     f"-I{VENDOR}{os.sep}rmlui{os.sep}Backends",

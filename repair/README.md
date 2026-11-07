@@ -216,6 +216,8 @@ python3 repair/src/patch_client.py
 `menu_mouse_native.cpp`, `menu_rml.cpp`), и линкует
 `repair/GAYClientInternal.dll`. Ключевые флаги: `-DRMLUI_STATIC_LIB`
 (RMLUICORE_API пуст — ни dllimport-ошибок, ни лишних экспортов из DLL),
+`-DRMLUI_FONT_ENGINE_FREETYPE` (без него `Rml::Initialise()` возвращает false
+— «No font engine interface set!» — и меню молча уходит в легаси-фолбэк),
 `-DNUM_MSAA_SAMPLES=0` (рендерер создаёт обычные TEXTURE2D-таргеты, как его
 собственный постпроцесс-путь; при 1 измерение вида TEXTURE2DMS не совпало бы
 с одновыборочной текстурой и создание таргета падало бы). Объектники
