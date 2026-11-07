@@ -79,6 +79,13 @@ assert 'SetTrailFillEnabled(on)' in m and 'SetTrailRainbowEnabled(on)' in m
 assert 'SetJumpRainbowEnabled(on)' in m
 assert 'SetVisualParam(m_def->param, paramFromDom(*m_def, dom));' in m
 assert 'percentToRange(dom, 0.03f, 0.80f)' in m
+# v8: slider ranges are enforced from the parameter specs, otherwise the
+# per-frame write-back snaps the knob back mid-drag (dead sliders).
+assert 'const auto& spec = visualParamSpecs[static_cast<std::size_t>(def.param)];' in m
+assert 'input->SetAttribute("min", spec.low);' in m
+assert 'input->SetAttribute("max", spec.high);' in m
+assert 'input->SetAttribute("min", spec.low * 100.0f);' in m
+assert 'input->SetAttribute("step", (spec.high - spec.low) / 100.0f);' in m
 
 # 7. The DOM registry covers every interactive element.
 for switch_id in ('sw-fps', 'sw-cps', 'sw-clock', 'sw-keys', 'sw-watermark',
@@ -229,6 +236,13 @@ for pair in ('id="sec-ch"... id="sw-gfx-chinahat"', 'id="sec-tr"... id="sw-gfx-t
     head = re.search(re.escape(sec) + r'.*?<div class="sec-head">(.*?)</div>', d, re.S)
     assert head and sw in head.group(1), pair
 assert 'Включить' not in d  # the duplicate enable rows are gone from bodies
+# v8 markup ranges mirror the adapter parameter specs (the enforcement in
+# menu_rml.cpp keeps them honest at runtime; these are the previously
+# broken ones)
+assert 'id="sl-ch-radius" min="0.3" max="1"' in d
+assert 'id="sl-kt-scale" min="0.02" max="0.1"' in d
+assert 'id="sl-kt-opacity" min="30" max="100"' in d
+assert 'id="sl-ch-offset" min="-0.2" max="0.4"' in d
 # no icon machinery, no section count captions
 for gone in ('.m-ico', '.ip ', 'class="ip', '.sec-count', 'body.anim'):
     assert gone not in d, gone

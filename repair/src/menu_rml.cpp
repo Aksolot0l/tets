@@ -822,6 +822,32 @@ bool buildRegistry() {
         g_switchElems.push_back(item);
     }
 
+    // Slider ranges must mirror the adapter's parameter specs exactly. The
+    // DOM value is written back every frame (syncSliders), so any mismatch
+    // between the slider range and the sanitized parameter range makes the
+    // knob snap back mid-drag: the "dead sliders" bug. The markup carries
+    // the same numbers; this enforces them from the single source of truth.
+    for (const SliderDef& def : kSliders) {
+        Rml::Element* input = g_menuDoc->GetElementById(def.id);
+        if (!input) continue;
+        const auto& spec = visualParamSpecs[static_cast<std::size_t>(def.param)];
+        if (def.scale == SlScale::Direct) {
+            input->SetAttribute("min", spec.low);
+            input->SetAttribute("max", spec.high);
+            input->SetAttribute("step", (spec.high - spec.low) / 100.0f);
+        } else if (def.scale == SlScale::Percent) {
+            // Percent params live on the spec's 0..1 range; the katana
+            // opacity for example cannot go below 0.30.
+            input->SetAttribute("min", spec.low * 100.0f);
+            input->SetAttribute("max", spec.high * 100.0f);
+            input->SetAttribute("step", 1.0f);
+        } else {
+            input->SetAttribute("min", 0.0f);
+            input->SetAttribute("max", 100.0f);
+            input->SetAttribute("step", 1.0f);
+        }
+    }
+
     for (const SliderDef& def : kSliders) {
         Rml::Element* input = g_menuDoc->GetElementById(def.id);
         if (!input) continue;
