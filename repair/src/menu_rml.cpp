@@ -29,6 +29,7 @@
 #include "RmlUi_Renderer_DX11.h"
 
 #include "china_hat_native.h"
+#include "menu_layout.h"
 #include "menu_rml_data.h"
 #include "settings.h"
 #include "visual_settings.h"
@@ -45,8 +46,10 @@
 //  - maps switches and sliders one-to-one onto the adapter's existing,
 //    verified setters (SetChinaHatEnabled, SetVisualParam, and
 //    ag::Runtime::SetModule through the queued compat bridge);
-//  - keeps the katana/crown diagnostics window as a separate draggable
-//    RmlUi document.
+//  - lays the menu out as independent windows: each window is dragged by its
+//    title bar (RmlUi drag events), folds to its title bar, scrolls inside
+//    when the viewport is small, and the default tiling (menu_layout.h)
+//    never overlaps windows, whatever the number of functions.
 //
 // Failure of anything above only means the new menu stays hidden and the
 // previous interface keeps working.
@@ -90,13 +93,48 @@ bool g_escState = false;
 RenderInterface_DX11* g_renderer = nullptr;
 Rml::Context* g_rmlContext = nullptr;
 Rml::ElementDocument* g_menuDoc = nullptr;
-Rml::ElementDocument* g_ttDoc = nullptr;
-Rml::Element* g_shell = nullptr;
 Rml::Element* g_ttStatus = nullptr;
 Rml::Element* g_ttDiag = nullptr;
 unsigned g_width = 0, g_height = 0;
 bool g_menuShown = false;
-bool g_ttShown = false;
+
+// ---------------------------------------------------------------------------
+// Window manager state: the seven menu windows with their natural sizes and
+// live geometry. Positions are owned here (never read back from the DOM), so
+// dragging and re-tiling cannot desync from what is rendered.
+// ---------------------------------------------------------------------------
+
+struct WinDef {
+    const char* id;
+    const char* headId;
+    float w;
+    float h;
+};
+
+const WinDef kWindows[] = {
+    {"win-home",    "head-home",    300.0f, 750.0f},
+    {"win-visuals", "head-visuals", 300.0f, 390.0f},
+    {"win-ch",      "head-ch",      420.0f, 545.0f},
+    {"win-tr",      "head-tr",      420.0f, 435.0f},
+    {"win-jr",      "head-jr",      420.0f, 395.0f},
+    {"win-kt",      "head-kt",      420.0f, 430.0f},
+    {"win-cr",      "head-cr",      420.0f, 322.0f},
+};
+constexpr int kWindowCount = static_cast<int>(sizeof(kWindows) / sizeof(kWindows[0]));
+constexpr float kFoldedHeight = 46.0f;  // title bar + borders
+
+struct WinState {
+    Rml::Element* el = nullptr;
+    Rml::Element* head = nullptr;
+    float w = 0.0f, h = 0.0f;      // natural size
+    float x = 0.0f, y = 0.0f;      // current position
+    float shownH = 0.0f;           // unfolded height after tiling caps it
+    bool dragged = false;          // user moved it: keep the position
+    bool folded = false;
+    float grabDx = 0.0f, grabDy = 0.0f;
+};
+WinState g_win[kWindowCount];
+int g_zTop = 20;
 std::string g_ttStatusCache;
 std::string g_ttDiagCache;
 
@@ -223,17 +261,10 @@ const SwitchDef kSwitches[] = {
     {"sw-tr-fill", SwKind::TrFill, 0},
     {"sw-tr-rainbow", SwKind::TrRainbow, 0},
     {"sw-jr-rainbow", SwKind::JrRainbow, 0},
-    // HUD tab duplicates.
-    {"hud-sw-fps", SwKind::AgModule, static_cast<int>(ag::ModuleId::Fps)},
-    {"hud-sw-cps", SwKind::AgModule, static_cast<int>(ag::ModuleId::Cps)},
-    {"hud-sw-clock", SwKind::AgModule, static_cast<int>(ag::ModuleId::Clock)},
-    {"hud-sw-keys", SwKind::AgModule, static_cast<int>(ag::ModuleId::Keystrokes)},
-    {"hud-sw-watermark", SwKind::AgModule, static_cast<int>(ag::ModuleId::Watermark)},
-    {"hud-sw-coords", SwKind::AgModule, static_cast<int>(ag::ModuleId::Coordinates)},
-    {"hud-sw-res", SwKind::AgModule, static_cast<int>(ag::ModuleId::Resolution)},
-    {"hud-sw-perf", SwKind::AgModule, static_cast<int>(ag::ModuleId::Cpu)},
-    {"hud-sw-perf", SwKind::AgModule, static_cast<int>(ag::ModuleId::Ram)},
-    {"hud-sw-modlist", SwKind::AgModule, static_cast<int>(ag::ModuleId::ActiveModules)},
+    // Per-window master switches (the Visuals window has its own copies of
+    // the katana/crown toggles under different ids: ids must be unique).
+    {"sw-kt-master", SwKind::Katana, 0},
+    {"sw-cr-master", SwKind::Crown, 0},
 };
 
 const SwitchDef* findSwitch(const Rml::String& id) {
@@ -336,20 +367,6 @@ const SliderDef kSliders[] = {
     {"sl-cr-r", VisualParam::AccessoryRed, SlScale::Direct, "%.2f"},
     {"sl-cr-g", VisualParam::AccessoryGreen, SlScale::Direct, "%.2f"},
     {"sl-cr-b", VisualParam::AccessoryBlue, SlScale::Direct, "%.2f"},
-    // Test tools: katana.
-    {"sl-kt2-scale", VisualParam::KatanaScale, SlScale::Direct, "%.2f"},
-    {"sl-kt2-tilt", VisualParam::KatanaTilt, SlScale::Direct, "%.2f"},
-    {"sl-kt2-side", VisualParam::KatanaSide, SlScale::Direct, "%.2f"},
-    {"sl-kt2-height", VisualParam::KatanaHeight, SlScale::Direct, "%.2f"},
-    {"sl-kt2-forward", VisualParam::KatanaForward, SlScale::Direct, "%.2f"},
-    {"sl-kt2-opacity", VisualParam::KatanaOpacity, SlScale::Direct, "%.2f"},
-    // Test tools: crown.
-    {"sl-cr2-scale", VisualParam::AccessoryScale, SlScale::Direct, "%.2f"},
-    {"sl-cr2-offset", VisualParam::AccessoryOffset, SlScale::Direct, "%.2f"},
-    {"sl-cr2-opacity", VisualParam::AccessoryOpacity, SlScale::Direct, "%.2f"},
-    {"sl-cr2-r", VisualParam::AccessoryRed, SlScale::Direct, "%.2f"},
-    {"sl-cr2-g", VisualParam::AccessoryGreen, SlScale::Direct, "%.2f"},
-    {"sl-cr2-b", VisualParam::AccessoryBlue, SlScale::Direct, "%.2f"},
 };
 
 float domFromParam(const SliderDef& def, float param) {
@@ -426,17 +443,98 @@ public:
 
 MenuClickListener g_clickListener;
 std::vector<std::unique_ptr<SliderChangeListener>> g_sliderListeners;
+std::vector<std::unique_ptr<class WindowListener>> g_winListeners;
 
-void activateTab(const Rml::String& tabId) {
-    static const char* kTabs[] = {"tab-modules", "tab-graphics", "tab-hud", "tab-info"};
-    static const char* kPanels[] = {"panel-modules", "panel-graphics", "panel-hud", "panel-info"};
-    for (int i = 0; i < 4; ++i) {
-        if (Rml::Element* nav = g_menuDoc->GetElementById(kTabs[i]))
-            nav->SetClass("active", tabId == kTabs[i]);
-        if (Rml::Element* panel = g_menuDoc->GetElementById(kPanels[i]))
-            panel->SetClass("selected", tabId == kTabs[i]);
+void applyWin(WinState& win) {
+    if (!win.el) return;
+    win.el->SetProperty("left", Rml::CreateString("%dpx", static_cast<int>(win.x + 0.5f)));
+    win.el->SetProperty("top", Rml::CreateString("%dpx", static_cast<int>(win.y + 0.5f)));
+    win.el->SetProperty("width", Rml::CreateString("%dpx", static_cast<int>(win.w + 0.5f)));
+    win.el->SetProperty("height", Rml::CreateString("%dpx", static_cast<int>(
+        (win.folded ? kFoldedHeight : win.shownH) + 0.5f)));
+}
+
+void focusWin(WinState& win) {
+    for (WinState& other : g_win)
+        if (other.el) other.el->SetClass("focus", &other == &win);
+    win.el->SetProperty("z-index", Rml::CreateString("%d", ++g_zTop));
+}
+
+// Tile the windows from the shared, harness-verified layout math. force
+// re-tilts everything (initial layout, "reset layout" button); otherwise
+// windows the user dragged keep their position and are only clamped back
+// into the viewport.
+void layoutWindows(float viewW, float viewH, bool force) {
+    // The document body carries the dim backdrop; it only paints over the
+    // area its box covers, and with nothing but absolutely-positioned
+    // children that box would be zero-sized. Size it to the viewport.
+    if (Rml::Element* body = g_menuDoc->GetElementById("doc-body")) {
+        body->SetProperty("width", Rml::CreateString("%dpx", static_cast<int>(viewW + 0.5f)));
+        body->SetProperty("height", Rml::CreateString("%dpx", static_cast<int>(viewH + 0.5f)));
+    }
+    float natW[kWindowCount];
+    float natH[kWindowCount];
+    menu_layout::WindowRect rects[kWindowCount];
+    for (int i = 0; i < kWindowCount; ++i) {
+        natW[i] = g_win[i].w;
+        natH[i] = g_win[i].h;
+    }
+    menu_layout::computeMenuWindows(natW, natH, kWindowCount, viewW, viewH, rects);
+    for (int i = 0; i < kWindowCount; ++i) {
+        WinState& win = g_win[i];
+        if (!win.el) continue;
+        if (force || !win.dragged) {
+            if (force) win.dragged = false;
+            win.x = rects[i].x;
+            win.y = rects[i].y;
+        }
+        win.shownH = rects[i].h;
+        menu_layout::WindowRect clamped{win.x, win.y, win.w,
+                                        win.folded ? kFoldedHeight : win.shownH};
+        menu_layout::clampDraggedWindow(clamped, viewW, viewH);
+        win.x = clamped.x;
+        win.y = clamped.y;
+        applyWin(win);
     }
 }
+
+// Title-bar drag + focus. Attached to the window (mousedown: focus, bring to
+// front) and to the title bar (dragstart/drag: move, clamped so the bar can
+// never leave the screen).
+class WindowListener : public Rml::EventListener {
+public:
+    explicit WindowListener(WinState* win) : m_win(win) {}
+
+    void ProcessEvent(Rml::Event& event) override {
+        if (!m_win || !m_win->el) return;
+        const Rml::EventId id = event.GetId();
+        if (id == Rml::EventId::Mousedown) {
+            focusWin(*m_win);
+            return;
+        }
+        if (id == Rml::EventId::Dragstart) {
+            focusWin(*m_win);
+            m_win->grabDx = event.GetParameter<float>("mouse_x", 0.0f) - m_win->x;
+            m_win->grabDy = event.GetParameter<float>("mouse_y", 0.0f) - m_win->y;
+            return;
+        }
+        if (id == Rml::EventId::Drag) {
+            m_win->x = event.GetParameter<float>("mouse_x", 0.0f) - m_win->grabDx;
+            m_win->y = event.GetParameter<float>("mouse_y", 0.0f) - m_win->grabDy;
+            m_win->dragged = true;
+            menu_layout::WindowRect clamped{m_win->x, m_win->y, m_win->w,
+                                            m_win->folded ? kFoldedHeight : m_win->shownH};
+            menu_layout::clampDraggedWindow(clamped, static_cast<float>(g_width),
+                                            static_cast<float>(g_height));
+            m_win->x = clamped.x;
+            m_win->y = clamped.y;
+            applyWin(*m_win);
+        }
+    }
+
+private:
+    WinState* m_win;
+};
 
 void MenuClickListener::ProcessEvent(Rml::Event& event) {
     // Walk up from the click target to the nearest element with an id: clicks
@@ -450,18 +548,24 @@ void MenuClickListener::ProcessEvent(Rml::Event& event) {
         g_hiddenByClose.store(true, std::memory_order_relaxed);
         return;
     }
-    if (id == "btn-hudeditor" || id == "btn-hudeditor2") {
+    if (id == "btn-hudeditor") {
         g_hudEditorRequest.store(true, std::memory_order_relaxed);
         g_hiddenByClose.store(true, std::memory_order_relaxed);
         return;
     }
-    if (id == "tab-modules" || id == "tab-graphics" || id == "tab-hud" || id == "tab-info") {
-        activateTab(id);
+    if (id.size() == 6 && id.compare(0, 5, "fold-") == 0 && id[5] >= '0' && id[5] <= '9') {
+        const int index = id[5] - '0';
+        if (index < kWindowCount && g_win[index].el) {
+            WinState& win = g_win[index];
+            win.folded = !win.folded;
+            win.el->SetClass("folded", win.folded);
+            focusWin(win);
+            applyWin(win);
+        }
         return;
     }
-    if (id.size() > 9 && id.compare(0, 9, "head-sec-") == 0) {
-        if (Rml::Element* section = element->GetParentNode())
-            section->SetClass("collapsed", !section->IsClassSet("collapsed"));
+    if (id == "btn-layout") {
+        layoutWindows(static_cast<float>(g_width), static_cast<float>(g_height), true);
         return;
     }
     if (const SwitchDef* def = findSwitch(id)) {
@@ -513,21 +617,33 @@ Rml::ElementDocument* loadDocumentWithStyle(Rml::Context* context, const char* r
 }
 
 bool buildRegistry() {
-    if (!g_menuDoc || !g_ttDoc) return false;
-    g_shell = g_menuDoc->GetElementById("shell");
-    g_ttStatus = g_ttDoc->GetElementById("tt-status");
-    g_ttDiag = g_ttDoc->GetElementById("tt-diag");
-    if (!g_shell || !g_ttStatus || !g_ttDiag) return false;
+    if (!g_menuDoc) return false;
+    g_ttStatus = g_menuDoc->GetElementById("tt-status");
+    g_ttDiag = g_menuDoc->GetElementById("tt-diag");
+    if (!g_ttStatus || !g_ttDiag) return false;
 
     g_menuDoc->AddEventListener("click", &g_clickListener);
-    g_ttDoc->AddEventListener("click", &g_clickListener);
+
+    // Windows: geometry is applied by layoutWindows() right after init; the
+    // listeners carry focus, z-order and title-bar dragging.
+    for (int i = 0; i < kWindowCount; ++i) {
+        WinState& win = g_win[i];
+        win.el = g_menuDoc->GetElementById(kWindows[i].id);
+        win.head = g_menuDoc->GetElementById(kWindows[i].headId);
+        if (!win.el || !win.head) return false;
+        win.w = kWindows[i].w;
+        win.h = kWindows[i].h;
+        win.shownH = kWindows[i].h;
+        win.el->SetProperty("z-index", Rml::CreateString("%d", 10 + i));
+        g_winListeners.push_back(std::make_unique<WindowListener>(&win));
+        WindowListener* listener = g_winListeners.back().get();
+        win.el->AddEventListener("mousedown", listener);
+        win.head->AddEventListener("dragstart", listener);
+        win.head->AddEventListener("drag", listener);
+    }
 
     for (const SwitchDef& def : kSwitches) {
-        Rml::Element* element = nullptr;
-        // The menu document owns the sw-/hud-sw- switches, the test document
-        // owns none of them today, but both are searched so future markup
-        // stays free to place them anywhere.
-        element = g_menuDoc->GetElementById(def.id);
+        Rml::Element* element = g_menuDoc->GetElementById(def.id);
         if (!element) continue;
         SwitchElem item;
         item.el = element;
@@ -537,10 +653,8 @@ bool buildRegistry() {
 
     for (const SliderDef& def : kSliders) {
         Rml::Element* input = g_menuDoc->GetElementById(def.id);
-        if (!input) input = g_ttDoc->GetElementById(def.id);
         if (!input) continue;
         Rml::Element* readout = g_menuDoc->GetElementById(readoutIdFrom(def.id));
-        if (!readout) readout = g_ttDoc->GetElementById(readoutIdFrom(def.id));
         SliderElem item;
         item.input = input;
         item.readout = readout;
@@ -607,12 +721,7 @@ bool initBackend(ID3D11Device* device, unsigned width, unsigned height) {
         menuLog("init: FAILED, menu document did not parse");
         return false;
     }
-    g_ttDoc = loadDocumentWithStyle(g_rmlContext, kTestToolsRml, kTestToolsRcss, "gayclient-tt.rml");
-    if (!g_ttDoc) {
-        menuLog("init: FAILED, test tools document did not parse");
-        return false;
-    }
-    menuLog("init: documents parsed");
+    menuLog("init: menu document parsed");
     if (!buildRegistry()) {
         menuLog("init: FAILED, element registry incomplete (%zu switches, %zu sliders)",
                 g_switchElems.size(), g_sliderElems.size());
@@ -620,8 +729,8 @@ bool initBackend(ID3D11Device* device, unsigned width, unsigned height) {
     }
     g_width = width;
     g_height = height;
-    menuLog("init: complete, %zu switches, %zu sliders",
-            g_switchElems.size(), g_sliderElems.size());
+    menuLog("init: complete, %d windows, %zu switches, %zu sliders",
+            kWindowCount, g_switchElems.size(), g_sliderElems.size());
     return true;
 }
 
@@ -1039,7 +1148,7 @@ const char* katanaStatusText(int status) {
 }
 
 void syncTtStatus() {
-    if (!g_ttShown || !g_ttStatus || !g_ttDiag) return;
+    if (!g_menuShown || !g_ttStatus || !g_ttDiag) return;
     const std::string status = katanaStatusText(KatanaStatus());
     if (status != g_ttStatusCache) {
         g_ttStatusCache = status;
@@ -1112,31 +1221,11 @@ void feedInput(unsigned width, unsigned height) {
     }
 }
 
-void clampShell(unsigned width, unsigned height) {
-    if (!g_shell) return;
-    // The shell is absolutely positioned and centered from here: the RmlUi
-    // root body shrink-wraps its content, so CSS-only centering (flex body)
-    // does not work and would also collapse the column layout.
-    const int shellW = std::min(1140, static_cast<int>(width) - 24);
-    const int shellH = std::min(716, static_cast<int>(height) - 24);
-    g_shell->SetProperty("width", Rml::CreateString("%dpx", shellW));
-    g_shell->SetProperty("height", Rml::CreateString("%dpx", shellH));
-    g_shell->SetProperty("left", Rml::CreateString("%dpx",
-        (static_cast<int>(width) - shellW) / 2));
-    g_shell->SetProperty("top", Rml::CreateString("%dpx",
-        (static_cast<int>(height) - shellH) / 2));
-}
-
-void updateDocVisibility(bool menuVisible, bool toolsVisible) {
+void updateDocVisibility(bool menuVisible) {
     if (menuVisible != g_menuShown) {
         g_menuShown = menuVisible;
         if (menuVisible) g_menuDoc->Show();
         else g_menuDoc->Hide();
-    }
-    if (toolsVisible != g_ttShown) {
-        g_ttShown = toolsVisible;
-        if (toolsVisible) g_ttDoc->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
-        else g_ttDoc->Hide();
     }
 }
 
@@ -1188,7 +1277,7 @@ void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
             return;
         }
         g_ready = true;
-        clampShell(width, height);
+        layoutWindows(static_cast<float>(width), static_cast<float>(height), true);
         bridge::start();
     }
     if (width != g_width || height != g_height) {
@@ -1197,13 +1286,12 @@ void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
         g_rmlContext->SetDimensions(Rml::Vector2i(static_cast<int>(width),
                                                   static_cast<int>(height)));
         g_renderer->SetViewport(static_cast<int>(width), static_cast<int>(height));
-        clampShell(width, height);
+        layoutWindows(static_cast<float>(width), static_cast<float>(height), false);
     }
 
     const bool menuVisible = g_gameMenuOpen.load(std::memory_order_relaxed) &&
         !g_hiddenByClose.load(std::memory_order_relaxed);
-    const bool toolsVisible = menuVisible && (KatanaEnabled() || AccessoryEnabled());
-    updateDocVisibility(menuVisible, toolsVisible);
+    updateDocVisibility(menuVisible);
     bridge::tick();
     if (!menuVisible) return;
 

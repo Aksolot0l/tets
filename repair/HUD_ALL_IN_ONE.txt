@@ -2232,7 +2232,8 @@ assert 'segoeui.ttf' in m and 'segoeuib.ttf' in m
 assert 'LoadFontFace' in m and 'Rml::Style::FontWeight::Bold' in m
 assert '"GAY"' in m
 assert 'LoadDocumentFromMemory' in m and 'text.find("<style>")' in m
-assert 'kMenuRml' in m and 'kMenuRcss' in m and 'kTestToolsRml' in m and 'kTestToolsRcss' in m
+assert 'kMenuRml' in m and 'kMenuRcss' in m
+assert 'kTestToolsRml' not in m and 'kTestToolsRcss' not in m
 
 # 4. Render loop discipline: dimensions follow the viewport, the RTV is passed
 #    to EndFrame, and the legacy interface is replaced only after a complete
@@ -2272,7 +2273,7 @@ for switch_id in ('sw-fps', 'sw-cps', 'sw-clock', 'sw-keys', 'sw-watermark',
                   'sw-chinahat', 'sw-trail', 'sw-jump', 'sw-katana', 'sw-crown',
                   'sw-gfx-chinahat', 'sw-gfx-trail', 'sw-gfx-jump',
                   'sw-ch-fill', 'sw-ch-rainbow', 'sw-tr-fill', 'sw-tr-rainbow',
-                  'sw-jr-rainbow', 'hud-sw-fps', 'hud-sw-modlist'):
+                  'sw-jr-rainbow', 'sw-kt-master', 'sw-cr-master'):
     assert f'"{switch_id}"' in m, switch_id
     assert f'id="{switch_id}"' in d, switch_id
 for slider_id in ('sl-ch-rainbow', 'sl-ch-opacity', 'sl-ch-radius', 'sl-ch-height',
@@ -2281,8 +2282,7 @@ for slider_id in ('sl-ch-rainbow', 'sl-ch-opacity', 'sl-ch-radius', 'sl-ch-heigh
                   'sl-jr-rainbow', 'sl-jr-opacity', 'sl-jr-radius', 'sl-jr-duration',
                   'sl-kt-scale', 'sl-kt-tilt', 'sl-kt-side', 'sl-kt-height',
                   'sl-kt-forward', 'sl-kt-opacity', 'sl-kt-fpside', 'sl-kt-fpforward',
-                  'sl-cr-scale', 'sl-cr-offset', 'sl-cr-opacity',
-                  'sl-kt2-scale', 'sl-cr2-scale'):
+                  'sl-cr-scale', 'sl-cr-offset', 'sl-cr-opacity'):
     assert f'"{slider_id}"' in m, slider_id
     assert f'id="{slider_id}"' in d, slider_id
 # Every slider id in the markup is registered and has a readout counterpart.
@@ -2292,23 +2292,34 @@ for slider_id in slider_ids:
     readout = 'ro' + slider_id[2:]
     assert f'id="{readout}"' in d, readout
 # Every switch id in the markup is registered.
-for switch_id in set(re.findall(r'id="((?:sw|hud-sw)-[a-z0-9-]+)"', d)):
+for switch_id in set(re.findall(r'id="(sw-[a-z0-9-]+)"', d)):
     assert f'"{switch_id}"' in m, switch_id
 
-# 8. Tabs, collapsible sections, close and HUD editor buttons are wired.
-assert 'btn-close' in m and 'btn-hudeditor' in m and 'btn-hudeditor2' in m
-assert 'activateTab' in m and '"tab-modules"' in m and '"panel-modules"' in m
-assert 'head-sec-' in m and 'SetClass("collapsed"' in m
+# 8. Window manager: fold buttons, layout reset, close and HUD editor
+#    buttons are wired; drag + focus go through the WindowListener.
+assert 'btn-close' in m and 'btn-hudeditor' in m and 'btn-hudeditor2' not in m
+assert 'activateTab' not in m and '"tab-modules"' not in m and '"panel-modules"' not in m
+assert 'class WindowListener' in m and 'EventId::Dragstart' in m and 'EventId::Drag' in m
+assert 'focusWin' in m and 'applyWin' in m and 'layoutWindows' in m
+assert 'kWindows[]' in m and '"win-home"' in m and '"win-visuals"' in m
+assert 'menu_layout::computeMenuWindows' in m and 'menu_layout::clampDraggedWindow' in m
+assert 'id.compare(0, 5, "fold-")' in m and 'SetClass("folded"' in m
+assert 'id == "btn-layout"' in m
 assert 'SetClass("on"' in m and 'IsClassSet("on")' in m
-assert 'SetClass("active"' in m and 'SetClass("selected"' in m
+assert 'SetClass("focus"' in m
 assert 'g_hudEditorRequest.store(true, std::memory_order_relaxed);' in m
+assert 'layoutWindows(static_cast<float>(width), static_cast<float>(height), true);' in m
+assert 'layoutWindows(static_cast<float>(width), static_cast<float>(height), false);' in m
+assert (r/'src/menu_layout.h').exists()
+ml = (r/'src/menu_layout.h').read_text(encoding='utf-8')
+assert 'rectsOverlap' in ml and 'kMinRowHeight' in ml
 
-# 9. Test tools window: separate document, draggable, katana/crown only while
-#    enabled, status/diagnostics updated only when the text actually changed.
-assert 'toolsVisible = menuVisible && (KatanaEnabled() || AccessoryEnabled())' in m
+# 9. Katana diagnostics live at the bottom of the katana window; the text is
+#    updated only when it actually changed.
 assert 'katanaStatusText' in m and 'KatanaDebugSnapshot()' in m
 assert 'g_ttStatusCache != status' not in m and 'if (status != g_ttStatusCache)' in m
-assert 'id="tt"' in d and 'drag: drag;' in d and 'tt-status' in d and 'tt-diag' in d
+assert 'tt-status' in d and 'tt-diag' in d and 'win-kt' in d
+assert 'id="tt"' not in d
 
 # 10. Build script discipline: static RmlUi without export leaks, the DX11
 #     renderer with non-multisampled targets, the FreeType font engine
@@ -2334,18 +2345,25 @@ assert 'bool LogMessage(Rml::Log::Type type, const Rml::String& message) overrid
 assert 'gayclient-menu.log' in m
 for step in ('segoeui.ttf unreadable', 'Rml::Initialise returned false',
              'CreateContext returned null', 'LoadFontFace (regular)',
-             'menu document did not parse', 'test tools document did not parse',
+             'menu document did not parse',
              'element registry incomplete', 'init: complete'):
     assert step in m, step
 assert 'first frame complete' in m
 
-# 11. The markup keeps the launcher look: big shell, accent color, animations.
-assert '1140px' in d and '716px' in d
-assert 'std::min(1140, static_cast<int>(width) - 24)' in m
+# 11. The markup keeps the launcher palette in windowed form: draggable
+#     title bars, folding, scrolling bodies, dim backdrop, accent gradients.
+assert '.win-head' in d and 'drag: drag;' in d
+assert 'overflow-y: auto' in d and 'scrollbarvertical' in d
+assert 'border-radius: 13px 13px 0 0' in d
+assert 'id="doc-body"' in d and '#020805' in d
+assert '.win.folded .win-body { display: none; }' in d
+for win in ('win-home', 'win-visuals', 'win-ch', 'win-tr', 'win-jr', 'win-kt', 'win-cr'):
+    assert f'id="{win}"' in d, win
 assert '#6ef58c' in d and 'transition:' in d
 assert 'decorator: linear-gradient(' in d
 assert '#3ae882' not in d
 assert 'font-size: 20px' in d
+assert '1140px' not in d and '716px' not in d
 
 # 12. RmlUi 6.x rendering pitfalls found via the software-rasterizer repro
 #     must stay fixed:
@@ -2357,17 +2375,20 @@ assert 'font-size: 20px' in d
 #         collapses fixed siblings unless flex-basis: 0px is set;
 #     (d) element ids must be unique (GetElementById returns the first).
 import re as _re2
-block_divs = ('.card', '.section-body', '.m-text', '.m-name', '.m-desc',
-              '#tt-body', '.tt-head-label')
+block_divs = ('.win-body', '.brand', '.brand-name', '.brand-sub', '.m-text',
+              '.m-name', '.m-desc', '.note', '.foot', '#tt-status', '#tt-diag')
 for sel in block_divs:
     pat = _re2.escape(sel) + r'\s*\{[^}]*display:\s*block'
     assert _re2.search(pat, d), sel
-assert '#layout {\n    flex-basis: 0px;' in d
+assert '.win-body {\n    flex-basis: 0px;' in d
+assert '.win-head {\n    height: 44px;\n    flex-basis: 44px;' in d
 assert 'rgba(' not in d
 import re as _re
-assert len(_re.findall(r'id="brand-sub"', d)) == 1
-assert 'id="brand-ver"' in d
-assert '#brand-sub, #brand-ver {' in d
+assert len(_re.findall(r'id="doc-body"', d)) == 1
+assert len(_re.findall(r'class="win"', d)) == 7
+assert _re.findall(r'id="fold-\d"', d) == ['id="fold-0"', 'id="fold-1"', 'id="fold-2"',
+                                            'id="fold-3"', 'id="fold-4"', 'id="fold-5"',
+                                            'id="fold-6"']
 
 # 13. Web bridge: the web replica (repair/menu-web, root index.html) drives
 #     the same verified setters through a localhost-only WebSocket server.
@@ -5363,6 +5384,177 @@ bool ConsumeHudEditorRequest();
 КОНЕЦ ФАЙЛА: repair/src/menu_rml.h
 ================================================================================================================================================================
 ================================================================================
+НАЧАЛО ФАЙЛА: repair/src/menu_layout.h
+// Pure window-layout math for the windowed in-game menu. No engine includes:
+// the adapter (menu_rml.cpp) and the Linux pixel harness both call this, so
+// the tiling that ships is exactly the tiling that was verified.
+//
+// Contract: computeMenuWindows() packs the windows left-to-right into rows
+// (a new row starts whenever the next window would not fit the viewport
+// width), rebalances a lonely last row, centers every row and the block, and
+// scales row heights down proportionally (window bodies scroll) when the
+// natural heights do not fit. Windows in their default positions never
+// overlap each other and never leave the viewport.
+#pragma once
+
+namespace menu_layout {
+
+struct WindowRect {
+    float x;
+    float y;
+    float w;
+    float h;  // unfolded height actually shown (<= natural height)
+};
+
+constexpr float kMargin = 28.0f;
+constexpr float kGap = 14.0f;
+constexpr float kMinRowHeight = 200.0f;
+constexpr int kMaxRows = 8;
+constexpr int kMaxWindows = 16;
+
+// row_of[i] receives the row index of window i; row_count receives the number
+// of rows. Greedy first-fit in window order: a window only joins a row when
+// the row's width with it still fits the viewport, so rows never overflow
+// horizontally (except a single window wider than the viewport itself).
+inline void packRows(const float* natural_w, int count, float avail_w,
+                     int* row_of, int& row_count) {
+    row_count = 1;
+    float row_w = 0.0f;
+    for (int i = 0; i < count; ++i) {
+        if (row_w == 0.0f) {
+            row_w = natural_w[i];
+        } else if (row_w + kGap + natural_w[i] <= avail_w) {
+            row_w += kGap + natural_w[i];
+        } else {
+            row_count++;
+            row_w = natural_w[i];
+        }
+        row_of[i] = row_count - 1;
+    }
+}
+
+// Move trailing windows down while the last row is much emptier than the one
+// before it, so a 6+1 split becomes 5+2 and 4+3 instead of an orphan.
+inline void rebalanceLastRow(const float* natural_w, int count, float avail_w,
+                             int* row_of, int& row_count) {
+    while (row_count >= 2) {
+        int last = 0, prev = 0, last_start = -1, prev_last = -1;
+        float last_w = 0.0f, prev_w = 0.0f;
+        for (int i = 0; i < count; ++i) {
+            if (row_of[i] == row_count - 1) {
+                last++;
+                if (last_start < 0) last_start = i;
+                last_w = (last == 1) ? natural_w[i] : last_w + kGap + natural_w[i];
+            } else if (row_of[i] == row_count - 2) {
+                prev++;
+                prev_last = i;
+                prev_w = (prev == 1) ? natural_w[i] : prev_w + kGap + natural_w[i];
+            }
+        }
+        if (last_start < 0 || prev_last < 0 || last >= prev - 1 || prev <= 1) break;
+        if (last_w + kGap + natural_w[prev_last] > avail_w) break;
+        row_of[prev_last] = row_count - 1;
+    }
+}
+
+inline void computeMenuWindows(const float* natural_w, const float* natural_h, int count,
+                               float view_w, float view_h, WindowRect* out) {
+    const float avail_w = view_w - 2.0f * kMargin;
+    const float avail_h = view_h - 2.0f * kMargin;
+
+    int row_of[kMaxWindows] = {};
+    int rows = 1;
+    packRows(natural_w, count, avail_w, row_of, rows);
+    if (rows > kMaxRows) rows = kMaxRows;
+    rebalanceLastRow(natural_w, count, avail_w, row_of, rows);
+
+    float row_natural[kMaxRows] = {};
+    for (int i = 0; i < count; ++i) {
+        const int row = row_of[i];
+        if (row < kMaxRows && row_natural[row] < natural_h[i]) row_natural[row] = natural_h[i];
+    }
+
+    // Hand out the vertical space: every row keeps at least kMinRowHeight
+    // while space lasts; above that, rows grow proportionally to their
+    // natural height. If even the minimums do not fit (tiny viewport), the
+    // rows scale purely proportionally so the block always fits exactly.
+    const float room = avail_h - (rows - 1) * kGap;
+    float row_height[kMaxRows] = {};
+    const float min_total = rows * kMinRowHeight;
+    if (room >= min_total) {
+        float excess_total = 0.0f;
+        float excess[kMaxRows] = {};
+        for (int r = 0; r < rows; ++r) {
+            excess[r] = (row_natural[r] > kMinRowHeight) ? row_natural[r] - kMinRowHeight : 0.0f;
+            excess_total += excess[r];
+        }
+        const float room_excess = room - min_total;
+        const float scale = (excess_total > 0.0f && room_excess < excess_total)
+                                ? room_excess / excess_total
+                                : 1.0f;
+        for (int r = 0; r < rows; ++r) row_height[r] = kMinRowHeight + excess[r] * scale;
+    } else if (room > 0.0f) {
+        float natural_total = 0.0f;
+        for (int r = 0; r < rows; ++r) natural_total += row_natural[r];
+        const float scale = natural_total > 0.0f ? room / natural_total : 1.0f;
+        for (int r = 0; r < rows; ++r) row_height[r] = row_natural[r] * scale;
+    } else {
+        for (int r = 0; r < rows; ++r) row_height[r] = kMinRowHeight;
+    }
+
+    float block_h = (rows - 1) * kGap;
+    for (int r = 0; r < rows; ++r) block_h += row_height[r];
+    float y = kMargin + (avail_h - block_h) * 0.5f;
+    if (y < kMargin) y = kMargin;
+
+    for (int r = 0; r < rows; ++r) {
+        int in_row = 0;
+        float row_w = 0.0f;
+        for (int i = 0; i < count; ++i) {
+            if (row_of[i] != r) continue;
+            row_w = (in_row == 0) ? natural_w[i] : row_w + kGap + natural_w[i];
+            in_row++;
+        }
+        float x = kMargin + (avail_w - row_w) * 0.5f;
+        for (int i = 0; i < count; ++i) {
+            if (row_of[i] != r) continue;
+            out[i].x = x;
+            out[i].y = y;
+            out[i].w = natural_w[i];
+            out[i].h = (natural_h[i] < row_height[r]) ? natural_h[i] : row_height[r];
+            x += natural_w[i] + kGap;
+        }
+        y += row_height[r] + kGap;
+    }
+}
+
+// Clamp a dragged window so its title bar always stays reachable.
+inline void clampDraggedWindow(WindowRect& rect, float view_w, float view_h) {
+    const float keep_w = 90.0f;
+    if (rect.x < keep_w - rect.w) rect.x = keep_w - rect.w;
+    if (rect.x > view_w - keep_w) rect.x = view_w - keep_w;
+    if (rect.y < 0.0f) rect.y = 0.0f;
+    if (rect.y > view_h - 46.0f) rect.y = view_h - 46.0f;
+}
+
+// True when no pair of the first count rects overlaps. Windows are compared
+// on their shown (unfolded) height; the caller passes folded windows with
+// their title-bar-only height (46px).
+inline bool rectsOverlap(const WindowRect* rects, int count) {
+    for (int i = 0; i < count; ++i)
+        for (int j = i + 1; j < count; ++j) {
+            const bool apart_x = rects[i].x + rects[i].w <= rects[j].x + 0.01f ||
+                                 rects[j].x + rects[j].w <= rects[i].x + 0.01f;
+            const bool apart_y = rects[i].y + rects[i].h <= rects[j].y + 0.01f ||
+                                 rects[j].y + rects[j].h <= rects[i].y + 0.01f;
+            if (!apart_x && !apart_y) return true;
+        }
+    return false;
+}
+
+}  // namespace menu_layout
+КОНЕЦ ФАЙЛА: repair/src/menu_layout.h
+
 НАЧАЛО ФАЙЛА: repair/src/menu_rml.cpp
 #include "menu_rml.h"
 
@@ -5395,6 +5587,7 @@ bool ConsumeHudEditorRequest();
 #include "RmlUi_Renderer_DX11.h"
 
 #include "china_hat_native.h"
+#include "menu_layout.h"
 #include "menu_rml_data.h"
 #include "settings.h"
 #include "visual_settings.h"
@@ -5411,8 +5604,10 @@ bool ConsumeHudEditorRequest();
 //  - maps switches and sliders one-to-one onto the adapter's existing,
 //    verified setters (SetChinaHatEnabled, SetVisualParam, and
 //    ag::Runtime::SetModule through the queued compat bridge);
-//  - keeps the katana/crown diagnostics window as a separate draggable
-//    RmlUi document.
+//  - lays the menu out as independent windows: each window is dragged by its
+//    title bar (RmlUi drag events), folds to its title bar, scrolls inside
+//    when the viewport is small, and the default tiling (menu_layout.h)
+//    never overlaps windows, whatever the number of functions.
 //
 // Failure of anything above only means the new menu stays hidden and the
 // previous interface keeps working.
@@ -5456,13 +5651,48 @@ bool g_escState = false;
 RenderInterface_DX11* g_renderer = nullptr;
 Rml::Context* g_rmlContext = nullptr;
 Rml::ElementDocument* g_menuDoc = nullptr;
-Rml::ElementDocument* g_ttDoc = nullptr;
-Rml::Element* g_shell = nullptr;
 Rml::Element* g_ttStatus = nullptr;
 Rml::Element* g_ttDiag = nullptr;
 unsigned g_width = 0, g_height = 0;
 bool g_menuShown = false;
-bool g_ttShown = false;
+
+// ---------------------------------------------------------------------------
+// Window manager state: the seven menu windows with their natural sizes and
+// live geometry. Positions are owned here (never read back from the DOM), so
+// dragging and re-tiling cannot desync from what is rendered.
+// ---------------------------------------------------------------------------
+
+struct WinDef {
+    const char* id;
+    const char* headId;
+    float w;
+    float h;
+};
+
+const WinDef kWindows[] = {
+    {"win-home",    "head-home",    300.0f, 750.0f},
+    {"win-visuals", "head-visuals", 300.0f, 390.0f},
+    {"win-ch",      "head-ch",      420.0f, 545.0f},
+    {"win-tr",      "head-tr",      420.0f, 435.0f},
+    {"win-jr",      "head-jr",      420.0f, 395.0f},
+    {"win-kt",      "head-kt",      420.0f, 430.0f},
+    {"win-cr",      "head-cr",      420.0f, 322.0f},
+};
+constexpr int kWindowCount = static_cast<int>(sizeof(kWindows) / sizeof(kWindows[0]));
+constexpr float kFoldedHeight = 46.0f;  // title bar + borders
+
+struct WinState {
+    Rml::Element* el = nullptr;
+    Rml::Element* head = nullptr;
+    float w = 0.0f, h = 0.0f;      // natural size
+    float x = 0.0f, y = 0.0f;      // current position
+    float shownH = 0.0f;           // unfolded height after tiling caps it
+    bool dragged = false;          // user moved it: keep the position
+    bool folded = false;
+    float grabDx = 0.0f, grabDy = 0.0f;
+};
+WinState g_win[kWindowCount];
+int g_zTop = 20;
 std::string g_ttStatusCache;
 std::string g_ttDiagCache;
 
@@ -5589,17 +5819,10 @@ const SwitchDef kSwitches[] = {
     {"sw-tr-fill", SwKind::TrFill, 0},
     {"sw-tr-rainbow", SwKind::TrRainbow, 0},
     {"sw-jr-rainbow", SwKind::JrRainbow, 0},
-    // HUD tab duplicates.
-    {"hud-sw-fps", SwKind::AgModule, static_cast<int>(ag::ModuleId::Fps)},
-    {"hud-sw-cps", SwKind::AgModule, static_cast<int>(ag::ModuleId::Cps)},
-    {"hud-sw-clock", SwKind::AgModule, static_cast<int>(ag::ModuleId::Clock)},
-    {"hud-sw-keys", SwKind::AgModule, static_cast<int>(ag::ModuleId::Keystrokes)},
-    {"hud-sw-watermark", SwKind::AgModule, static_cast<int>(ag::ModuleId::Watermark)},
-    {"hud-sw-coords", SwKind::AgModule, static_cast<int>(ag::ModuleId::Coordinates)},
-    {"hud-sw-res", SwKind::AgModule, static_cast<int>(ag::ModuleId::Resolution)},
-    {"hud-sw-perf", SwKind::AgModule, static_cast<int>(ag::ModuleId::Cpu)},
-    {"hud-sw-perf", SwKind::AgModule, static_cast<int>(ag::ModuleId::Ram)},
-    {"hud-sw-modlist", SwKind::AgModule, static_cast<int>(ag::ModuleId::ActiveModules)},
+    // Per-window master switches (the Visuals window has its own copies of
+    // the katana/crown toggles under different ids: ids must be unique).
+    {"sw-kt-master", SwKind::Katana, 0},
+    {"sw-cr-master", SwKind::Crown, 0},
 };
 
 const SwitchDef* findSwitch(const Rml::String& id) {
@@ -5702,20 +5925,6 @@ const SliderDef kSliders[] = {
     {"sl-cr-r", VisualParam::AccessoryRed, SlScale::Direct, "%.2f"},
     {"sl-cr-g", VisualParam::AccessoryGreen, SlScale::Direct, "%.2f"},
     {"sl-cr-b", VisualParam::AccessoryBlue, SlScale::Direct, "%.2f"},
-    // Test tools: katana.
-    {"sl-kt2-scale", VisualParam::KatanaScale, SlScale::Direct, "%.2f"},
-    {"sl-kt2-tilt", VisualParam::KatanaTilt, SlScale::Direct, "%.2f"},
-    {"sl-kt2-side", VisualParam::KatanaSide, SlScale::Direct, "%.2f"},
-    {"sl-kt2-height", VisualParam::KatanaHeight, SlScale::Direct, "%.2f"},
-    {"sl-kt2-forward", VisualParam::KatanaForward, SlScale::Direct, "%.2f"},
-    {"sl-kt2-opacity", VisualParam::KatanaOpacity, SlScale::Direct, "%.2f"},
-    // Test tools: crown.
-    {"sl-cr2-scale", VisualParam::AccessoryScale, SlScale::Direct, "%.2f"},
-    {"sl-cr2-offset", VisualParam::AccessoryOffset, SlScale::Direct, "%.2f"},
-    {"sl-cr2-opacity", VisualParam::AccessoryOpacity, SlScale::Direct, "%.2f"},
-    {"sl-cr2-r", VisualParam::AccessoryRed, SlScale::Direct, "%.2f"},
-    {"sl-cr2-g", VisualParam::AccessoryGreen, SlScale::Direct, "%.2f"},
-    {"sl-cr2-b", VisualParam::AccessoryBlue, SlScale::Direct, "%.2f"},
 };
 
 float domFromParam(const SliderDef& def, float param) {
@@ -5792,17 +6001,98 @@ public:
 
 MenuClickListener g_clickListener;
 std::vector<std::unique_ptr<SliderChangeListener>> g_sliderListeners;
+std::vector<std::unique_ptr<class WindowListener>> g_winListeners;
 
-void activateTab(const Rml::String& tabId) {
-    static const char* kTabs[] = {"tab-modules", "tab-graphics", "tab-hud", "tab-info"};
-    static const char* kPanels[] = {"panel-modules", "panel-graphics", "panel-hud", "panel-info"};
-    for (int i = 0; i < 4; ++i) {
-        if (Rml::Element* nav = g_menuDoc->GetElementById(kTabs[i]))
-            nav->SetClass("active", tabId == kTabs[i]);
-        if (Rml::Element* panel = g_menuDoc->GetElementById(kPanels[i]))
-            panel->SetClass("selected", tabId == kTabs[i]);
+void applyWin(WinState& win) {
+    if (!win.el) return;
+    win.el->SetProperty("left", Rml::CreateString("%dpx", static_cast<int>(win.x + 0.5f)));
+    win.el->SetProperty("top", Rml::CreateString("%dpx", static_cast<int>(win.y + 0.5f)));
+    win.el->SetProperty("width", Rml::CreateString("%dpx", static_cast<int>(win.w + 0.5f)));
+    win.el->SetProperty("height", Rml::CreateString("%dpx", static_cast<int>(
+        (win.folded ? kFoldedHeight : win.shownH) + 0.5f)));
+}
+
+void focusWin(WinState& win) {
+    for (WinState& other : g_win)
+        if (other.el) other.el->SetClass("focus", &other == &win);
+    win.el->SetProperty("z-index", Rml::CreateString("%d", ++g_zTop));
+}
+
+// Tile the windows from the shared, harness-verified layout math. force
+// re-tilts everything (initial layout, "reset layout" button); otherwise
+// windows the user dragged keep their position and are only clamped back
+// into the viewport.
+void layoutWindows(float viewW, float viewH, bool force) {
+    // The document body carries the dim backdrop; it only paints over the
+    // area its box covers, and with nothing but absolutely-positioned
+    // children that box would be zero-sized. Size it to the viewport.
+    if (Rml::Element* body = g_menuDoc->GetElementById("doc-body")) {
+        body->SetProperty("width", Rml::CreateString("%dpx", static_cast<int>(viewW + 0.5f)));
+        body->SetProperty("height", Rml::CreateString("%dpx", static_cast<int>(viewH + 0.5f)));
+    }
+    float natW[kWindowCount];
+    float natH[kWindowCount];
+    menu_layout::WindowRect rects[kWindowCount];
+    for (int i = 0; i < kWindowCount; ++i) {
+        natW[i] = g_win[i].w;
+        natH[i] = g_win[i].h;
+    }
+    menu_layout::computeMenuWindows(natW, natH, kWindowCount, viewW, viewH, rects);
+    for (int i = 0; i < kWindowCount; ++i) {
+        WinState& win = g_win[i];
+        if (!win.el) continue;
+        if (force || !win.dragged) {
+            if (force) win.dragged = false;
+            win.x = rects[i].x;
+            win.y = rects[i].y;
+        }
+        win.shownH = rects[i].h;
+        menu_layout::WindowRect clamped{win.x, win.y, win.w,
+                                        win.folded ? kFoldedHeight : win.shownH};
+        menu_layout::clampDraggedWindow(clamped, viewW, viewH);
+        win.x = clamped.x;
+        win.y = clamped.y;
+        applyWin(win);
     }
 }
+
+// Title-bar drag + focus. Attached to the window (mousedown: focus, bring to
+// front) and to the title bar (dragstart/drag: move, clamped so the bar can
+// never leave the screen).
+class WindowListener : public Rml::EventListener {
+public:
+    explicit WindowListener(WinState* win) : m_win(win) {}
+
+    void ProcessEvent(Rml::Event& event) override {
+        if (!m_win || !m_win->el) return;
+        const Rml::EventId id = event.GetId();
+        if (id == Rml::EventId::Mousedown) {
+            focusWin(*m_win);
+            return;
+        }
+        if (id == Rml::EventId::Dragstart) {
+            focusWin(*m_win);
+            m_win->grabDx = event.GetParameter<float>("mouse_x", 0.0f) - m_win->x;
+            m_win->grabDy = event.GetParameter<float>("mouse_y", 0.0f) - m_win->y;
+            return;
+        }
+        if (id == Rml::EventId::Drag) {
+            m_win->x = event.GetParameter<float>("mouse_x", 0.0f) - m_win->grabDx;
+            m_win->y = event.GetParameter<float>("mouse_y", 0.0f) - m_win->grabDy;
+            m_win->dragged = true;
+            menu_layout::WindowRect clamped{m_win->x, m_win->y, m_win->w,
+                                            m_win->folded ? kFoldedHeight : m_win->shownH};
+            menu_layout::clampDraggedWindow(clamped, static_cast<float>(g_width),
+                                            static_cast<float>(g_height));
+            m_win->x = clamped.x;
+            m_win->y = clamped.y;
+            applyWin(*m_win);
+        }
+    }
+
+private:
+    WinState* m_win;
+};
 
 void MenuClickListener::ProcessEvent(Rml::Event& event) {
     // Walk up from the click target to the nearest element with an id: clicks
@@ -5816,18 +6106,24 @@ void MenuClickListener::ProcessEvent(Rml::Event& event) {
         g_hiddenByClose.store(true, std::memory_order_relaxed);
         return;
     }
-    if (id == "btn-hudeditor" || id == "btn-hudeditor2") {
+    if (id == "btn-hudeditor") {
         g_hudEditorRequest.store(true, std::memory_order_relaxed);
         g_hiddenByClose.store(true, std::memory_order_relaxed);
         return;
     }
-    if (id == "tab-modules" || id == "tab-graphics" || id == "tab-hud" || id == "tab-info") {
-        activateTab(id);
+    if (id.size() == 6 && id.compare(0, 5, "fold-") == 0 && id[5] >= '0' && id[5] <= '9') {
+        const int index = id[5] - '0';
+        if (index < kWindowCount && g_win[index].el) {
+            WinState& win = g_win[index];
+            win.folded = !win.folded;
+            win.el->SetClass("folded", win.folded);
+            focusWin(win);
+            applyWin(win);
+        }
         return;
     }
-    if (id.size() > 9 && id.compare(0, 9, "head-sec-") == 0) {
-        if (Rml::Element* section = element->GetParentNode())
-            section->SetClass("collapsed", !section->IsClassSet("collapsed"));
+    if (id == "btn-layout") {
+        layoutWindows(static_cast<float>(g_width), static_cast<float>(g_height), true);
         return;
     }
     if (const SwitchDef* def = findSwitch(id)) {
@@ -5879,21 +6175,33 @@ Rml::ElementDocument* loadDocumentWithStyle(Rml::Context* context, const char* r
 }
 
 bool buildRegistry() {
-    if (!g_menuDoc || !g_ttDoc) return false;
-    g_shell = g_menuDoc->GetElementById("shell");
-    g_ttStatus = g_ttDoc->GetElementById("tt-status");
-    g_ttDiag = g_ttDoc->GetElementById("tt-diag");
-    if (!g_shell || !g_ttStatus || !g_ttDiag) return false;
+    if (!g_menuDoc) return false;
+    g_ttStatus = g_menuDoc->GetElementById("tt-status");
+    g_ttDiag = g_menuDoc->GetElementById("tt-diag");
+    if (!g_ttStatus || !g_ttDiag) return false;
 
     g_menuDoc->AddEventListener("click", &g_clickListener);
-    g_ttDoc->AddEventListener("click", &g_clickListener);
+
+    // Windows: geometry is applied by layoutWindows() right after init; the
+    // listeners carry focus, z-order and title-bar dragging.
+    for (int i = 0; i < kWindowCount; ++i) {
+        WinState& win = g_win[i];
+        win.el = g_menuDoc->GetElementById(kWindows[i].id);
+        win.head = g_menuDoc->GetElementById(kWindows[i].headId);
+        if (!win.el || !win.head) return false;
+        win.w = kWindows[i].w;
+        win.h = kWindows[i].h;
+        win.shownH = kWindows[i].h;
+        win.el->SetProperty("z-index", Rml::CreateString("%d", 10 + i));
+        g_winListeners.push_back(std::make_unique<WindowListener>(&win));
+        WindowListener* listener = g_winListeners.back().get();
+        win.el->AddEventListener("mousedown", listener);
+        win.head->AddEventListener("dragstart", listener);
+        win.head->AddEventListener("drag", listener);
+    }
 
     for (const SwitchDef& def : kSwitches) {
-        Rml::Element* element = nullptr;
-        // The menu document owns the sw-/hud-sw- switches, the test document
-        // owns none of them today, but both are searched so future markup
-        // stays free to place them anywhere.
-        element = g_menuDoc->GetElementById(def.id);
+        Rml::Element* element = g_menuDoc->GetElementById(def.id);
         if (!element) continue;
         SwitchElem item;
         item.el = element;
@@ -5903,10 +6211,8 @@ bool buildRegistry() {
 
     for (const SliderDef& def : kSliders) {
         Rml::Element* input = g_menuDoc->GetElementById(def.id);
-        if (!input) input = g_ttDoc->GetElementById(def.id);
         if (!input) continue;
         Rml::Element* readout = g_menuDoc->GetElementById(readoutIdFrom(def.id));
-        if (!readout) readout = g_ttDoc->GetElementById(readoutIdFrom(def.id));
         SliderElem item;
         item.input = input;
         item.readout = readout;
@@ -5973,12 +6279,7 @@ bool initBackend(ID3D11Device* device, unsigned width, unsigned height) {
         menuLog("init: FAILED, menu document did not parse");
         return false;
     }
-    g_ttDoc = loadDocumentWithStyle(g_rmlContext, kTestToolsRml, kTestToolsRcss, "gayclient-tt.rml");
-    if (!g_ttDoc) {
-        menuLog("init: FAILED, test tools document did not parse");
-        return false;
-    }
-    menuLog("init: documents parsed");
+    menuLog("init: menu document parsed");
     if (!buildRegistry()) {
         menuLog("init: FAILED, element registry incomplete (%zu switches, %zu sliders)",
                 g_switchElems.size(), g_sliderElems.size());
@@ -5986,8 +6287,8 @@ bool initBackend(ID3D11Device* device, unsigned width, unsigned height) {
     }
     g_width = width;
     g_height = height;
-    menuLog("init: complete, %zu switches, %zu sliders",
-            g_switchElems.size(), g_sliderElems.size());
+    menuLog("init: complete, %d windows, %zu switches, %zu sliders",
+            kWindowCount, g_switchElems.size(), g_sliderElems.size());
     return true;
 }
 
@@ -6405,7 +6706,7 @@ const char* katanaStatusText(int status) {
 }
 
 void syncTtStatus() {
-    if (!g_ttShown || !g_ttStatus || !g_ttDiag) return;
+    if (!g_menuShown || !g_ttStatus || !g_ttDiag) return;
     const std::string status = katanaStatusText(KatanaStatus());
     if (status != g_ttStatusCache) {
         g_ttStatusCache = status;
@@ -6478,31 +6779,11 @@ void feedInput(unsigned width, unsigned height) {
     }
 }
 
-void clampShell(unsigned width, unsigned height) {
-    if (!g_shell) return;
-    // The shell is absolutely positioned and centered from here: the RmlUi
-    // root body shrink-wraps its content, so CSS-only centering (flex body)
-    // does not work and would also collapse the column layout.
-    const int shellW = std::min(1140, static_cast<int>(width) - 24);
-    const int shellH = std::min(716, static_cast<int>(height) - 24);
-    g_shell->SetProperty("width", Rml::CreateString("%dpx", shellW));
-    g_shell->SetProperty("height", Rml::CreateString("%dpx", shellH));
-    g_shell->SetProperty("left", Rml::CreateString("%dpx",
-        (static_cast<int>(width) - shellW) / 2));
-    g_shell->SetProperty("top", Rml::CreateString("%dpx",
-        (static_cast<int>(height) - shellH) / 2));
-}
-
-void updateDocVisibility(bool menuVisible, bool toolsVisible) {
+void updateDocVisibility(bool menuVisible) {
     if (menuVisible != g_menuShown) {
         g_menuShown = menuVisible;
         if (menuVisible) g_menuDoc->Show();
         else g_menuDoc->Hide();
-    }
-    if (toolsVisible != g_ttShown) {
-        g_ttShown = toolsVisible;
-        if (toolsVisible) g_ttDoc->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
-        else g_ttDoc->Hide();
     }
 }
 
@@ -6554,7 +6835,7 @@ void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
             return;
         }
         g_ready = true;
-        clampShell(width, height);
+        layoutWindows(static_cast<float>(width), static_cast<float>(height), true);
         bridge::start();
     }
     if (width != g_width || height != g_height) {
@@ -6563,13 +6844,12 @@ void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
         g_rmlContext->SetDimensions(Rml::Vector2i(static_cast<int>(width),
                                                   static_cast<int>(height)));
         g_renderer->SetViewport(static_cast<int>(width), static_cast<int>(height));
-        clampShell(width, height);
+        layoutWindows(static_cast<float>(width), static_cast<float>(height), false);
     }
 
     const bool menuVisible = g_gameMenuOpen.load(std::memory_order_relaxed) &&
         !g_hiddenByClose.load(std::memory_order_relaxed);
-    const bool toolsVisible = menuVisible && (KatanaEnabled() || AccessoryEnabled());
-    updateDocVisibility(menuVisible, toolsVisible);
+    updateDocVisibility(menuVisible);
     bridge::tick();
     if (!menuVisible) return;
 
@@ -6593,9 +6873,12 @@ void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
 ================================================================================================================================================================
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/menu_rml_data.h
-// Design of the embedded menu: RmlUi documents (HTML + RCSS), launcher-style.
+// Design of the embedded menu: RmlUi documents (HTML + RCSS).
+// The menu is a set of independent windows ("okoshki") in the launcher
+// design system: dark glass cards with emerald accents, dragged by their
+// title bars, foldable, scrolling inside so a large number of functions
+// never makes windows grow into each other.
 // Kept as raw strings so the DLL stays a single file with no disk access.
-// Colors follow the web launcher: dark background, bright green accent.
 #pragma once
 
 static const char kMenuRcss[] = R"RCSS(
@@ -6604,57 +6887,94 @@ body {
     font-size: 20px;
     color: #f0f8f3;
     display: block;
+    background-color: #0208059e;
 }
-#shell {
+.win {
     position: absolute;
-    width: 1140px;
-    height: 716px;
     display: flex;
     flex-direction: column;
-    background-color: #06110bf7;
-    decorator: linear-gradient(160deg, #101e15f7, #050c08fd);
-    border: 1px #6ef58c42;
-    border-radius: 18px;
+    background-color: #06110bf5;
+    decorator: linear-gradient(165deg, #101e15f5, #050c08fa);
+    border: 1px #ffffff17;
+    border-radius: 14px;
+    transition: border-color 0.15s;
 }
-#titlebar {
-    height: 66px;
+.win.focus {
+    decorator: linear-gradient(165deg, #132519f8, #061009fc);
+    border-color: #6ef58c55;
+}
+.win-head {
+    height: 44px;
+    flex-basis: 44px;
     display: flex;
     flex-direction: row;
     align-items: center;
-    padding: 0 22px;
+    padding: 0 8px 0 14px;
     border-bottom: 1px #ffffff0d;
+    border-radius: 13px 13px 0 0;
+    drag: drag;
 }
-#brand {
-    font-size: 27px;
+.win.folded .win-head {
+    border-bottom-width: 0px;
+    border-radius: 13px;
+}
+.win-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 5px;
+    background-color: #3d4a43;
+    margin-right: 10px;
+    transition: background-color 0.15s;
+}
+.win.focus .win-dot { background-color: #6ef58c; }
+.win-title {
+    font-size: 15px;
     font-weight: bold;
-    letter-spacing: 1px;
-    color: #f4fff6;
-}
-#brand-accent {
-    font-size: 27px;
-    font-weight: bold;
-    letter-spacing: 1px;
-    color: #6ef58c;
-}
-#brand-sub, #brand-ver {
-    margin-left: 14px;
-    margin-top: 6px;
-    font-size: 13px;
     letter-spacing: 2px;
-    color: #89a792;
+    color: #a5c5ae;
+    transition: color 0.15s;
 }
-#title-flex { flex-grow: 1; }
-.iconbtn {
-    width: 36px;
-    height: 36px;
-    font-size: 20px;
+.win.focus .win-title { color: #e2ffe7; }
+.win-sub {
+    font-size: 12px;
+    letter-spacing: 1px;
+    color: #5f7a68;
+    margin-left: 10px;
+}
+.win-flex { flex-grow: 1; }
+.foldbtn {
+    width: 30px;
+    height: 30px;
+    font-size: 15px;
     color: #89a792;
     background-color: #ffffff08;
     border: 1px #ffffff12;
-    border-radius: 10px;
+    border-radius: 9px;
     text-align: center;
-    vertical-align: middle;
-    line-height: 36px;
+    line-height: 30px;
+    cursor: pointer;
+    transition: background-color 0.12s, color 0.12s;
+}
+.foldbtn:hover {
+    background-color: #6ef58c24;
+    color: #c9ffd7;
+}
+.foldcaret {
+    font-size: 13px;
+    transition: transform 0.15s;
+}
+.win.folded .foldcaret { transform: rotate(-90deg); }
+.iconbtn {
+    width: 30px;
+    height: 30px;
+    margin-left: 6px;
+    font-size: 17px;
+    color: #89a792;
+    background-color: #ffffff08;
+    border: 1px #ffffff12;
+    border-radius: 9px;
+    text-align: center;
+    line-height: 30px;
     cursor: pointer;
     transition: background-color 0.12s, color 0.12s;
 }
@@ -6663,178 +6983,58 @@ body {
     color: #ff9c9c;
     border-color: #ff5a5a59;
 }
-#layout {
+.win-body {
     flex-basis: 0px;
     flex-grow: 1;
-    display: flex;
-    flex-direction: row;
-}
-#nav {
-    width: 216px;
-    display: flex;
-    flex-direction: column;
-    padding: 16px 12px;
-    border-right: 1px #ffffff0d;
-}
-.nav-label {
-    font-size: 11px;
-    letter-spacing: 2px;
-    color: #5f7a68;
-    padding: 6px 12px;
-}
-.nav-item {
-    position: relative;
-    height: 46px;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    padding: 0 14px;
-    margin-bottom: 4px;
-    border-radius: 11px;
-    font-size: 19px;
-    color: #8aa793;
-    cursor: pointer;
-    transition: background-color 0.13s, color 0.13s;
-}
-.nav-item:hover {
-    background-color: #ffffff0b;
-    color: #e2f8e7;
-}
-.nav-item.active {
-    background-color: #6ef58c1a;
-    decorator: linear-gradient(90deg, #6ef58c2b, #6ef58c0b);
-    color: #f2fff5;
-}
-.nav-bar {
-    position: absolute;
-    left: 0px;
-    top: 11px;
-    width: 3px;
-    height: 24px;
-    border-radius: 2px;
-    background-color: #6ef58c;
-    opacity: 0;
-    transition: opacity 0.15s;
-}
-.nav-item.active .nav-bar { opacity: 1; }
-.nav-dot {
-    width: 8px;
-    height: 8px;
-    margin-right: 12px;
-    border-radius: 4px;
-    background-color: #3d4a43;
-    transition: background-color 0.15s;
-}
-.nav-item.active .nav-dot { background-color: #6ef58c; }
-#nav-flex { flex-grow: 1; }
-.greenbtn {
-    height: 48px;
-    font-size: 18px;
-    font-weight: bold;
-    color: #05230f;
-    background-color: #6ef58c;
-    decorator: linear-gradient(180deg, #c4ff62, #6ef58c 52%, #2fa960);
-    border: 1px #e2ffc366;
-    border-radius: 12px;
-    text-align: center;
-    cursor: pointer;
-    transition: background-color 0.13s;
-}
-.greenbtn:hover { decorator: linear-gradient(180deg, #d9ff92, #83f5a5 52%, #3db870); }
-.greenbtn:active { decorator: linear-gradient(180deg, #b9ea63, #64d681 52%, #2b9a57); }
-#content {
-    flex-grow: 1;
     display: block;
-    padding: 20px 22px;
     overflow-y: auto;
+    padding: 10px 12px 12px 12px;
 }
-#content scrollbarvertical { width: 10px; }
-#content scrollbarvertical slidertrack {
+.win.folded .win-body { display: none; }
+.win-body scrollbarvertical { width: 10px; }
+.win-body scrollbarvertical slidertrack {
     background-color: #ffffff0a;
     border-radius: 5px;
 }
-#content scrollbarvertical sliderbar {
+.win-body scrollbarvertical sliderbar {
     width: 8px;
     border-radius: 4px;
     background-color: #6ef58c73;
 }
-.panel { display: none; }
-.panel.selected { display: block; }
-.card {
+.brand { display: block; padding: 2px 2px 10px 2px; }
+.brand-name { display: block; font-size: 25px; font-weight: bold; color: #f4fff6; }
+.brand-accent { color: #6ef58c; }
+.brand-sub {
     display: block;
-    padding: 8px 18px 14px 18px;
-    margin-bottom: 14px;
-    background-color: #ffffff07;
-    decorator: linear-gradient(155deg, #101e15d9, #08110cf2);
-    border: 1px #ffffff0f;
-    border-radius: 14px;
-}
-.card-title {
-    display: block;
-    font-size: 22px;
-    font-weight: bold;
-    color: #f0f8f3;
-    padding: 12px 0 2px 0;
-}
-.card-sub {
-    display: block;
-    font-size: 14px;
-    color: #89a792;
-    padding-bottom: 8px;
-}
-.section {
-    display: block;
-}
-.section-head {
-    height: 46px;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    cursor: pointer;
-    border-radius: 9px;
-    padding: 0 6px;
-    transition: background-color 0.12s;
-}
-.section-head:hover { background-color: #ffffff09; }
-.section-title {
-    font-size: 15px;
-    font-weight: bold;
-    letter-spacing: 1.5px;
-    color: #a5c5ae;
-}
-.caret {
-    font-size: 13px;
+    font-size: 12px;
+    letter-spacing: 2px;
     color: #5f7a68;
-    margin-left: 8px;
-    transition: transform 0.15s;
+    padding-top: 3px;
 }
-.section.collapsed .caret { transform: rotate(-90deg); }
-.section-body { display: block; padding: 2px 0 6px 0; }
-.section.collapsed .section-body { display: none; }
 .module-row {
-    height: 60px;
+    height: 52px;
     display: flex;
     flex-direction: row;
     align-items: center;
-    padding: 0 8px;
-    border-radius: 11px;
+    padding: 0 6px;
+    border-radius: 10px;
     transition: background-color 0.12s;
 }
 .module-row:hover { background-color: #ffffff08; }
 .m-chip {
-    width: 40px;
-    height: 40px;
-    border-radius: 11px;
-    font-size: 20px;
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    font-size: 17px;
     font-weight: bold;
     color: #6ef58c;
     background-color: #6ef58c1a;
     text-align: center;
-    line-height: 40px;
+    line-height: 34px;
 }
-.m-text { display: block; flex-grow: 1; padding-left: 14px; }
-.m-name { display: block; font-size: 20px; color: #e9f5ec; }
-.m-desc { display: block; font-size: 14px; color: #89a792; margin-top: 1px; }
+.m-text { display: block; flex-grow: 1; padding-left: 12px; }
+.m-name { display: block; font-size: 18px; color: #e9f5ec; }
+.m-desc { display: block; font-size: 13px; color: #89a792; margin-top: 1px; }
 .switch {
     position: relative;
     width: 58px;
@@ -6865,19 +7065,17 @@ body {
     background-color: #6ef58c;
 }
 .slider-row {
-    height: 44px;
     display: flex;
     flex-direction: row;
     align-items: center;
-    padding: 0 8px;
+    padding: 3px 6px;
     border-radius: 9px;
     transition: background-color 0.12s;
 }
 .slider-row:hover { background-color: #ffffff06; }
-.slider-label { width: 300px; font-size: 18px; color: #cfe3d6; }
-.slider-label small { font-size: 13px; color: #89a792; }
+.slider-label { width: 156px; font-size: 15px; color: #cfe3d6; }
 input[type="range"] {
-    width: 260px;
+    width: 150px;
     height: 26px;
 }
 input[type="range"] slidertrack {
@@ -6900,45 +7098,61 @@ input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
     height: 0px;
 }
 .slider-value {
-    width: 86px;
+    width: 54px;
     text-align: right;
-    font-size: 17px;
+    font-size: 15px;
     color: #a5c5ae;
 }
 .color-chip {
-    width: 26px;
-    height: 26px;
-    margin-left: 10px;
+    width: 24px;
+    height: 24px;
+    margin-left: 8px;
     border-radius: 7px;
     border: 1px #ffffff2e;
 }
+.greenbtn {
+    display: block;
+    height: 44px;
+    margin-top: 8px;
+    font-size: 16px;
+    font-weight: bold;
+    color: #05230f;
+    background-color: #6ef58c;
+    decorator: linear-gradient(180deg, #c4ff62, #6ef58c 52%, #2fa960);
+    border: 1px #e2ffc366;
+    border-radius: 12px;
+    text-align: center;
+    cursor: pointer;
+    transition: background-color 0.13s;
+}
+.greenbtn:hover { decorator: linear-gradient(180deg, #d9ff92, #83f5a5 52%, #3db870); }
+.greenbtn:active { decorator: linear-gradient(180deg, #b9ea63, #64d681 52%, #2b9a57); }
 .note {
-    font-size: 15px;
+    display: block;
+    font-size: 13px;
     color: #89a792;
-    padding: 6px 4px 10px 4px;
+    padding: 6px 4px 8px 4px;
 }
-.tag {
-    display: inline-block;
+.foot {
+    display: block;
     font-size: 12px;
-    letter-spacing: 1px;
+    color: #5f7a68;
+    padding: 8px 4px 2px 4px;
+}
+#btn-layout { color: #89a792; cursor: pointer; transition: color 0.12s; }
+#btn-layout:hover { color: #6ef58c; }
+#tt-status {
+    display: block;
+    font-size: 14px;
     color: #6ef58c;
-    background-color: #6ef58c1a;
-    border: 1px #6ef58c40;
-    border-radius: 7px;
-    padding: 2px 8px;
-    margin-left: 10px;
+    padding: 8px 4px 2px 4px;
 }
-.info-row {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    height: 34px;
-    font-size: 18px;
+#tt-diag {
+    display: block;
+    font-size: 12px;
+    color: #89a792;
+    padding-bottom: 4px;
 }
-.info-key { width: 320px; color: #8aa793; }
-.info-val { color: #e9f5ec; }
-.danger { color: #ff8a8a; }
-.ok { color: #6ef58c; }
 )RCSS";
 
 static const char kMenuRml[] = R"RML(
@@ -6948,284 +7162,151 @@ static const char kMenuRml[] = R"RML(
     <style>
     </style>
 </head>
-<body>
-<div id="shell">
-    <div id="titlebar">
-        <div id="brand">GAY<span id="brand-accent">CLIENT</span></div>
-        <div id="brand-sub">GAME MENU · BEDROCK 1.1.5</div>
-        <div id="title-flex"/>
-        <div id="brand-ver">v1.2</div>
-        <button class="iconbtn" id="btn-close">&#215;</button>
+<body id="doc-body">
+<div class="win" id="win-home">
+    <div class="win-head" id="head-home">
+        <span class="win-dot"/>
+        <span class="win-title">GAYCLIENT</span>
+        <span class="win-sub">HOME</span>
+        <span class="win-flex"/>
+        <button class="foldbtn" id="fold-0"><span class="foldcaret">▾</span></button>
+        <button class="iconbtn" id="btn-close">×</button>
     </div>
-    <div id="layout">
-        <div id="nav">
-            <div class="nav-label">НАВИГАЦИЯ</div>
-            <div class="nav-item active" id="tab-modules"><span class="nav-bar"/><span class="nav-dot"/>Модули</div>
-            <div class="nav-item" id="tab-graphics"><span class="nav-bar"/><span class="nav-dot"/>Графика</div>
-            <div class="nav-item" id="tab-hud"><span class="nav-bar"/><span class="nav-dot"/>HUD</div>
-            <div class="nav-item" id="tab-info"><span class="nav-bar"/><span class="nav-dot"/>Инфо</div>
-            <div id="nav-flex"/>
-            <button class="greenbtn" id="btn-hudeditor">Настроить HUD</button>
+    <div class="win-body">
+        <div class="brand">
+            <span class="brand-name">GAY<span class="brand-accent">CLIENT</span></span>
+            <span class="brand-sub">GAME MENU · BEDROCK 1.1.5</span>
         </div>
-        <div id="content">
-
-            <div class="panel selected" id="panel-modules">
-                <div class="card">
-                    <div class="card-title">Игровые модули<span class="tag">9 модулей</span></div>
-                    <div class="card-sub">Стандартные HUD-модули клиента</div>
-                    <div class="section" id="sec-hud">
-                        <div class="section-head" id="head-sec-hud"><span class="section-title">HUD</span><span class="caret">&#9662;</span></div>
-                        <div class="section-body">
-                            <div class="module-row"><div class="m-chip">F</div><div class="m-text"><div class="m-name">FPS</div><div class="m-desc">Счётчик кадров в секунду</div></div><button class="switch" id="sw-fps"><span class="knob"/></button></div>
-                            <div class="module-row"><div class="m-chip">C</div><div class="m-text"><div class="m-name">CPS</div><div class="m-desc">Клики в секунду</div></div><button class="switch" id="sw-cps"><span class="knob"/></button></div>
-                            <div class="module-row"><div class="m-chip">&#9201;</div><div class="m-text"><div class="m-name">Часы</div><div class="m-desc">Текущее время</div></div><button class="switch" id="sw-clock"><span class="knob"/></button></div>
-                            <div class="module-row"><div class="m-chip">K</div><div class="m-text"><div class="m-name">Клавиши</div><div class="m-desc">Отображение нажатых клавиш</div></div><button class="switch" id="sw-keys"><span class="knob"/></button></div>
-                            <div class="module-row"><div class="m-chip">G</div><div class="m-text"><div class="m-name">Водяной знак</div><div class="m-desc">Надпись GAYClient на экране</div></div><button class="switch" id="sw-watermark"><span class="knob"/></button></div>
-                            <div class="module-row"><div class="m-chip">XY</div><div class="m-text"><div class="m-name">Координаты</div><div class="m-desc">Позиция в мире</div></div><button class="switch" id="sw-coords"><span class="knob"/></button></div>
-                            <div class="module-row"><div class="m-chip">R</div><div class="m-text"><div class="m-name">Разрешение</div><div class="m-desc">Размер окна игры</div></div><button class="switch" id="sw-res"><span class="knob"/></button></div>
-                            <div class="module-row"><div class="m-chip">%</div><div class="m-text"><div class="m-name">Производительность</div><div class="m-desc">Загрузка CPU и RAM</div></div><button class="switch" id="sw-perf"><span class="knob"/></button></div>
-                            <div class="module-row"><div class="m-chip">&#9776;</div><div class="m-text"><div class="m-name">Список модулей</div><div class="m-desc">Активные модули на экране</div></div><button class="switch" id="sw-modlist"><span class="knob"/></button></div>
-                        </div>
-                    </div>
-                </div>
-                <div class="card">
-                    <div class="card-title">Эффекты<span class="tag">испытания</span></div>
-                    <div class="card-sub">Визуальные эффекты персонажа</div>
-                    <div class="section" id="sec-effects">
-                        <div class="section-head" id="head-sec-effects"><span class="section-title">ЭФФЕКТЫ</span><span class="caret">&#9662;</span></div>
-                        <div class="section-body">
-                            <div class="module-row"><div class="m-chip">&#9660;</div><div class="m-text"><div class="m-name">China Hat</div><div class="m-desc">Конус над головой</div></div><button class="switch" id="sw-chinahat"><span class="knob"/></button></div>
-                            <div class="module-row"><div class="m-chip">&#8776;</div><div class="m-text"><div class="m-name">След</div><div class="m-desc">Цветной след за игроком</div></div><button class="switch" id="sw-trail"><span class="knob"/></button></div>
-                            <div class="module-row"><div class="m-chip">O</div><div class="m-text"><div class="m-name">Кольца прыжка</div><div class="m-desc">Круги при прыжке</div></div><button class="switch" id="sw-jump"><span class="knob"/></button></div>
-                            <div class="module-row"><div class="m-chip">&#9876;</div><div class="m-text"><div class="m-name">Катана</div><div class="m-desc">Замена алмазного меча</div></div><button class="switch" id="sw-katana"><span class="knob"/></button></div>
-                            <div class="module-row"><div class="m-chip">&#9733;</div><div class="m-text"><div class="m-name">Корона</div><div class="m-desc">3D-корона над головой</div></div><button class="switch" id="sw-crown"><span class="knob"/></button></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="panel" id="panel-graphics">
-                <div class="card">
-                    <div class="card-title">Графика<span class="tag">живые настройки</span></div>
-                    <div class="card-sub">Параметры эффектов применяются сразу</div>
-
-                    <div class="section" id="sec-g-ch">
-                        <div class="section-head" id="head-sec-g-ch"><span class="section-title">CHINA HAT</span><span class="caret">&#9662;</span></div>
-                        <div class="section-body">
-                            <div class="slider-row"><div class="slider-label">Включение эффекта</div><button class="switch" id="sw-gfx-chinahat"><span class="knob"/></button></div>
-                            <div class="slider-row"><div class="slider-label">Заливка конуса</div><button class="switch" id="sw-ch-fill"><span class="knob"/></button></div>
-                            <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="switch" id="sw-ch-rainbow"><span class="knob"/></button></div>
-                            <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-ch-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-ch-rainbow"/><div class="color-chip" id="chip-ch"/></div>
-                            <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-ch-opacity" min="0" max="100" step="1" value="70"/><div class="slider-value" id="ro-ch-opacity"/></div>
-                            <div class="slider-row"><div class="slider-label">Радиус</div><input type="range" id="sl-ch-radius" min="0.2" max="3" step="0.01" value="0.85"/><div class="slider-value" id="ro-ch-radius"/></div>
-                            <div class="slider-row"><div class="slider-label">Высота конуса</div><input type="range" id="sl-ch-height" min="0.2" max="3" step="0.01" value="0.6"/><div class="slider-value" id="ro-ch-height"/></div>
-                            <div class="slider-row"><div class="slider-label">Смещение над головой</div><input type="range" id="sl-ch-offset" min="0" max="2" step="0.01" value="0.1"/><div class="slider-value" id="ro-ch-offset"/></div>
-                            <div class="slider-row"><div class="slider-label">Амплитуда плавания</div><input type="range" id="sl-ch-amp" min="0" max="1" step="0.01" value="0.05"/><div class="slider-value" id="ro-ch-amp"/></div>
-                            <div class="slider-row"><div class="slider-label">Скорость плавания</div><input type="range" id="sl-ch-floatspeed" min="0" max="3" step="0.01" value="1"/><div class="slider-value" id="ro-ch-floatspeed"/></div>
-                            <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-ch-r" min="0" max="1" step="0.01" value="0.16"/><div class="slider-value" id="ro-ch-r"/></div>
-                            <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-ch-g" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-ch-g"/></div>
-                            <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-ch-b" min="0" max="1" step="0.01" value="0.21"/><div class="slider-value" id="ro-ch-b"/></div>
-                        </div>
-                    </div>
-
-                    <div class="section" id="sec-g-tr">
-                        <div class="section-head" id="head-sec-g-tr"><span class="section-title">СЛЕД</span><span class="caret">&#9662;</span></div>
-                        <div class="section-body">
-                            <div class="slider-row"><div class="slider-label">Включение эффекта</div><button class="switch" id="sw-gfx-trail"><span class="knob"/></button></div>
-                            <div class="slider-row"><div class="slider-label">Заливка</div><button class="switch" id="sw-tr-fill"><span class="knob"/></button></div>
-                            <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="switch" id="sw-tr-rainbow"><span class="knob"/></button></div>
-                            <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-tr-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-tr-rainbow"/><div class="color-chip" id="chip-tr"/></div>
-                            <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-tr-opacity" min="0" max="100" step="1" value="60"/><div class="slider-value" id="ro-tr-opacity"/></div>
-                            <div class="slider-row"><div class="slider-label">Высота следа</div><input type="range" id="sl-tr-height" min="0.2" max="3" step="0.01" value="1"/><div class="slider-value" id="ro-tr-height"/></div>
-                            <div class="slider-row"><div class="slider-label">Время жизни следа</div><input type="range" id="sl-tr-life" min="0.2" max="4" step="0.05" value="1.5"/><div class="slider-value" id="ro-tr-life"/></div>
-                            <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-tr-r" min="0" max="1" step="0.01" value="0.16"/><div class="slider-value" id="ro-tr-r"/></div>
-                            <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-tr-g" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-tr-g"/></div>
-                            <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-tr-b" min="0" max="1" step="0.01" value="0.21"/><div class="slider-value" id="ro-tr-b"/></div>
-                        </div>
-                    </div>
-
-                    <div class="section" id="sec-g-jr">
-                        <div class="section-head" id="head-sec-g-jr"><span class="section-title">КОЛЬЦА ПРЫЖКА</span><span class="caret">&#9662;</span></div>
-                        <div class="section-body">
-                            <div class="slider-row"><div class="slider-label">Включение эффекта</div><button class="switch" id="sw-gfx-jump"><span class="knob"/></button></div>
-                            <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="switch" id="sw-jr-rainbow"><span class="knob"/></button></div>
-                            <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-jr-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-jr-rainbow"/><div class="color-chip" id="chip-jr"/></div>
-                            <div class="slider-row"><div class="slider-label">Радиус</div><input type="range" id="sl-jr-radius" min="0.2" max="3" step="0.01" value="0.7"/><div class="slider-value" id="ro-jr-radius"/></div>
-                            <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-jr-opacity" min="0" max="100" step="1" value="60"/><div class="slider-value" id="ro-jr-opacity"/></div>
-                            <div class="slider-row"><div class="slider-label">Длительность</div><input type="range" id="sl-jr-duration" min="0.1" max="3" step="0.05" value="0.8"/><div class="slider-value" id="ro-jr-duration"/></div>
-                            <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-jr-r" min="0" max="1" step="0.01" value="0.16"/><div class="slider-value" id="ro-jr-r"/></div>
-                            <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-jr-g" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-jr-g"/></div>
-                            <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-jr-b" min="0" max="1" step="0.01" value="0.21"/><div class="slider-value" id="ro-jr-b"/></div>
-                        </div>
-                    </div>
-
-                    <div class="section" id="sec-g-kt">
-                        <div class="section-head" id="head-sec-g-kt"><span class="section-title">КАТАНА</span><span class="caret">&#9662;</span></div>
-                        <div class="section-body">
-                            <div class="slider-row"><div class="slider-label">Размер</div><input type="range" id="sl-kt-scale" min="0.4" max="1" step="0.01" value="0.7"/><div class="slider-value" id="ro-kt-scale"/></div>
-                            <div class="slider-row"><div class="slider-label">Наклон клинка</div><input type="range" id="sl-kt-tilt" min="0.2" max="1.55" step="0.01" value="0.9"/><div class="slider-value" id="ro-kt-tilt"/></div>
-                            <div class="slider-row"><div class="slider-label">Смещение в сторону</div><input type="range" id="sl-kt-side" min="0" max="0.8" step="0.01" value="0.25"/><div class="slider-value" id="ro-kt-side"/></div>
-                            <div class="slider-row"><div class="slider-label">Высота в руке</div><input type="range" id="sl-kt-height" min="0.6" max="1.8" step="0.01" value="1.1"/><div class="slider-value" id="ro-kt-height"/></div>
-                            <div class="slider-row"><div class="slider-label">Смещение вперёд</div><input type="range" id="sl-kt-forward" min="-0.5" max="1" step="0.01" value="0.2"/><div class="slider-value" id="ro-kt-forward"/></div>
-                            <div class="slider-row"><div class="slider-label">Непрозрачность</div><input type="range" id="sl-kt-opacity" min="0.3" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-kt-opacity"/></div>
-                            <div class="slider-row"><div class="slider-label">Сторона (1-е лицо)</div><input type="range" id="sl-kt-fpside" min="0" max="0.8" step="0.01" value="0.3"/><div class="slider-value" id="ro-kt-fpside"/></div>
-                            <div class="slider-row"><div class="slider-label">Вперёд (1-е лицо)</div><input type="range" id="sl-kt-fpforward" min="-0.3" max="1" step="0.01" value="0.25"/><div class="slider-value" id="ro-kt-fpforward"/></div>
-                        </div>
-                    </div>
-
-                    <div class="section" id="sec-g-cr">
-                        <div class="section-head" id="head-sec-g-cr"><span class="section-title">КОРОНА</span><span class="caret">&#9662;</span></div>
-                        <div class="section-body">
-                            <div class="slider-row"><div class="slider-label">Размер</div><input type="range" id="sl-cr-scale" min="0" max="2" step="0.01" value="1"/><div class="slider-value" id="ro-cr-scale"/></div>
-                            <div class="slider-row"><div class="slider-label">Смещение</div><input type="range" id="sl-cr-offset" min="0" max="2" step="0.01" value="0.5"/><div class="slider-value" id="ro-cr-offset"/></div>
-                            <div class="slider-row"><div class="slider-label">Непрозрачность</div><input type="range" id="sl-cr-opacity" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-cr-opacity"/></div>
-                            <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-cr-r" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-cr-r"/></div>
-                            <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-cr-g" min="0" max="1" step="0.01" value="0.8"/><div class="slider-value" id="ro-cr-g"/></div>
-                            <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-cr-b" min="0" max="1" step="0.01" value="0.2"/><div class="slider-value" id="ro-cr-b"/></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="panel" id="panel-hud">
-                <div class="card">
-                    <div class="card-title">HUD<span class="tag">быстрые переключатели</span></div>
-                    <div class="card-sub">Элементы на экране во время игры</div>
-                    <div class="module-row"><div class="m-chip">F</div><div class="m-text"><div class="m-name">FPS</div></div><button class="switch" id="hud-sw-fps"><span class="knob"/></button></div>
-                    <div class="module-row"><div class="m-chip">C</div><div class="m-text"><div class="m-name">CPS</div></div><button class="switch" id="hud-sw-cps"><span class="knob"/></button></div>
-                    <div class="module-row"><div class="m-chip">&#9201;</div><div class="m-text"><div class="m-name">Часы</div></div><button class="switch" id="hud-sw-clock"><span class="knob"/></button></div>
-                    <div class="module-row"><div class="m-chip">K</div><div class="m-text"><div class="m-name">Клавиши</div></div><button class="switch" id="hud-sw-keys"><span class="knob"/></button></div>
-                    <div class="module-row"><div class="m-chip">G</div><div class="m-text"><div class="m-name">Водяной знак</div></div><button class="switch" id="hud-sw-watermark"><span class="knob"/></button></div>
-                    <div class="module-row"><div class="m-chip">XY</div><div class="m-text"><div class="m-name">Координаты</div></div><button class="switch" id="hud-sw-coords"><span class="knob"/></button></div>
-                    <div class="module-row"><div class="m-chip">%</div><div class="m-text"><div class="m-name">Производительность</div></div><button class="switch" id="hud-sw-perf"><span class="knob"/></button></div>
-                    <div class="module-row"><div class="m-chip">&#9776;</div><div class="m-text"><div class="m-name">Список модулей</div></div><button class="switch" id="hud-sw-modlist"><span class="knob"/></button></div>
-                </div>
-                <div class="card">
-                    <div class="card-title">Редактор</div>
-                    <div class="card-sub">Перетаскивание элементов HUD мышью</div>
-                    <button class="greenbtn" id="btn-hudeditor2">Настроить HUD</button>
-                    <div class="note">Все панели скроются — останется только HUD. Перетаскивай элементы, чтобы изменить их позицию. Esc или кнопка меню вернёт обычный режим.</div>
-                </div>
-            </div>
-
-            <div class="panel" id="panel-info">
-                <div class="card">
-                    <div class="card-title">О клиенте</div>
-                    <div class="info-row"><div class="info-key">Клиент</div><div class="info-val">GAYClient v1.2</div></div>
-                    <div class="info-row"><div class="info-key">Игра</div><div class="info-val">Minecraft Bedrock 1.1.5 (Windows)</div></div>
-                    <div class="info-row"><div class="info-key">Интерфейс</div><div class="info-val ok">RmlUi · HTML/CSS</div></div>
-                    <div class="info-row"><div class="info-key">Сборка</div><div class="info-val" id="info-build">—</div></div>
-                </div>
-                <div class="card">
-                    <div class="card-title">Статус</div>
-                    <div class="info-row"><div class="info-key">Соединение с ядром</div><div class="info-val ok" id="info-conn">подключено</div></div>
-                    <div class="info-row"><div class="info-key">Профили</div><div class="info-val danger">пока не подключены</div></div>
-                    <div class="info-row"><div class="info-key">Звук</div><div class="info-val danger">пока не подключён</div></div>
-                    <div class="info-row"><div class="info-key">Статистика</div><div class="info-val danger">пока не подключена</div></div>
-                </div>
-                <div class="card">
-                    <div class="card-title">Управление</div>
-                    <div class="info-row"><div class="info-key">Открыть меню</div><div class="info-val">клавиша меню игры</div></div>
-                    <div class="info-row"><div class="info-key">Выключить оверлей</div><div class="info-val danger">Delete (полное отключение)</div></div>
-                </div>
-            </div>
-
-        </div>
+        <button class="greenbtn" id="btn-hudeditor">Настроить HUD</button>
+        <div class="note">Окна тащатся за заголовок, колесо мыши прокручивает список, стрелка в углу сворачивает окно. <span id="btn-layout">Сбросить раскладку</span></div>
+        <div class="module-row"><div class="m-chip">F</div><div class="m-text"><div class="m-name">FPS</div><div class="m-desc">Счётчик кадров в секунду</div></div><button class="switch" id="sw-fps"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-chip">C</div><div class="m-text"><div class="m-name">CPS</div><div class="m-desc">Клики в секунду</div></div><button class="switch" id="sw-cps"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-chip">⏱</div><div class="m-text"><div class="m-name">Часы</div><div class="m-desc">Текущее время</div></div><button class="switch" id="sw-clock"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-chip">K</div><div class="m-text"><div class="m-name">Клавиши</div><div class="m-desc">Отображение нажатых клавиш</div></div><button class="switch" id="sw-keys"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-chip">G</div><div class="m-text"><div class="m-name">Водяной знак</div><div class="m-desc">Надпись GAYClient на экране</div></div><button class="switch" id="sw-watermark"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-chip">XY</div><div class="m-text"><div class="m-name">Координаты</div><div class="m-desc">Позиция в мире</div></div><button class="switch" id="sw-coords"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-chip">R</div><div class="m-text"><div class="m-name">Разрешение</div><div class="m-desc">Размер окна игры</div></div><button class="switch" id="sw-res"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-chip">%</div><div class="m-text"><div class="m-name">Производительность</div><div class="m-desc">Загрузка CPU и RAM</div></div><button class="switch" id="sw-perf"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-chip">☰</div><div class="m-text"><div class="m-name">Список модулей</div><div class="m-desc">Активные модули на экране</div></div><button class="switch" id="sw-modlist"><span class="knob"/></button></div>
+        <div class="foot">v1.2 · RmlUi</div>
     </div>
 </div>
-</body>
-</rml>
-)RML";
-
-static const char kTestToolsRcss[] = R"RCSS(
-body {
-    font-family: GAY;
-    font-size: 17px;
-    color: #f0f8f3;
-}
-#tt {
-    position: absolute;
-    left: 18px;
-    top: 240px;
-    width: 360px;
-    background-color: #06110bf5;
-    decorator: linear-gradient(160deg, #101e15f5, #050c08fa);
-    border: 1px #6ef58c4c;
-    border-radius: 14px;
-    drag: drag;
-}
-#tt-head {
-    height: 40px;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    padding: 0 14px;
-    border-bottom: 1px #ffffff0f;
-    font-size: 15px;
-    font-weight: bold;
-    letter-spacing: 1px;
-    color: #a5c5ae;
-    cursor: move;
-}
-#tt-body { display: block; padding: 10px 14px 14px 14px; }
-#tt-status { font-size: 17px; color: #6ef58c; padding-bottom: 4px; }
-#tt-diag { font-size: 13px; color: #89a792; padding-bottom: 8px; }
-.tt-row {
-    height: 38px;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-}
-.tt-label { width: 150px; font-size: 16px; color: #cfe3d6; }
-input[type="range"] { width: 130px; height: 24px; }
-input[type="range"] slidertrack {
-    height: 5px;
-    margin-top: 9px;
-    background-color: #151f18;
-    border-radius: 3px;
-}
-input[type="range"] sliderbar {
-    width: 15px;
-    height: 15px;
-    top: -5px;
-    border-radius: 8px;
-    background-color: #6ef58c;
-}
-input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
-    width: 0px;
-    height: 0px;
-}
-.tt-val { width: 62px; text-align: right; font-size: 15px; color: #a5c5ae; }
-.tt-head-label { display: block; font-size: 13px; letter-spacing: 1.5px; color: #5f7a68; padding-top: 6px; }
-)RCSS";
-
-static const char kTestToolsRml[] = R"RML(
-<rml>
-<head>
-    <title>Test tools</title>
-    <style>
-    </style>
-</head>
-<body>
-<div id="tt">
-    <div id="tt-head">TEST TOOLS (ADAPTER)</div>
-    <div id="tt-body">
+<div class="win" id="win-visuals">
+    <div class="win-head" id="head-visuals">
+        <span class="win-dot"/>
+        <span class="win-title">VISUALS</span>
+        <span class="win-sub">ЭФФЕКТЫ</span>
+        <span class="win-flex"/>
+        <button class="foldbtn" id="fold-1"><span class="foldcaret">▾</span></button>
+    </div>
+    <div class="win-body">
+        <div class="module-row"><div class="m-chip">▼</div><div class="m-text"><div class="m-name">China Hat</div><div class="m-desc">Конус над головой</div></div><button class="switch" id="sw-chinahat"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-chip">≈</div><div class="m-text"><div class="m-name">След</div><div class="m-desc">Цветной след за игроком</div></div><button class="switch" id="sw-trail"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-chip">O</div><div class="m-text"><div class="m-name">Кольца прыжка</div><div class="m-desc">Круги при прыжке</div></div><button class="switch" id="sw-jump"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-chip">⚔</div><div class="m-text"><div class="m-name">Катана</div><div class="m-desc">Замена алмазного меча</div></div><button class="switch" id="sw-katana"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-chip">★</div><div class="m-text"><div class="m-name">Корона</div><div class="m-desc">3D-корона над головой</div></div><button class="switch" id="sw-crown"><span class="knob"/></button></div>
+        <div class="note">Главные выключатели. Тонкая настройка каждого эффекта — в его собственном окне.</div>
+    </div>
+</div>
+<div class="win" id="win-ch">
+    <div class="win-head" id="head-ch">
+        <span class="win-dot"/>
+        <span class="win-title">CHINA HAT</span>
+        <span class="win-flex"/>
+        <button class="foldbtn" id="fold-2"><span class="foldcaret">▾</span></button>
+    </div>
+    <div class="win-body">
+        <div class="slider-row"><div class="slider-label">Включение эффекта</div><button class="switch" id="sw-gfx-chinahat"><span class="knob"/></button></div>
+        <div class="slider-row"><div class="slider-label">Заливка конуса</div><button class="switch" id="sw-ch-fill"><span class="knob"/></button></div>
+        <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="switch" id="sw-ch-rainbow"><span class="knob"/></button></div>
+        <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-ch-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-ch-rainbow"/><div class="color-chip" id="chip-ch"/></div>
+        <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-ch-opacity" min="0" max="100" step="1" value="70"/><div class="slider-value" id="ro-ch-opacity"/></div>
+        <div class="slider-row"><div class="slider-label">Радиус</div><input type="range" id="sl-ch-radius" min="0.2" max="3" step="0.01" value="0.85"/><div class="slider-value" id="ro-ch-radius"/></div>
+        <div class="slider-row"><div class="slider-label">Высота конуса</div><input type="range" id="sl-ch-height" min="0.2" max="3" step="0.01" value="0.6"/><div class="slider-value" id="ro-ch-height"/></div>
+        <div class="slider-row"><div class="slider-label">Отступ от головы</div><input type="range" id="sl-ch-offset" min="0" max="2" step="0.01" value="0.1"/><div class="slider-value" id="ro-ch-offset"/></div>
+        <div class="slider-row"><div class="slider-label">Амплитуда плавания</div><input type="range" id="sl-ch-amp" min="0" max="1" step="0.01" value="0.05"/><div class="slider-value" id="ro-ch-amp"/></div>
+        <div class="slider-row"><div class="slider-label">Скорость плавания</div><input type="range" id="sl-ch-floatspeed" min="0" max="3" step="0.01" value="1"/><div class="slider-value" id="ro-ch-floatspeed"/></div>
+        <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-ch-r" min="0" max="1" step="0.01" value="0.16"/><div class="slider-value" id="ro-ch-r"/></div>
+        <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-ch-g" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-ch-g"/></div>
+        <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-ch-b" min="0" max="1" step="0.01" value="0.21"/><div class="slider-value" id="ro-ch-b"/></div>
+    </div>
+</div>
+<div class="win" id="win-tr">
+    <div class="win-head" id="head-tr">
+        <span class="win-dot"/>
+        <span class="win-title">СЛЕД</span>
+        <span class="win-flex"/>
+        <button class="foldbtn" id="fold-3"><span class="foldcaret">▾</span></button>
+    </div>
+    <div class="win-body">
+        <div class="slider-row"><div class="slider-label">Включение эффекта</div><button class="switch" id="sw-gfx-trail"><span class="knob"/></button></div>
+        <div class="slider-row"><div class="slider-label">Заливка</div><button class="switch" id="sw-tr-fill"><span class="knob"/></button></div>
+        <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="switch" id="sw-tr-rainbow"><span class="knob"/></button></div>
+        <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-tr-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-tr-rainbow"/><div class="color-chip" id="chip-tr"/></div>
+        <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-tr-opacity" min="0" max="100" step="1" value="60"/><div class="slider-value" id="ro-tr-opacity"/></div>
+        <div class="slider-row"><div class="slider-label">Высота следа</div><input type="range" id="sl-tr-height" min="0.2" max="3" step="0.01" value="1"/><div class="slider-value" id="ro-tr-height"/></div>
+        <div class="slider-row"><div class="slider-label">Время жизни следа</div><input type="range" id="sl-tr-life" min="0.2" max="4" step="0.05" value="1.5"/><div class="slider-value" id="ro-tr-life"/></div>
+        <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-tr-r" min="0" max="1" step="0.01" value="0.16"/><div class="slider-value" id="ro-tr-r"/></div>
+        <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-tr-g" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-tr-g"/></div>
+        <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-tr-b" min="0" max="1" step="0.01" value="0.21"/><div class="slider-value" id="ro-tr-b"/></div>
+    </div>
+</div>
+<div class="win" id="win-jr">
+    <div class="win-head" id="head-jr">
+        <span class="win-dot"/>
+        <span class="win-title">КОЛЬЦА</span>
+        <span class="win-sub">ПРЫЖОК</span>
+        <span class="win-flex"/>
+        <button class="foldbtn" id="fold-4"><span class="foldcaret">▾</span></button>
+    </div>
+    <div class="win-body">
+        <div class="slider-row"><div class="slider-label">Включение эффекта</div><button class="switch" id="sw-gfx-jump"><span class="knob"/></button></div>
+        <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="switch" id="sw-jr-rainbow"><span class="knob"/></button></div>
+        <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-jr-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-jr-rainbow"/><div class="color-chip" id="chip-jr"/></div>
+        <div class="slider-row"><div class="slider-label">Радиус</div><input type="range" id="sl-jr-radius" min="0.2" max="3" step="0.01" value="0.7"/><div class="slider-value" id="ro-jr-radius"/></div>
+        <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-jr-opacity" min="0" max="100" step="1" value="60"/><div class="slider-value" id="ro-jr-opacity"/></div>
+        <div class="slider-row"><div class="slider-label">Длительность</div><input type="range" id="sl-jr-duration" min="0.1" max="3" step="0.05" value="0.8"/><div class="slider-value" id="ro-jr-duration"/></div>
+        <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-jr-r" min="0" max="1" step="0.01" value="0.16"/><div class="slider-value" id="ro-jr-r"/></div>
+        <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-jr-g" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-jr-g"/></div>
+        <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-jr-b" min="0" max="1" step="0.01" value="0.21"/><div class="slider-value" id="ro-jr-b"/></div>
+    </div>
+</div>
+<div class="win" id="win-kt">
+    <div class="win-head" id="head-kt">
+        <span class="win-dot"/>
+        <span class="win-title">КАТАНА</span>
+        <span class="win-flex"/>
+        <button class="foldbtn" id="fold-5"><span class="foldcaret">▾</span></button>
+    </div>
+    <div class="win-body">
+        <div class="slider-row"><div class="slider-label">Включить катану</div><button class="switch" id="sw-kt-master"><span class="knob"/></button></div>
+        <div class="slider-row"><div class="slider-label">Размер</div><input type="range" id="sl-kt-scale" min="0.4" max="1" step="0.01" value="0.7"/><div class="slider-value" id="ro-kt-scale"/></div>
+        <div class="slider-row"><div class="slider-label">Наклон клинка</div><input type="range" id="sl-kt-tilt" min="0.2" max="1.55" step="0.01" value="0.9"/><div class="slider-value" id="ro-kt-tilt"/></div>
+        <div class="slider-row"><div class="slider-label">Смещение в сторону</div><input type="range" id="sl-kt-side" min="0" max="0.8" step="0.01" value="0.25"/><div class="slider-value" id="ro-kt-side"/></div>
+        <div class="slider-row"><div class="slider-label">Высота в руке</div><input type="range" id="sl-kt-height" min="0.6" max="1.8" step="0.01" value="1.1"/><div class="slider-value" id="ro-kt-height"/></div>
+        <div class="slider-row"><div class="slider-label">Смещение вперёд</div><input type="range" id="sl-kt-forward" min="-0.5" max="1" step="0.01" value="0.2"/><div class="slider-value" id="ro-kt-forward"/></div>
+        <div class="slider-row"><div class="slider-label">Непрозрачность</div><input type="range" id="sl-kt-opacity" min="0.3" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-kt-opacity"/></div>
+        <div class="slider-row"><div class="slider-label">Сторона (1-е лицо)</div><input type="range" id="sl-kt-fpside" min="0" max="0.8" step="0.01" value="0.3"/><div class="slider-value" id="ro-kt-fpside"/></div>
+        <div class="slider-row"><div class="slider-label">Вперёд (1-е лицо)</div><input type="range" id="sl-kt-fpforward" min="-0.3" max="1" step="0.01" value="0.25"/><div class="slider-value" id="ro-kt-fpforward"/></div>
         <div id="tt-status">Katana: ожидание</div>
         <div id="tt-diag">—</div>
-        <div class="tt-head-label">КАТАНА</div>
-        <div class="tt-row"><div class="tt-label">Размер</div><input type="range" id="sl-kt2-scale" min="0.4" max="1" step="0.01" value="0.7"/><div class="tt-val" id="ro-kt2-scale"/></div>
-        <div class="tt-row"><div class="tt-label">Наклон</div><input type="range" id="sl-kt2-tilt" min="0.2" max="1.55" step="0.01" value="0.9"/><div class="tt-val" id="ro-kt2-tilt"/></div>
-        <div class="tt-row"><div class="tt-label">Сторона</div><input type="range" id="sl-kt2-side" min="0" max="0.8" step="0.01" value="0.25"/><div class="tt-val" id="ro-kt2-side"/></div>
-        <div class="tt-row"><div class="tt-label">Высота</div><input type="range" id="sl-kt2-height" min="0.6" max="1.8" step="0.01" value="1.1"/><div class="tt-val" id="ro-kt2-height"/></div>
-        <div class="tt-row"><div class="tt-label">Вперёд</div><input type="range" id="sl-kt2-forward" min="-0.5" max="1" step="0.01" value="0.2"/><div class="tt-val" id="ro-kt2-forward"/></div>
-        <div class="tt-row"><div class="tt-label">Непрозр.</div><input type="range" id="sl-kt2-opacity" min="0.3" max="1" step="0.01" value="1"/><div class="tt-val" id="ro-kt2-opacity"/></div>
-        <div class="tt-head-label">КОРОНА</div>
-        <div class="tt-row"><div class="tt-label">Размер</div><input type="range" id="sl-cr2-scale" min="0" max="2" step="0.01" value="1"/><div class="tt-val" id="ro-cr2-scale"/></div>
-        <div class="tt-row"><div class="tt-label">Смещение</div><input type="range" id="sl-cr2-offset" min="0" max="2" step="0.01" value="0.5"/><div class="tt-val" id="ro-cr2-offset"/></div>
-        <div class="tt-row"><div class="tt-label">Непрозр.</div><input type="range" id="sl-cr2-opacity" min="0" max="1" step="0.01" value="1"/><div class="tt-val" id="ro-cr2-opacity"/></div>
-        <div class="tt-row"><div class="tt-label">Красный</div><input type="range" id="sl-cr2-r" min="0" max="1" step="0.01" value="1"/><div class="tt-val" id="ro-cr2-r"/></div>
-        <div class="tt-row"><div class="tt-label">Зелёный</div><input type="range" id="sl-cr2-g" min="0" max="1" step="0.01" value="0.8"/><div class="tt-val" id="ro-cr2-g"/></div>
-        <div class="tt-row"><div class="tt-label">Синий</div><input type="range" id="sl-cr2-b" min="0" max="1" step="0.01" value="0.2"/><div class="tt-val" id="ro-cr2-b"/></div>
+    </div>
+</div>
+<div class="win" id="win-cr">
+    <div class="win-head" id="head-cr">
+        <span class="win-dot"/>
+        <span class="win-title">КОРОНА</span>
+        <span class="win-flex"/>
+        <button class="foldbtn" id="fold-6"><span class="foldcaret">▾</span></button>
+    </div>
+    <div class="win-body">
+        <div class="slider-row"><div class="slider-label">Включить корону</div><button class="switch" id="sw-cr-master"><span class="knob"/></button></div>
+        <div class="slider-row"><div class="slider-label">Размер</div><input type="range" id="sl-cr-scale" min="0" max="2" step="0.01" value="1"/><div class="slider-value" id="ro-cr-scale"/></div>
+        <div class="slider-row"><div class="slider-label">Смещение</div><input type="range" id="sl-cr-offset" min="0" max="2" step="0.01" value="0.5"/><div class="slider-value" id="ro-cr-offset"/></div>
+        <div class="slider-row"><div class="slider-label">Непрозрачность</div><input type="range" id="sl-cr-opacity" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-cr-opacity"/></div>
+        <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-cr-r" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-cr-r"/></div>
+        <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-cr-g" min="0" max="1" step="0.01" value="0.8"/><div class="slider-value" id="ro-cr-g"/></div>
+        <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-cr-b" min="0" max="1" step="0.01" value="0.2"/><div class="slider-value" id="ro-cr-b"/></div>
     </div>
 </div>
 </body>

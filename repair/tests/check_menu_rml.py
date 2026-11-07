@@ -42,7 +42,8 @@ assert 'segoeui.ttf' in m and 'segoeuib.ttf' in m
 assert 'LoadFontFace' in m and 'Rml::Style::FontWeight::Bold' in m
 assert '"GAY"' in m
 assert 'LoadDocumentFromMemory' in m and 'text.find("<style>")' in m
-assert 'kMenuRml' in m and 'kMenuRcss' in m and 'kTestToolsRml' in m and 'kTestToolsRcss' in m
+assert 'kMenuRml' in m and 'kMenuRcss' in m
+assert 'kTestToolsRml' not in m and 'kTestToolsRcss' not in m
 
 # 4. Render loop discipline: dimensions follow the viewport, the RTV is passed
 #    to EndFrame, and the legacy interface is replaced only after a complete
@@ -82,7 +83,7 @@ for switch_id in ('sw-fps', 'sw-cps', 'sw-clock', 'sw-keys', 'sw-watermark',
                   'sw-chinahat', 'sw-trail', 'sw-jump', 'sw-katana', 'sw-crown',
                   'sw-gfx-chinahat', 'sw-gfx-trail', 'sw-gfx-jump',
                   'sw-ch-fill', 'sw-ch-rainbow', 'sw-tr-fill', 'sw-tr-rainbow',
-                  'sw-jr-rainbow', 'hud-sw-fps', 'hud-sw-modlist'):
+                  'sw-jr-rainbow', 'sw-kt-master', 'sw-cr-master'):
     assert f'"{switch_id}"' in m, switch_id
     assert f'id="{switch_id}"' in d, switch_id
 for slider_id in ('sl-ch-rainbow', 'sl-ch-opacity', 'sl-ch-radius', 'sl-ch-height',
@@ -91,8 +92,7 @@ for slider_id in ('sl-ch-rainbow', 'sl-ch-opacity', 'sl-ch-radius', 'sl-ch-heigh
                   'sl-jr-rainbow', 'sl-jr-opacity', 'sl-jr-radius', 'sl-jr-duration',
                   'sl-kt-scale', 'sl-kt-tilt', 'sl-kt-side', 'sl-kt-height',
                   'sl-kt-forward', 'sl-kt-opacity', 'sl-kt-fpside', 'sl-kt-fpforward',
-                  'sl-cr-scale', 'sl-cr-offset', 'sl-cr-opacity',
-                  'sl-kt2-scale', 'sl-cr2-scale'):
+                  'sl-cr-scale', 'sl-cr-offset', 'sl-cr-opacity'):
     assert f'"{slider_id}"' in m, slider_id
     assert f'id="{slider_id}"' in d, slider_id
 # Every slider id in the markup is registered and has a readout counterpart.
@@ -102,23 +102,34 @@ for slider_id in slider_ids:
     readout = 'ro' + slider_id[2:]
     assert f'id="{readout}"' in d, readout
 # Every switch id in the markup is registered.
-for switch_id in set(re.findall(r'id="((?:sw|hud-sw)-[a-z0-9-]+)"', d)):
+for switch_id in set(re.findall(r'id="(sw-[a-z0-9-]+)"', d)):
     assert f'"{switch_id}"' in m, switch_id
 
-# 8. Tabs, collapsible sections, close and HUD editor buttons are wired.
-assert 'btn-close' in m and 'btn-hudeditor' in m and 'btn-hudeditor2' in m
-assert 'activateTab' in m and '"tab-modules"' in m and '"panel-modules"' in m
-assert 'head-sec-' in m and 'SetClass("collapsed"' in m
+# 8. Window manager: fold buttons, layout reset, close and HUD editor
+#    buttons are wired; drag + focus go through the WindowListener.
+assert 'btn-close' in m and 'btn-hudeditor' in m and 'btn-hudeditor2' not in m
+assert 'activateTab' not in m and '"tab-modules"' not in m and '"panel-modules"' not in m
+assert 'class WindowListener' in m and 'EventId::Dragstart' in m and 'EventId::Drag' in m
+assert 'focusWin' in m and 'applyWin' in m and 'layoutWindows' in m
+assert 'kWindows[]' in m and '"win-home"' in m and '"win-visuals"' in m
+assert 'menu_layout::computeMenuWindows' in m and 'menu_layout::clampDraggedWindow' in m
+assert 'id.compare(0, 5, "fold-")' in m and 'SetClass("folded"' in m
+assert 'id == "btn-layout"' in m
 assert 'SetClass("on"' in m and 'IsClassSet("on")' in m
-assert 'SetClass("active"' in m and 'SetClass("selected"' in m
+assert 'SetClass("focus"' in m
 assert 'g_hudEditorRequest.store(true, std::memory_order_relaxed);' in m
+assert 'layoutWindows(static_cast<float>(width), static_cast<float>(height), true);' in m
+assert 'layoutWindows(static_cast<float>(width), static_cast<float>(height), false);' in m
+assert (r/'src/menu_layout.h').exists()
+ml = (r/'src/menu_layout.h').read_text(encoding='utf-8')
+assert 'rectsOverlap' in ml and 'kMinRowHeight' in ml
 
-# 9. Test tools window: separate document, draggable, katana/crown only while
-#    enabled, status/diagnostics updated only when the text actually changed.
-assert 'toolsVisible = menuVisible && (KatanaEnabled() || AccessoryEnabled())' in m
+# 9. Katana diagnostics live at the bottom of the katana window; the text is
+#    updated only when it actually changed.
 assert 'katanaStatusText' in m and 'KatanaDebugSnapshot()' in m
 assert 'g_ttStatusCache != status' not in m and 'if (status != g_ttStatusCache)' in m
-assert 'id="tt"' in d and 'drag: drag;' in d and 'tt-status' in d and 'tt-diag' in d
+assert 'tt-status' in d and 'tt-diag' in d and 'win-kt' in d
+assert 'id="tt"' not in d
 
 # 10. Build script discipline: static RmlUi without export leaks, the DX11
 #     renderer with non-multisampled targets, the FreeType font engine
@@ -144,18 +155,25 @@ assert 'bool LogMessage(Rml::Log::Type type, const Rml::String& message) overrid
 assert 'gayclient-menu.log' in m
 for step in ('segoeui.ttf unreadable', 'Rml::Initialise returned false',
              'CreateContext returned null', 'LoadFontFace (regular)',
-             'menu document did not parse', 'test tools document did not parse',
+             'menu document did not parse',
              'element registry incomplete', 'init: complete'):
     assert step in m, step
 assert 'first frame complete' in m
 
-# 11. The markup keeps the launcher look: big shell, accent color, animations.
-assert '1140px' in d and '716px' in d
-assert 'std::min(1140, static_cast<int>(width) - 24)' in m
+# 11. The markup keeps the launcher palette in windowed form: draggable
+#     title bars, folding, scrolling bodies, dim backdrop, accent gradients.
+assert '.win-head' in d and 'drag: drag;' in d
+assert 'overflow-y: auto' in d and 'scrollbarvertical' in d
+assert 'border-radius: 13px 13px 0 0' in d
+assert 'id="doc-body"' in d and '#020805' in d
+assert '.win.folded .win-body { display: none; }' in d
+for win in ('win-home', 'win-visuals', 'win-ch', 'win-tr', 'win-jr', 'win-kt', 'win-cr'):
+    assert f'id="{win}"' in d, win
 assert '#6ef58c' in d and 'transition:' in d
 assert 'decorator: linear-gradient(' in d
 assert '#3ae882' not in d
 assert 'font-size: 20px' in d
+assert '1140px' not in d and '716px' not in d
 
 # 12. RmlUi 6.x rendering pitfalls found via the software-rasterizer repro
 #     must stay fixed:
@@ -167,17 +185,20 @@ assert 'font-size: 20px' in d
 #         collapses fixed siblings unless flex-basis: 0px is set;
 #     (d) element ids must be unique (GetElementById returns the first).
 import re as _re2
-block_divs = ('.card', '.section-body', '.m-text', '.m-name', '.m-desc',
-              '#tt-body', '.tt-head-label')
+block_divs = ('.win-body', '.brand', '.brand-name', '.brand-sub', '.m-text',
+              '.m-name', '.m-desc', '.note', '.foot', '#tt-status', '#tt-diag')
 for sel in block_divs:
     pat = _re2.escape(sel) + r'\s*\{[^}]*display:\s*block'
     assert _re2.search(pat, d), sel
-assert '#layout {\n    flex-basis: 0px;' in d
+assert '.win-body {\n    flex-basis: 0px;' in d
+assert '.win-head {\n    height: 44px;\n    flex-basis: 44px;' in d
 assert 'rgba(' not in d
 import re as _re
-assert len(_re.findall(r'id="brand-sub"', d)) == 1
-assert 'id="brand-ver"' in d
-assert '#brand-sub, #brand-ver {' in d
+assert len(_re.findall(r'id="doc-body"', d)) == 1
+assert len(_re.findall(r'class="win"', d)) == 7
+assert _re.findall(r'id="fold-\d"', d) == ['id="fold-0"', 'id="fold-1"', 'id="fold-2"',
+                                            'id="fold-3"', 'id="fold-4"', 'id="fold-5"',
+                                            'id="fold-6"']
 
 # 13. Web bridge: the web replica (repair/menu-web, root index.html) drives
 #     the same verified setters through a localhost-only WebSocket server.
