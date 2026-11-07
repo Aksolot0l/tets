@@ -116,11 +116,10 @@ constexpr float kPreviewInsetPx = 356.0f;
 float computeUiScale(unsigned width, unsigned height) {
     const float ref = std::fmax(static_cast<float>(height) / 1080.0f,
                                  static_cast<float>(width) / 1920.0f);
-    // v6: compact menu, half of the v5 zoom (1080p = 0.625, floor 0.575,
-    // 4K = 1.0).
-    const float scale = ref * 1.25f * 0.5f;
-    if (scale < 0.575f) return 0.575f;
-    if (scale > 1.0f) return 1.0f;
+    // v7: v6's compact zoom times 1.6 (1080p = 1.0, floor 0.92, 4K = 1.6).
+    const float scale = ref * 1.25f * 0.5f * 1.6f;
+    if (scale < 0.92f) return 0.92f;
+    if (scale > 1.6f) return 1.6f;
     return scale;
 }
 
@@ -163,10 +162,11 @@ struct WinDef {
     float h;
 };
 
-// Natural (reference 1080p) sizes; multiplied by g_uiScale at init.
+// Natural (reference 1080p) sizes; multiplied by g_uiScale at init. v7: the
+// Visuals window is the same height as Home; its body scrolls inside.
 const WinDef kWindows[] = {
     {"win-home",    "head-home",    300.0f, 750.0f},
-    {"win-visuals", "head-visuals", 460.0f, 1650.0f},
+    {"win-visuals", "head-visuals", 460.0f, 750.0f},
 };
 constexpr int kWindowCount = static_cast<int>(sizeof(kWindows) / sizeof(kWindows[0]));
 constexpr float kFoldedHeightRef = 46.0f;  // title bar + borders (reference)
@@ -615,6 +615,29 @@ void layoutWindows(float viewW, float viewH, bool force) {
     }
 }
 
+// Keep every window where the user left it, only pushing it back inside the
+// viewport (and out of the preview strip when the preview is on). Used when
+// the 3D preview toggles, so switching it never visibly re-arranges the
+// windows.
+void clampWindowsToViewport() {
+    const float viewW = static_cast<float>(g_width);
+    const float viewH = static_cast<float>(g_height);
+    const float inset = g_previewOn.load(std::memory_order_relaxed) &&
+        viewW > kPreviewInsetPx * 2.0f ? kPreviewInsetPx : 0.0f;
+    for (WinState& win : g_win) {
+        if (!win.el) continue;
+        if (win.animActive) {
+            win.animActive = false;
+            win.el->SetClass("folding", false);
+        }
+        menu_layout::WindowRect clamped{win.x, win.y, win.w, currentWinH(win)};
+        menu_layout::clampDraggedWindow(clamped, viewW - inset, viewH);
+        win.x = clamped.x;
+        win.y = clamped.y;
+        applyWin(win);
+    }
+}
+
 // Title-bar drag + focus. Attached to the window (mousedown: focus, bring to
 // front) and to the title bar (dragstart/drag: move, clamped so the bar can
 // never leave the screen).
@@ -674,13 +697,25 @@ void MenuClickListener::ProcessEvent(Rml::Event& event) {
         const bool on = !g_previewOn.load(std::memory_order_relaxed);
         g_previewOn.store(on, std::memory_order_relaxed);
         if (g_previewSwitch) g_previewSwitch->SetClass("on", on);
-        layoutWindows(static_cast<float>(g_width), static_cast<float>(g_height), false);
+        // v7: toggling the preview keeps every window where it is (the user
+        // complained the windows "jump together" on re-tiling); only clamp
+        // them away from the reserved strip / screen edges.
+        clampWindowsToViewport();
         return;
     }
     if (id.size() >= 4 && id.compare(0, 4, "sec-") == 0) {
-        if (Rml::Element* section = g_menuDoc->GetElementById(id)) {
-            const bool folded = !section->IsClassSet("folded");
-            section->SetClass("folded", folded);
+        // Only the section head toggles the fold. Clicks inside the body
+        // (slider labels, rows, padding) used to walk up to the section and
+        // collapse it mid-interaction, which made the sliders feel dead.
+        Rml::Element* target = event.GetTargetElement();
+        bool inHead = false;
+        for (Rml::Element* e = target; e; e = e->GetParentNode())
+            if (e->IsClassSet("sec-head")) { inHead = true; break; }
+        if (inHead) {
+            if (Rml::Element* section = g_menuDoc->GetElementById(id)) {
+                const bool folded = !section->IsClassSet("folded");
+                section->SetClass("folded", folded);
+            }
         }
         return;
     }

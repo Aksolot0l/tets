@@ -1,28 +1,27 @@
-GAYCLIENT REPAIR - HUD + ВНУТРИИГРОВОЕ МЕНЮ, ВСЁ В ОДНОМ ФАЙЛЕ (v6)
+GAYCLIENT REPAIR - HUD + ВНУТРИИГРОВОЕ МЕНЮ, ВСЁ В ОДНОМ ФАЙЛЕ (v7)
 ====================================================================
 
-Версия v6 внутриигрового меню (RmlUi, встроен в GAYClientInternal.dll):
-- Тумблеры заменены квадратными чекбоксами: пустой квадрат в выключенном
-  состоянии, галочка (рамка из двух линий, повёрнутая на -45 градусов) во
-  включённом; появление галочки анимировано CSS-переходом opacity.
-- Убраны дублирующие выключатели эффектов вверху окна Visuals: у каждого
-  эффекта остался один выключатель внутри его секции настроек.
-- Убраны приписки возле заголовков секций (jump, trail, конус, katana).
-- Анимированные RCSS-иконки модулей удалены полностью: строки модулей -
-  обычные текстовые строки с чекбоксом.
-- Типографика приведена к обычной: без точек-разделителей, тире заменены
-  на обычный дефис.
-- Плавные анимации: показ/скрытие меню - затемнение всего документа
-  (класс body.faded + transition), сворачивание секций - анимация
-  max-height/padding/opacity, сворачивание окон - интерполяция высоты
-  на C++ (150 мс, ease-out).
-- Исправлен баг, когда после закрытия интерфейса пропадали кнопки игры
-  (хотбар, старт-меню, кнопки серверов): закрытие крестиком и Esc теперь
-  принудительно сбрасывают флаг меню клиента (runtime+0x551), игра всегда
-  возвращается в нормальный режим.
-- Интерфейс уменьшен вдвое относительно v5: масштаб 0.575-1.0 (1080p = 0.625).
+Версия v7 внутриигрового меню (RmlUi, встроен в GAYClientInternal.dll),
+изменения относительно v6:
+- Масштаб интерфейса увеличен в 1.6 раза относительно v6: 0.92-1.6
+  (на 1080p = 1.0).
+- Окно Visuals теперь такой же высоты, как окно Home (контент
+  прокручивается внутри окна колесом мыши).
+- Ползунки перерисованы: толстый скруглённый трек и крупная круглая
+  ручка с градиентом, ручка целиком внутри поля (раньше торчала
+  сверху на -6px и её было трудно схватить).
+- Исправлены "не работающие" ползунки: клик или нажатие на подпись
+  или ряд внутри секции раньше всплывал до секции и СКЛАДЫВАЛ её -
+  слайдер исчезал прямо под рукой. Теперь секцию сворачивает только
+  клик по её заголовку.
+- Выключатель 3D-превью больше не передвигает окна: позиции
+  сохраняются, окна лишь придерживаются в пределах экрана и вне
+  полосы превью.
+- Быстрые выключатели эффектов перенесены прямо на заголовки секций:
+  галочка China Hat / След / Кольца прыжка / Катана включается сразу,
+  без раскрытия настроек.
 
-Состав сборки v6 не изменился: два окна (Home + Visuals), HUD-редактор
+Состав сборки не изменился: два окна (Home + Visuals), HUD-редактор
 перетаскиванием, 3D-превью игрока, адаптер не трогает client.exe.
 Ниже - полные тексты всех файлов, входящих в состав меню и его проверок.
 
@@ -1963,8 +1962,9 @@ print('HUD visual-only checks OK; Windows/Minecraft verification required')
 ================================================================================================================================================================
 ================================================================================
 ================================================================================
+================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/check_menu_rml.py
-"""Static wiring checks for the v6 RmlUi game menu; no Windows here."""
+"""Static wiring checks for the v7 RmlUi game menu; no Windows here."""
 from pathlib import Path
 r = Path(__file__).resolve().parents[1]
 root = r.parent
@@ -2093,6 +2093,11 @@ assert 'id.compare(0, 5, "fold-")' in m and 'SetClass("folded"' in m
 assert 'id == "btn-layout"' in m
 assert 'id == "sw-preview"' in m and 'g_previewOn' in m
 assert 'id.compare(0, 4, "sec-")' in m
+# v7: only clicks on the section head fold it; body clicks (slider labels)
+# used to collapse the section mid-interaction and made sliders feel dead.
+assert 'e->IsClassSet("sec-head")' in m
+# v7: the preview toggle keeps window positions, only clamping them.
+assert 'clampWindowsToViewport' in m
 assert 'SetClass("on"' in m and 'IsClassSet("on")' in m
 assert 'SetClass("focus"' in m
 # v6: window fold animates through a C++ height interpolation.
@@ -2116,11 +2121,12 @@ assert 'float right_inset = 0.0f' in ml
 # 8b. UI zoom: every px in the RCSS and the window constants carry the scale.
 assert 'computeUiScale' in m and 'scaleRcssPx' in m
 assert 'g_uiScale = computeUiScale(width, height);' in m
-# v6: compact menu, half of the v5 zoom (0.575 floor, 1.0 cap).
-assert 'ref * 1.25f * 0.5f' in m
-assert 'if (scale < 0.575f) return 0.575f;' in m
-assert 'if (scale > 1.0f) return 1.0f;' in m
-assert '460.0f, 1650.0f' in m  # visuals natural height without master rows
+# v7: v6's compact zoom times 1.6 (0.92 floor, 1.6 cap, 1080p = 1.0), and the
+# Visuals window is the same height as Home (its body scrolls inside).
+assert 'ref * 1.25f * 0.5f * 1.6f' in m
+assert 'if (scale < 0.92f) return 0.92f;' in m
+assert 'if (scale > 1.6f) return 1.6f;' in m
+assert '460.0f, 750.0f' in m
 assert 'const std::string scaledRcss = scaleRcssPx(kMenuRcss, g_uiScale);' in m
 assert 'kFoldedHeightRef * g_uiScale' in m
 assert 'kWindows[i].w * g_uiScale' in m
@@ -2181,6 +2187,14 @@ assert 'border-bottom: 3px #05230f' in d and 'rotate(-45deg)' in d
 assert '.check.on {' in d and '.check.on .ck { opacity: 1; }' in d
 assert d.count('class="check"') == 19
 assert d.count('<span class="ck"/>') == 19
+# v7: every effect's master checkbox sits directly on its section head
+assert '.sec-flex { flex-grow: 1; }' in d and '.sec-head .check { margin-right: 8px; }' in d
+for pair in ('id="sec-ch"... id="sw-gfx-chinahat"', 'id="sec-tr"... id="sw-gfx-trail"',
+             'id="sec-jr"... id="sw-gfx-jump"', 'id="sec-kt"... id="sw-kt-master"'):
+    sec, sw = pair.split('... ')
+    head = re.search(re.escape(sec) + r'.*?<div class="sec-head">(.*?)</div>', d, re.S)
+    assert head and sw in head.group(1), pair
+assert 'Включить' not in d  # the duplicate enable rows are gone from bodies
 # no icon machinery, no section count captions
 for gone in ('.m-ico', '.ip ', 'class="ip', '.sec-count', 'body.anim'):
     assert gone not in d, gone
@@ -5195,6 +5209,7 @@ bool InitializeMenuMouse(HatCreateHook create,HatToggleHook enable,HatToggleHook
 ================================================================================
 ================================================================================
 ================================================================================
+================================================================================
 НАЧАЛО ФАЙЛА: repair/src/menu_rml.h
 #pragma once
 #include <cstdint>
@@ -5258,6 +5273,7 @@ bool ReadPointer(float& x, float& y, float& w, float& h);
 КОНЕЦ ФАЙЛА: repair/src/menu_rml.h
 ================================================================================
 ================================================================================================================================================================
+================================================================================
 ================================================================================
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/menu_layout.h
@@ -5443,6 +5459,7 @@ inline bool rectsOverlap(const WindowRect* rects, int count) {
 
 ================================================================================
 ================================================================================
+================================================================================
 НАЧАЛО ФАЙЛА: repair/src/menu_rml.cpp
 #include "menu_rml.h"
 
@@ -5562,11 +5579,10 @@ constexpr float kPreviewInsetPx = 356.0f;
 float computeUiScale(unsigned width, unsigned height) {
     const float ref = std::fmax(static_cast<float>(height) / 1080.0f,
                                  static_cast<float>(width) / 1920.0f);
-    // v6: compact menu, half of the v5 zoom (1080p = 0.625, floor 0.575,
-    // 4K = 1.0).
-    const float scale = ref * 1.25f * 0.5f;
-    if (scale < 0.575f) return 0.575f;
-    if (scale > 1.0f) return 1.0f;
+    // v7: v6's compact zoom times 1.6 (1080p = 1.0, floor 0.92, 4K = 1.6).
+    const float scale = ref * 1.25f * 0.5f * 1.6f;
+    if (scale < 0.92f) return 0.92f;
+    if (scale > 1.6f) return 1.6f;
     return scale;
 }
 
@@ -5609,10 +5625,11 @@ struct WinDef {
     float h;
 };
 
-// Natural (reference 1080p) sizes; multiplied by g_uiScale at init.
+// Natural (reference 1080p) sizes; multiplied by g_uiScale at init. v7: the
+// Visuals window is the same height as Home; its body scrolls inside.
 const WinDef kWindows[] = {
     {"win-home",    "head-home",    300.0f, 750.0f},
-    {"win-visuals", "head-visuals", 460.0f, 1650.0f},
+    {"win-visuals", "head-visuals", 460.0f, 750.0f},
 };
 constexpr int kWindowCount = static_cast<int>(sizeof(kWindows) / sizeof(kWindows[0]));
 constexpr float kFoldedHeightRef = 46.0f;  // title bar + borders (reference)
@@ -6061,6 +6078,29 @@ void layoutWindows(float viewW, float viewH, bool force) {
     }
 }
 
+// Keep every window where the user left it, only pushing it back inside the
+// viewport (and out of the preview strip when the preview is on). Used when
+// the 3D preview toggles, so switching it never visibly re-arranges the
+// windows.
+void clampWindowsToViewport() {
+    const float viewW = static_cast<float>(g_width);
+    const float viewH = static_cast<float>(g_height);
+    const float inset = g_previewOn.load(std::memory_order_relaxed) &&
+        viewW > kPreviewInsetPx * 2.0f ? kPreviewInsetPx : 0.0f;
+    for (WinState& win : g_win) {
+        if (!win.el) continue;
+        if (win.animActive) {
+            win.animActive = false;
+            win.el->SetClass("folding", false);
+        }
+        menu_layout::WindowRect clamped{win.x, win.y, win.w, currentWinH(win)};
+        menu_layout::clampDraggedWindow(clamped, viewW - inset, viewH);
+        win.x = clamped.x;
+        win.y = clamped.y;
+        applyWin(win);
+    }
+}
+
 // Title-bar drag + focus. Attached to the window (mousedown: focus, bring to
 // front) and to the title bar (dragstart/drag: move, clamped so the bar can
 // never leave the screen).
@@ -6120,13 +6160,25 @@ void MenuClickListener::ProcessEvent(Rml::Event& event) {
         const bool on = !g_previewOn.load(std::memory_order_relaxed);
         g_previewOn.store(on, std::memory_order_relaxed);
         if (g_previewSwitch) g_previewSwitch->SetClass("on", on);
-        layoutWindows(static_cast<float>(g_width), static_cast<float>(g_height), false);
+        // v7: toggling the preview keeps every window where it is (the user
+        // complained the windows "jump together" on re-tiling); only clamp
+        // them away from the reserved strip / screen edges.
+        clampWindowsToViewport();
         return;
     }
     if (id.size() >= 4 && id.compare(0, 4, "sec-") == 0) {
-        if (Rml::Element* section = g_menuDoc->GetElementById(id)) {
-            const bool folded = !section->IsClassSet("folded");
-            section->SetClass("folded", folded);
+        // Only the section head toggles the fold. Clicks inside the body
+        // (slider labels, rows, padding) used to walk up to the section and
+        // collapse it mid-interaction, which made the sliders feel dead.
+        Rml::Element* target = event.GetTargetElement();
+        bool inHead = false;
+        for (Rml::Element* e = target; e; e = e->GetParentNode())
+            if (e->IsClassSet("sec-head")) { inHead = true; break; }
+        if (inHead) {
+            if (Rml::Element* section = g_menuDoc->GetElementById(id)) {
+                const bool folded = !section->IsClassSet("folded");
+                section->SetClass("folded", folded);
+            }
         }
         return;
     }
@@ -6590,6 +6642,7 @@ void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
 ================================================================================================================================================================
 ================================================================================
 ================================================================================
+================================================================================
 НАЧАЛО ФАЙЛА: repair/src/menu_rml_data.h
 // Design of the embedded menu: RmlUi documents (HTML + RCSS).
 // v6: two windows (Home + Visuals). Switches are square checkboxes (empty
@@ -6797,23 +6850,30 @@ body.faded { opacity: 0; }
 .slider-label { width: 156px; font-size: 15px; color: #cfe3d6; }
 input[type="range"] {
     width: 150px;
-    height: 26px;
+    height: 30px;
 }
 input[type="range"] slidertrack {
-    height: 6px;
-    margin-top: 10px;
-    background-color: #151f18;
-    border-radius: 3px;
+    height: 8px;
+    margin-top: 11px;
+    background-color: #101a13;
+    border: 1px #ffffff0f;
+    border-radius: 4px;
 }
 input[type="range"] sliderbar {
-    width: 18px;
-    height: 18px;
-    top: -6px;
-    border-radius: 9px;
+    width: 20px;
+    height: 20px;
+    top: 5px;
+    border-radius: 10px;
+    border: 1px #e2ffc366;
     background-color: #6ef58c;
-    transition: background-color 0.1s;
+    decorator: linear-gradient(180deg, #c4ff62, #6ef58c 52%, #2fa960);
 }
-input[type="range"] sliderbar:hover { background-color: #c4ff62; }
+input[type="range"] sliderbar:hover {
+    decorator: linear-gradient(180deg, #d9ff92, #83f5a5 52%, #3db870);
+}
+input[type="range"] sliderbar:active {
+    decorator: linear-gradient(180deg, #b9ea63, #64d681 52%, #2b9a57);
+}
 input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
     width: 0px;
     height: 0px;
@@ -6888,8 +6948,10 @@ input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
     letter-spacing: 1px;
     color: #cfe3d6;
 }
+.sec-flex { flex-grow: 1; }
+.sec-head .check { margin-right: 8px; }
 .sec-fold {
-    margin-left: auto;
+    margin-left: 8px;
     width: 26px;
     height: 26px;
     font-size: 15px;
@@ -6976,11 +7038,12 @@ static const char kMenuRml[] = R"RML(
         <div class="sec" id="sec-ch">
             <div class="sec-head">
                 <span class="sec-title">CHINA HAT</span>
+                <span class="sec-flex"/>
+                <button class="check" id="sw-gfx-chinahat"><span class="ck"/></button>
                 <span class="sec-fold"><span class="f-plus">+</span><span class="f-minus">-</span></span>
             </div>
             <div class="sec-body">
-                <div class="slider-row"><div class="slider-label">Включить</div><button class="check" id="sw-gfx-chinahat"><span class="ck"/></button></div>
-                <div class="slider-row"><div class="slider-label">Заливка конуса</div><button class="check" id="sw-ch-fill"><span class="ck"/></button></div>
+                                <div class="slider-row"><div class="slider-label">Заливка конуса</div><button class="check" id="sw-ch-fill"><span class="ck"/></button></div>
                 <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="check" id="sw-ch-rainbow"><span class="ck"/></button></div>
                 <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-ch-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-ch-rainbow"/><div class="color-chip" id="chip-ch"/></div>
                 <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-ch-opacity" min="0" max="100" step="1" value="70"/><div class="slider-value" id="ro-ch-opacity"/></div>
@@ -6997,11 +7060,12 @@ static const char kMenuRml[] = R"RML(
         <div class="sec" id="sec-tr">
             <div class="sec-head">
                 <span class="sec-title">СЛЕД</span>
+                <span class="sec-flex"/>
+                <button class="check" id="sw-gfx-trail"><span class="ck"/></button>
                 <span class="sec-fold"><span class="f-plus">+</span><span class="f-minus">-</span></span>
             </div>
             <div class="sec-body">
-                <div class="slider-row"><div class="slider-label">Включить</div><button class="check" id="sw-gfx-trail"><span class="ck"/></button></div>
-                <div class="slider-row"><div class="slider-label">Заливка</div><button class="check" id="sw-tr-fill"><span class="ck"/></button></div>
+                                <div class="slider-row"><div class="slider-label">Заливка</div><button class="check" id="sw-tr-fill"><span class="ck"/></button></div>
                 <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="check" id="sw-tr-rainbow"><span class="ck"/></button></div>
                 <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-tr-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-tr-rainbow"/><div class="color-chip" id="chip-tr"/></div>
                 <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-tr-opacity" min="0" max="100" step="1" value="60"/><div class="slider-value" id="ro-tr-opacity"/></div>
@@ -7015,11 +7079,12 @@ static const char kMenuRml[] = R"RML(
         <div class="sec" id="sec-jr">
             <div class="sec-head">
                 <span class="sec-title">КОЛЬЦА ПРЫЖКА</span>
+                <span class="sec-flex"/>
+                <button class="check" id="sw-gfx-jump"><span class="ck"/></button>
                 <span class="sec-fold"><span class="f-plus">+</span><span class="f-minus">-</span></span>
             </div>
             <div class="sec-body">
-                <div class="slider-row"><div class="slider-label">Включить</div><button class="check" id="sw-gfx-jump"><span class="ck"/></button></div>
-                <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="check" id="sw-jr-rainbow"><span class="ck"/></button></div>
+                                <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="check" id="sw-jr-rainbow"><span class="ck"/></button></div>
                 <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-jr-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-jr-rainbow"/><div class="color-chip" id="chip-jr"/></div>
                 <div class="slider-row"><div class="slider-label">Радиус</div><input type="range" id="sl-jr-radius" min="0.2" max="3" step="0.01" value="0.7"/><div class="slider-value" id="ro-jr-radius"/></div>
                 <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-jr-opacity" min="0" max="100" step="1" value="60"/><div class="slider-value" id="ro-jr-opacity"/></div>
@@ -7032,11 +7097,12 @@ static const char kMenuRml[] = R"RML(
         <div class="sec" id="sec-kt">
             <div class="sec-head">
                 <span class="sec-title">КАТАНА</span>
+                <span class="sec-flex"/>
+                <button class="check" id="sw-kt-master"><span class="ck"/></button>
                 <span class="sec-fold"><span class="f-plus">+</span><span class="f-minus">-</span></span>
             </div>
             <div class="sec-body">
-                <div class="slider-row"><div class="slider-label">Включить</div><button class="check" id="sw-kt-master"><span class="ck"/></button></div>
-                <div class="slider-row"><div class="slider-label">Размер</div><input type="range" id="sl-kt-scale" min="0.4" max="1" step="0.01" value="0.7"/><div class="slider-value" id="ro-kt-scale"/></div>
+                                <div class="slider-row"><div class="slider-label">Размер</div><input type="range" id="sl-kt-scale" min="0.4" max="1" step="0.01" value="0.7"/><div class="slider-value" id="ro-kt-scale"/></div>
                 <div class="slider-row"><div class="slider-label">Наклон клинка</div><input type="range" id="sl-kt-tilt" min="0.2" max="1.55" step="0.01" value="0.9"/><div class="slider-value" id="ro-kt-tilt"/></div>
                 <div class="slider-row"><div class="slider-label">Смещение в сторону</div><input type="range" id="sl-kt-side" min="0" max="0.8" step="0.01" value="0.25"/><div class="slider-value" id="ro-kt-side"/></div>
                 <div class="slider-row"><div class="slider-label">Высота в руке</div><input type="range" id="sl-kt-height" min="0.6" max="1.8" step="0.01" value="1.1"/><div class="slider-value" id="ro-kt-height"/></div>

@@ -1,4 +1,4 @@
-"""Static wiring checks for the v6 RmlUi game menu; no Windows here."""
+"""Static wiring checks for the v7 RmlUi game menu; no Windows here."""
 from pathlib import Path
 r = Path(__file__).resolve().parents[1]
 root = r.parent
@@ -127,6 +127,11 @@ assert 'id.compare(0, 5, "fold-")' in m and 'SetClass("folded"' in m
 assert 'id == "btn-layout"' in m
 assert 'id == "sw-preview"' in m and 'g_previewOn' in m
 assert 'id.compare(0, 4, "sec-")' in m
+# v7: only clicks on the section head fold it; body clicks (slider labels)
+# used to collapse the section mid-interaction and made sliders feel dead.
+assert 'e->IsClassSet("sec-head")' in m
+# v7: the preview toggle keeps window positions, only clamping them.
+assert 'clampWindowsToViewport' in m
 assert 'SetClass("on"' in m and 'IsClassSet("on")' in m
 assert 'SetClass("focus"' in m
 # v6: window fold animates through a C++ height interpolation.
@@ -150,11 +155,12 @@ assert 'float right_inset = 0.0f' in ml
 # 8b. UI zoom: every px in the RCSS and the window constants carry the scale.
 assert 'computeUiScale' in m and 'scaleRcssPx' in m
 assert 'g_uiScale = computeUiScale(width, height);' in m
-# v6: compact menu, half of the v5 zoom (0.575 floor, 1.0 cap).
-assert 'ref * 1.25f * 0.5f' in m
-assert 'if (scale < 0.575f) return 0.575f;' in m
-assert 'if (scale > 1.0f) return 1.0f;' in m
-assert '460.0f, 1650.0f' in m  # visuals natural height without master rows
+# v7: v6's compact zoom times 1.6 (0.92 floor, 1.6 cap, 1080p = 1.0), and the
+# Visuals window is the same height as Home (its body scrolls inside).
+assert 'ref * 1.25f * 0.5f * 1.6f' in m
+assert 'if (scale < 0.92f) return 0.92f;' in m
+assert 'if (scale > 1.6f) return 1.6f;' in m
+assert '460.0f, 750.0f' in m
 assert 'const std::string scaledRcss = scaleRcssPx(kMenuRcss, g_uiScale);' in m
 assert 'kFoldedHeightRef * g_uiScale' in m
 assert 'kWindows[i].w * g_uiScale' in m
@@ -215,6 +221,14 @@ assert 'border-bottom: 3px #05230f' in d and 'rotate(-45deg)' in d
 assert '.check.on {' in d and '.check.on .ck { opacity: 1; }' in d
 assert d.count('class="check"') == 19
 assert d.count('<span class="ck"/>') == 19
+# v7: every effect's master checkbox sits directly on its section head
+assert '.sec-flex { flex-grow: 1; }' in d and '.sec-head .check { margin-right: 8px; }' in d
+for pair in ('id="sec-ch"... id="sw-gfx-chinahat"', 'id="sec-tr"... id="sw-gfx-trail"',
+             'id="sec-jr"... id="sw-gfx-jump"', 'id="sec-kt"... id="sw-kt-master"'):
+    sec, sw = pair.split('... ')
+    head = re.search(re.escape(sec) + r'.*?<div class="sec-head">(.*?)</div>', d, re.S)
+    assert head and sw in head.group(1), pair
+assert 'Включить' not in d  # the duplicate enable rows are gone from bodies
 # no icon machinery, no section count captions
 for gone in ('.m-ico', '.ip ', 'class="ip', '.sec-count', 'body.anim'):
     assert gone not in d, gone

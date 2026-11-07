@@ -204,23 +204,30 @@ body.faded { opacity: 0; }
 .slider-label { width: 156px; font-size: 15px; color: #cfe3d6; }
 input[type="range"] {
     width: 150px;
-    height: 26px;
+    height: 30px;
 }
 input[type="range"] slidertrack {
-    height: 6px;
-    margin-top: 10px;
-    background-color: #151f18;
-    border-radius: 3px;
+    height: 8px;
+    margin-top: 11px;
+    background-color: #101a13;
+    border: 1px #ffffff0f;
+    border-radius: 4px;
 }
 input[type="range"] sliderbar {
-    width: 18px;
-    height: 18px;
-    top: -6px;
-    border-radius: 9px;
+    width: 20px;
+    height: 20px;
+    top: 5px;
+    border-radius: 10px;
+    border: 1px #e2ffc366;
     background-color: #6ef58c;
-    transition: background-color 0.1s;
+    decorator: linear-gradient(180deg, #c4ff62, #6ef58c 52%, #2fa960);
 }
-input[type="range"] sliderbar:hover { background-color: #c4ff62; }
+input[type="range"] sliderbar:hover {
+    decorator: linear-gradient(180deg, #d9ff92, #83f5a5 52%, #3db870);
+}
+input[type="range"] sliderbar:active {
+    decorator: linear-gradient(180deg, #b9ea63, #64d681 52%, #2b9a57);
+}
 input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
     width: 0px;
     height: 0px;
@@ -295,8 +302,10 @@ input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
     letter-spacing: 1px;
     color: #cfe3d6;
 }
+.sec-flex { flex-grow: 1; }
+.sec-head .check { margin-right: 8px; }
 .sec-fold {
-    margin-left: auto;
+    margin-left: 8px;
     width: 26px;
     height: 26px;
     font-size: 15px;
@@ -383,11 +392,12 @@ static const char kMenuRml[] = R"RML(
         <div class="sec" id="sec-ch">
             <div class="sec-head">
                 <span class="sec-title">CHINA HAT</span>
+                <span class="sec-flex"/>
+                <button class="check" id="sw-gfx-chinahat"><span class="ck"/></button>
                 <span class="sec-fold"><span class="f-plus">+</span><span class="f-minus">-</span></span>
             </div>
             <div class="sec-body">
-                <div class="slider-row"><div class="slider-label">Включить</div><button class="check" id="sw-gfx-chinahat"><span class="ck"/></button></div>
-                <div class="slider-row"><div class="slider-label">Заливка конуса</div><button class="check" id="sw-ch-fill"><span class="ck"/></button></div>
+                                <div class="slider-row"><div class="slider-label">Заливка конуса</div><button class="check" id="sw-ch-fill"><span class="ck"/></button></div>
                 <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="check" id="sw-ch-rainbow"><span class="ck"/></button></div>
                 <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-ch-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-ch-rainbow"/><div class="color-chip" id="chip-ch"/></div>
                 <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-ch-opacity" min="0" max="100" step="1" value="70"/><div class="slider-value" id="ro-ch-opacity"/></div>
@@ -404,11 +414,12 @@ static const char kMenuRml[] = R"RML(
         <div class="sec" id="sec-tr">
             <div class="sec-head">
                 <span class="sec-title">СЛЕД</span>
+                <span class="sec-flex"/>
+                <button class="check" id="sw-gfx-trail"><span class="ck"/></button>
                 <span class="sec-fold"><span class="f-plus">+</span><span class="f-minus">-</span></span>
             </div>
             <div class="sec-body">
-                <div class="slider-row"><div class="slider-label">Включить</div><button class="check" id="sw-gfx-trail"><span class="ck"/></button></div>
-                <div class="slider-row"><div class="slider-label">Заливка</div><button class="check" id="sw-tr-fill"><span class="ck"/></button></div>
+                                <div class="slider-row"><div class="slider-label">Заливка</div><button class="check" id="sw-tr-fill"><span class="ck"/></button></div>
                 <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="check" id="sw-tr-rainbow"><span class="ck"/></button></div>
                 <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-tr-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-tr-rainbow"/><div class="color-chip" id="chip-tr"/></div>
                 <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-tr-opacity" min="0" max="100" step="1" value="60"/><div class="slider-value" id="ro-tr-opacity"/></div>
@@ -422,11 +433,12 @@ static const char kMenuRml[] = R"RML(
         <div class="sec" id="sec-jr">
             <div class="sec-head">
                 <span class="sec-title">КОЛЬЦА ПРЫЖКА</span>
+                <span class="sec-flex"/>
+                <button class="check" id="sw-gfx-jump"><span class="ck"/></button>
                 <span class="sec-fold"><span class="f-plus">+</span><span class="f-minus">-</span></span>
             </div>
             <div class="sec-body">
-                <div class="slider-row"><div class="slider-label">Включить</div><button class="check" id="sw-gfx-jump"><span class="ck"/></button></div>
-                <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="check" id="sw-jr-rainbow"><span class="ck"/></button></div>
+                                <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="check" id="sw-jr-rainbow"><span class="ck"/></button></div>
                 <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-jr-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-jr-rainbow"/><div class="color-chip" id="chip-jr"/></div>
                 <div class="slider-row"><div class="slider-label">Радиус</div><input type="range" id="sl-jr-radius" min="0.2" max="3" step="0.01" value="0.7"/><div class="slider-value" id="ro-jr-radius"/></div>
                 <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-jr-opacity" min="0" max="100" step="1" value="60"/><div class="slider-value" id="ro-jr-opacity"/></div>
@@ -439,11 +451,12 @@ static const char kMenuRml[] = R"RML(
         <div class="sec" id="sec-kt">
             <div class="sec-head">
                 <span class="sec-title">КАТАНА</span>
+                <span class="sec-flex"/>
+                <button class="check" id="sw-kt-master"><span class="ck"/></button>
                 <span class="sec-fold"><span class="f-plus">+</span><span class="f-minus">-</span></span>
             </div>
             <div class="sec-body">
-                <div class="slider-row"><div class="slider-label">Включить</div><button class="check" id="sw-kt-master"><span class="ck"/></button></div>
-                <div class="slider-row"><div class="slider-label">Размер</div><input type="range" id="sl-kt-scale" min="0.4" max="1" step="0.01" value="0.7"/><div class="slider-value" id="ro-kt-scale"/></div>
+                                <div class="slider-row"><div class="slider-label">Размер</div><input type="range" id="sl-kt-scale" min="0.4" max="1" step="0.01" value="0.7"/><div class="slider-value" id="ro-kt-scale"/></div>
                 <div class="slider-row"><div class="slider-label">Наклон клинка</div><input type="range" id="sl-kt-tilt" min="0.2" max="1.55" step="0.01" value="0.9"/><div class="slider-value" id="ro-kt-tilt"/></div>
                 <div class="slider-row"><div class="slider-label">Смещение в сторону</div><input type="range" id="sl-kt-side" min="0" max="0.8" step="0.01" value="0.25"/><div class="slider-value" id="ro-kt-side"/></div>
                 <div class="slider-row"><div class="slider-label">Высота в руке</div><input type="range" id="sl-kt-height" min="0.6" max="1.8" step="0.01" value="1.1"/><div class="slider-value" id="ro-kt-height"/></div>
