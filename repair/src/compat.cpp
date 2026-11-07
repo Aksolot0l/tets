@@ -612,7 +612,7 @@ static void drawVisualPanel() {
     if (guiBegin("Visuals",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoCollapse|ImGuiWindowFlags_AlwaysAutoResize)) {
         if (!ChinaHatAvailable()) realText("Visuals unavailable",nullptr);
         else {
-            sectionTitle("СТИЛЬ ЭФФЕКТОВ","экспериментально · session only");
+            sectionTitle("СТИЛЬ ЭФФЕКТОВ","экспериментально, session only");
             sectionTitle("CHINA HAT");
             bool hat=ChinaHatEnabled(); if (guiCheckbox("China Hat",&hat)) SetChinaHatEnabled(hat);
             if (canVisualPreview() && guiButton("Settings##open_hat",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Hat;
@@ -842,7 +842,7 @@ static void drawVisualEditor() {
 
 // v5: the 3D portrait for the RmlUi Visuals window. A borderless preview
 // card pinned to the right edge of the screen, drawn in the game's ImGui
-// pass — the RmlUi menu renders later (Present), so its windows always sit
+// pass: the RmlUi menu renders later (Present), so its windows always sit
 // on top and the layout reserves this strip (menu_rml::kPreviewInsetPx).
 // Reuses the verified avatar/skin machinery of drawEffectPreview; shows the
 // China Hat cone, or the trail when only the trail is enabled.
@@ -873,7 +873,7 @@ static void drawRmlVisualPreview() {
         }
         guiDummy(ImVec2(298.f,215.f));
         const auto t=visualTokens();
-        tintedText(ChinaHatEnabled()?"China Hat · живые параметры":TrailEnabled()?"След · живые параметры":"превью: включи China Hat или След",t.accent);
+        tintedText(ChinaHatEnabled()?"China Hat - живые параметры":TrailEnabled()?"След - живые параметры":"превью: включи China Hat или След",t.accent);
         visualHint(skin.view?"текстура игрока из игры":"ожидание скина (выйди в 3-е лицо)");
     }
     guiEnd();
@@ -1050,7 +1050,7 @@ static void drawHudEditCaption() {
         const auto t=visualTokens();
         tintedText("HUD EDIT",t.accent);
         if (guiSameLine) guiSameLine(0.f,10.f);
-        tintedText("перетаскивай элементы мышкой · Esc — выход",t.textMuted);
+        tintedText("перетаскивай элементы мышкой - Esc - выход",t.textMuted);
     }
     guiEnd();
 }
@@ -1059,7 +1059,7 @@ static void patchedDrawHud(void* runtime) {
     const bool editing=module_hud::editing(menu,hudEditorOpen || visualEditor!=VisualEditor::None);
     hudEditorActive.store(editing,std::memory_order_release);
     if (editing) updateHudEditInput();
-    // v5: while the HUD editor is open the HUD itself stays on screen — the
+    // v5: while the HUD editor is open the HUD itself stays on screen: the
     // widgets ARE the interface and are dragged directly (hudEditBegin).
     if (hudThemeReady.load(std::memory_order_acquire) && guiPushColor && guiPopColor) {
         const auto* settings=runtime ? reinterpret_cast<const ag::Settings*>(reinterpret_cast<const unsigned char*>(runtime)+0x48) : nullptr;
@@ -1132,6 +1132,22 @@ static void patchedDrawGui(void* runtime) {
     // below falls back to the previous interface unchanged.
     const bool replaced=menuOpen && menu_rml::ReplacesLegacyMenu();
     if (menuOpen && menu_rml::ConsumeHudEditorRequest()) hudEditorOpen=true;
+    // v6: closing the interface must fully release the client's menu flag.
+    // The client itself only clears that byte on its own menu key (RShift);
+    // leaving it set after our X button (or after Esc left the HUD editor)
+    // kept the game in a dead menu mode where the hotbar, the start menu and
+    // the server buttons vanished. Writing 0 here runs on the client's GUI
+    // thread, the same place the client writes it, and only while the RmlUi
+    // menu owns the screen. The HUD editor keeps the flag set on purpose: it
+    // hides the menu windows but stays an active mode.
+    static bool escPrev=false;
+    const bool escNow=(pageKeysReady && keyDown) ? keyDown(VK_ESCAPE)
+        : (GetAsyncKeyState(VK_ESCAPE)&0x8000)!=0;
+    const bool escEdge=escNow && !escPrev;
+    escPrev=escNow;
+    if (runtime && menuOpen && replaced &&
+        ((menu_rml::IsHiddenByClose() && !hudEditorOpen) || escEdge))
+        *(reinterpret_cast<unsigned char*>(runtime)+0x551)=0;
     menu_rml::DrainModuleToggles(&toggleGameModule);
     const bool editingVisual=menuOpen && visualEditor!=VisualEditor::None && canVisualPreview();
     // v5: the RmlUi Visuals window asks for the 3D portrait preview; it is

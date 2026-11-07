@@ -93,6 +93,10 @@ Rml::Element* g_ttStatus = nullptr;
 Rml::Element* g_ttDiag = nullptr;
 unsigned g_width = 0, g_height = 0;
 bool g_menuShown = false;
+// Document fade: frames left to keep rendering after the menu closed (the
+// fade-out transition needs them).
+constexpr unsigned kFadeOutFrames = 12;
+unsigned g_fadeOutFrames = 0;
 
 // ---------------------------------------------------------------------------
 // Window manager state: the two menu windows with their natural sizes and
@@ -108,14 +112,15 @@ float g_uiScale = 1.0f;
 // window (drawn by the game's ImGui pass, so it is NOT multiplied by
 // g_uiScale; it matches the ImGui window's pixel size).
 constexpr float kPreviewInsetPx = 356.0f;
-constexpr unsigned kAnimPeriod = 24;  // frames between icon animation states
 
 float computeUiScale(unsigned width, unsigned height) {
     const float ref = std::fmax(static_cast<float>(height) / 1080.0f,
                                  static_cast<float>(width) / 1920.0f);
-    const float scale = ref * 1.25f;
-    if (scale < 1.15f) return 1.15f;
-    if (scale > 2.0f) return 2.0f;
+    // v6: compact menu, half of the v5 zoom (1080p = 0.625, floor 0.575,
+    // 4K = 1.0).
+    const float scale = ref * 1.25f * 0.5f;
+    if (scale < 0.575f) return 0.575f;
+    if (scale > 1.0f) return 1.0f;
     return scale;
 }
 
@@ -161,11 +166,15 @@ struct WinDef {
 // Natural (reference 1080p) sizes; multiplied by g_uiScale at init.
 const WinDef kWindows[] = {
     {"win-home",    "head-home",    300.0f, 750.0f},
-    {"win-visuals", "head-visuals", 460.0f, 2100.0f},
+    {"win-visuals", "head-visuals", 460.0f, 1650.0f},
 };
 constexpr int kWindowCount = static_cast<int>(sizeof(kWindows) / sizeof(kWindows[0]));
 constexpr float kFoldedHeightRef = 46.0f;  // title bar + borders (reference)
 float kFoldedHeight = kFoldedHeightRef;    // scaled at init
+// Window fold/unfold runs as a short C++ height interpolation (RmlUi has no
+// keyframes, and animating an explicit height property from CSS would fight
+// the layout math that owns the same property).
+constexpr unsigned kFoldAnimMs = 150;
 
 struct WinState {
     Rml::Element* el = nullptr;
@@ -176,17 +185,19 @@ struct WinState {
     bool dragged = false;          // user moved it: keep the position
     bool folded = false;
     float grabDx = 0.0f, grabDy = 0.0f;
+    // Fold animation: animFrom -> animTo over kFoldAnimMs while animActive.
+    bool animActive = false;
+    DWORD animStart = 0;
+    float animFrom = 0.0f, animTo = 0.0f, animH = 0.0f;
 };
 WinState g_win[kWindowCount];
 int g_zTop = 20;
 std::string g_ttStatusCache;
 std::string g_ttDiagCache;
 
-// 3D preview toggle (Visuals window) and the icon animation phase.
+// 3D preview toggle (Visuals window).
 std::atomic<bool> g_previewOn{true};
 Rml::Element* g_previewSwitch = nullptr;
-bool g_animOn = false;
-unsigned g_animFrame = 0;
 
 std::vector<char> g_fontNormal;
 std::vector<char> g_fontBold;
@@ -286,7 +297,7 @@ struct SwitchDef {
 };
 
 const SwitchDef kSwitches[] = {
-    // Modules tab.
+    // Home window: game HUD modules.
     {"sw-fps", SwKind::AgModule, static_cast<int>(ag::ModuleId::Fps)},
     {"sw-cps", SwKind::AgModule, static_cast<int>(ag::ModuleId::Cps)},
     {"sw-clock", SwKind::AgModule, static_cast<int>(ag::ModuleId::Clock)},
@@ -297,22 +308,17 @@ const SwitchDef kSwitches[] = {
     {"sw-perf", SwKind::AgModule, static_cast<int>(ag::ModuleId::Cpu)},
     {"sw-perf", SwKind::AgModule, static_cast<int>(ag::ModuleId::Ram)},
     {"sw-modlist", SwKind::AgModule, static_cast<int>(ag::ModuleId::ActiveModules)},
-    {"sw-chinahat", SwKind::ChinaHat, 0},
-    {"sw-trail", SwKind::Trail, 0},
-    {"sw-jump", SwKind::Jump, 0},
-    {"sw-katana", SwKind::Katana, 0},
-    // Graphics tab.
+    // Visuals window: one master checkbox per effect, inside its section
+    // (v6 removed the duplicate master rows at the top of the window).
     {"sw-gfx-chinahat", SwKind::ChinaHat, 0},
     {"sw-gfx-trail", SwKind::Trail, 0},
     {"sw-gfx-jump", SwKind::Jump, 0},
+    {"sw-kt-master", SwKind::Katana, 0},
     {"sw-ch-fill", SwKind::ChFill, 0},
     {"sw-ch-rainbow", SwKind::ChRainbow, 0},
     {"sw-tr-fill", SwKind::TrFill, 0},
     {"sw-tr-rainbow", SwKind::TrRainbow, 0},
     {"sw-jr-rainbow", SwKind::JrRainbow, 0},
-    // The Visuals window has its own copy of the katana toggle under a
-    // different id: ids must be unique.
-    {"sw-kt-master", SwKind::Katana, 0},
 };
 
 const SwitchDef* findSwitch(const Rml::String& id) {
@@ -484,13 +490,76 @@ MenuClickListener g_clickListener;
 std::vector<std::unique_ptr<SliderChangeListener>> g_sliderListeners;
 std::vector<std::unique_ptr<class WindowListener>> g_winListeners;
 
+// Height the window renders at right now: the interpolated value while a
+// fold animation is running, otherwise the settled folded/unfolded height.
+float currentWinH(const WinState& win) {
+    if (win.animActive) return win.animH;
+    return win.folded ? kFoldedHeight : win.shownH;
+}
+
 void applyWin(WinState& win) {
     if (!win.el) return;
     win.el->SetProperty("left", Rml::CreateString("%dpx", static_cast<int>(win.x + 0.5f)));
     win.el->SetProperty("top", Rml::CreateString("%dpx", static_cast<int>(win.y + 0.5f)));
     win.el->SetProperty("width", Rml::CreateString("%dpx", static_cast<int>(win.w + 0.5f)));
     win.el->SetProperty("height", Rml::CreateString("%dpx", static_cast<int>(
-        (win.folded ? kFoldedHeight : win.shownH) + 0.5f)));
+        currentWinH(win) + 0.5f)));
+}
+
+// Begin (or reverse mid-flight) the fold/unfold animation towards the
+// window's current folded target. The start height is passed in by the
+// caller, which must capture it BEFORE flipping the folded flag (otherwise
+// the start would equal the target). The "folding" class keeps the body
+// visible and scroll-locked for the duration.
+void startWinAnim(WinState& win, float from) {
+    if (!win.el) return;
+    const float to = win.folded ? kFoldedHeight : win.shownH;
+    if (std::fabs(to - from) < 0.5f) {
+        win.animActive = false;
+        win.el->SetClass("folding", false);
+        win.el->SetClass("folded", win.folded);
+        applyWin(win);
+        return;
+    }
+    win.animFrom = from;
+    win.animTo = to;
+    win.animH = from;
+    win.animStart = GetTickCount();
+    win.animActive = true;
+    win.el->SetClass("folding", true);
+    applyWin(win);
+}
+
+// Advance every running fold animation. GetTickCount wraps after 49 days;
+// the unsigned subtraction still measures short deltas correctly across the
+// wrap.
+void stepWindowAnims() {
+    if (!g_menuShown) {
+        for (WinState& win : g_win) {
+            if (win.animActive) {
+                win.animActive = false;
+                if (win.el) win.el->SetClass("folding", false);
+            }
+        }
+        return;
+    }
+    bool any = false;
+    for (WinState& win : g_win)
+        if (win.animActive) any = true;
+    if (!any) return;
+    const DWORD now = GetTickCount();
+    for (WinState& win : g_win) {
+        if (!win.animActive || !win.el) continue;
+        const float t = clamp01(static_cast<float>(now - win.animStart) /
+                                static_cast<float>(kFoldAnimMs));
+        const float eased = t * (2.0f - t);  // ease-out quad
+        win.animH = win.animFrom + (win.animTo - win.animFrom) * eased;
+        if (t >= 1.0f) {
+            win.animActive = false;
+            win.el->SetClass("folding", false);
+        }
+        applyWin(win);
+    }
 }
 
 void focusWin(WinState& win) {
@@ -525,6 +594,12 @@ void layoutWindows(float viewW, float viewH, bool force) {
     for (int i = 0; i < kWindowCount; ++i) {
         WinState& win = g_win[i];
         if (!win.el) continue;
+        // Re-tiling retargets the geometry; a running fold animation would
+        // chase a stale height, so animations are settled here.
+        if (win.animActive) {
+            win.animActive = false;
+            win.el->SetClass("folding", false);
+        }
         if (force || !win.dragged) {
             if (force) win.dragged = false;
             win.x = rects[i].x;
@@ -565,7 +640,7 @@ public:
             m_win->y = event.GetParameter<float>("mouse_y", 0.0f) - m_win->grabDy;
             m_win->dragged = true;
             menu_layout::WindowRect clamped{m_win->x, m_win->y, m_win->w,
-                                            m_win->folded ? kFoldedHeight : m_win->shownH};
+                                            currentWinH(*m_win)};
             menu_layout::clampDraggedWindow(clamped, static_cast<float>(g_width),
                                             static_cast<float>(g_height));
             m_win->x = clamped.x;
@@ -580,7 +655,7 @@ private:
 
 void MenuClickListener::ProcessEvent(Rml::Event& event) {
     // Walk up from the click target to the nearest element with an id: clicks
-    // land on the switch knob span, the nav dot, the caret, etc.
+    // land on the check mark span, the fold glyph spans, etc.
     Rml::Element* element = event.GetTargetElement();
     while (element && element->GetId().empty()) element = element->GetParentNode();
     if (!element || !g_menuDoc) return;
@@ -613,10 +688,11 @@ void MenuClickListener::ProcessEvent(Rml::Event& event) {
         const int index = id[5] - '0';
         if (index < kWindowCount && g_win[index].el) {
             WinState& win = g_win[index];
+            const float fromH = currentWinH(win);
             win.folded = !win.folded;
             win.el->SetClass("folded", win.folded);
             focusWin(win);
-            applyWin(win);
+            startWinAnim(win, fromH);
         }
         return;
     }
@@ -790,6 +866,10 @@ bool initBackend(ID3D11Device* device, unsigned width, unsigned height) {
                 g_switchElems.size(), g_sliderElems.size());
         return false;
     }
+    // Start faded: the very first Show() then fades the menu in instead of
+    // popping.
+    if (Rml::Element* body = g_menuDoc->GetElementById("doc-body"))
+        body->SetClass("faded", true);
     g_width = width;
     g_height = height;
     menuLog("init: complete, %d windows, %zu switches, %zu sliders",
@@ -940,20 +1020,22 @@ void feedInput(unsigned width, unsigned height) {
 void updateDocVisibility(bool menuVisible) {
     if (menuVisible != g_menuShown) {
         g_menuShown = menuVisible;
-        if (menuVisible) g_menuDoc->Show();
-        else g_menuDoc->Hide();
+        // The fade runs through the body.faded class: class flips start CSS
+        // transitions in RmlUi, inline SetProperty does not.
+        Rml::Element* body = g_menuDoc->GetElementById("doc-body");
+        if (menuVisible) {
+            g_fadeOutFrames = 0;
+            g_menuDoc->Show();
+            if (body) body->SetClass("faded", false);
+        } else {
+            if (body) body->SetClass("faded", true);
+            g_fadeOutFrames = kFadeOutFrames;
+        }
     }
-}
-
-// Icon animation driver: toggle the "anim" class on <body> every
-// kAnimPeriod frames. The icons' CSS transitions animate between the two
-// states (RmlUi has no keyframes; the C++ side only flips the class).
-void driveIconAnimation() {
-    if (++g_animFrame < kAnimPeriod) return;
-    g_animFrame = 0;
-    g_animOn = !g_animOn;
-    if (Rml::Element* body = g_menuDoc->GetElementById("doc-body"))
-        body->SetClass("anim", g_animOn);
+    if (!g_menuShown && g_fadeOutFrames > 0) {
+        --g_fadeOutFrames;
+        if (g_fadeOutFrames == 0) g_menuDoc->Hide();
+    }
 }
 
 } // namespace
@@ -995,6 +1077,11 @@ void SetGameMenuOpen(bool open) {
 bool ReplacesLegacyMenu() { return g_renderOk.load(std::memory_order_relaxed); }
 bool ConsumeHudEditorRequest() { return g_hudEditorRequest.exchange(false, std::memory_order_relaxed); }
 bool VisualPreviewActive() { return g_previewOn.load(std::memory_order_relaxed); }
+// True when the user closed the menu with the X button (or entered the HUD
+// editor) while the client still considers its menu open. The compat layer
+// uses this to clear the client's menu flag, otherwise the game stays in
+// menu mode with input suppressed and its own screens misbehave.
+bool IsHiddenByClose() { return g_hiddenByClose.load(std::memory_order_relaxed); }
 
 bool ReadPointer(float& x, float& y, float& w, float& h) {
     if (!g_pointerValid.load(std::memory_order_relaxed)) return false;
@@ -1028,13 +1115,17 @@ void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
     const bool menuVisible = g_gameMenuOpen.load(std::memory_order_relaxed) &&
         !g_hiddenByClose.load(std::memory_order_relaxed);
     updateDocVisibility(menuVisible);
-    if (!menuVisible) return;
+    // A few frames after closing, the document still renders so the fade-out
+    // transition is seen, but input is cut immediately.
+    if (!menuVisible && g_fadeOutFrames == 0) return;
 
-    feedInput(width, height);
-    driveIconAnimation();
-    syncSwitches();
-    syncSliders();
-    syncTtStatus();
+    if (menuVisible) {
+        feedInput(width, height);
+        syncSwitches();
+        syncSliders();
+        syncTtStatus();
+    }
+    stepWindowAnims();
     g_rmlContext->Update();
     g_renderer->BeginFrame();
     g_rmlContext->Render();

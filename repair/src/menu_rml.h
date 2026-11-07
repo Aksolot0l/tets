@@ -12,10 +12,10 @@ struct ID3D11RenderTargetView;
 namespace menu_rml {
 
 // Called at the end of the Present-path draw, after the legacy overlay has
-// rendered. Creates and renders the RmlUi menu plus the katana/crown test
-// tools window. The caller provides the back-buffer render target view; the
-// RmlUi DX11 renderer binds it during EndFrame and restores all DirectX
-// state afterwards. Safe no-op until initialization succeeds once.
+// rendered. Creates and renders the RmlUi menu. The caller provides the
+// back-buffer render target view; the RmlUi DX11 renderer binds it during
+// EndFrame and restores all DirectX state afterwards. Safe no-op until
+// initialization succeeds once.
 void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
                    unsigned width, unsigned height);
 
@@ -44,6 +44,12 @@ bool ConsumeHudEditorRequest();
 // layer draws the actual 3D portrait window (game ImGui pass) and the menu
 // reserves layout space for it on the right when this holds.
 bool VisualPreviewActive();
+
+// True when the user closed the menu with its X button (or entered the HUD
+// editor) while the client's own menu flag is still set. The compat layer
+// clears that flag in this state, so closing the menu always returns the
+// game to normal play instead of leaving it in a dead menu mode.
+bool IsHiddenByClose();
 
 // Last pointer sample received from the adapter's pointer hook, in client
 // DIPs. Used by the compat layer's HUD-drag editor to hit-test widgets.
