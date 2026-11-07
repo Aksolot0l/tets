@@ -1127,6 +1127,9 @@ static void patchedDrawGui(void* runtime) {
     SetMenuMouseOpen(menuOpen);
     if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }
     menu_rml::SetGameMenuOpen(menuOpen);
+    // While any UI is open the mouse belongs to it: attack clicks in the
+    // menu must not spawn hit fx.
+    SetHitFxUiActive(menuOpen);
     // While the embedded new menu is alive it replaces the legacy click GUI
     // and the old test panels; if its initialization ever failed, everything
     // below falls back to the previous interface unchanged.

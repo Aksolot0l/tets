@@ -229,8 +229,8 @@ assert '.check {' in d and 'width: 26px' in d and 'height: 26px' in d
 assert '.check .ck {' in d and 'border-left: 3px #05230f' in d
 assert 'border-bottom: 3px #05230f' in d and 'rotate(-45deg)' in d
 assert '.check.on {' in d and '.check.on .ck { opacity: 1; }' in d
-assert d.count('class="check"') == 19
-assert d.count('<span class="ck"/>') == 19
+assert d.count('class="check"') == 20
+assert d.count('<span class="ck"/>') == 20
 # v7: every effect's master checkbox sits directly on its section head
 assert '.sec-flex { flex-grow: 1; }' in d and '.sec-head .check { margin-right: 8px; }' in d
 for pair in ('id="sec-ch"... id="sw-gfx-chinahat"', 'id="sec-tr"... id="sw-gfx-trail"',
@@ -246,6 +246,11 @@ assert 'id="sl-ch-radius" min="0" max="100" step="1"' in d
 assert 'id="sl-kt-scale" min="0" max="100" step="1"' in d
 assert 'id="sl-kt-opacity" min="0" max="100" step="1"' in d
 assert 'id="sl-ch-offset" min="0" max="100" step="1"' in d
+assert 'id="sec-hit"' in d and '<span class="sec-title">УДАРЫ</span>' in d
+assert 'id="sl-hit-count" min="0" max="100" step="1"' in d
+assert 'id="sl-hit-cycle" min="0" max="100" step="1"' in d
+assert 'id="chip-hita"' in d and 'id="chip-hitb"' in d
+assert d.count('id="sl-hit-') == 16
 # no icon machinery, no section count captions
 for gone in ('.m-ico', '.ip ', 'class="ip', '.sec-count', 'body.anim'):
     assert gone not in d, gone
@@ -340,7 +345,7 @@ _names = [n.strip() for n in _re.search(
 _trips = _re.findall(
     r'\{\s*([\d.\-]+)f?\s*,\s*([\d.\-]+)f?\s*,\s*([\d.\-]+)f?\s*\}',
     _re.search(r'visualParamSpecs\[\]\s*=\s*\{(.*?)\};', vs, _re.S).group(1))
-assert len(_names) == len(_trips) == 38, (len(_names), len(_trips))
+assert len(_names) == len(_trips) == 54, (len(_names), len(_trips))
 _specs = {n: (float(lo), float(hi)) for n, (v, lo, hi) in zip(_names, _trips)}
 # the katana opacity floor is gone: 0% is a real zero
 assert _specs['KatanaOpacity'][0] == 0.0, _specs['KatanaOpacity']
@@ -348,7 +353,7 @@ _reg = {}
 for _m in _re.finditer(
         r'\{"(sl-[\w-]+)",\s*VisualParam::(\w+),\s*"([^"]*)"\}', m):
     _reg[_m.group(1)] = (_m.group(2), _m.group(3))
-assert len(_reg) == 32, len(_reg)
+assert len(_reg) == 48, len(_reg)
 for _id, (_param, _fmt) in _reg.items():
     assert _param in _specs, _id
     assert _fmt == '%.0f%%', (_id, _fmt)

@@ -18,6 +18,7 @@
 #include "diamond_sword_candidate.h"
 #include "china_hat_player.h"
 #include "visual_hooks.h"
+#include "hit_fx.h"
 #include "visual_color.h"
 #include "visual_ribbon.h"
 #include "visual_gradient.h"
@@ -154,6 +155,7 @@ bool katanaVisibleRecently(ULONGLONG now) {
 std::atomic<int> accessoryStatus{0};
 std::atomic<ULONGLONG> lastAccessorySubmit{0};
 std::atomic<bool> jumpEnabled{false}, jumpRainbow{false};
+std::atomic<bool> hitFxEnabled{true}, hitFxUiActive{false};
 std::atomic<bool> trailEnabled{false}, materialTint{true}, hatFill{true}, trailFill{true};
 std::atomic<bool> hatRainbow{true}, trailRainbow{true}, vertexGradient{false};
 // Default to fail-closed world rendering. Legacy screen rendering is a manual
@@ -209,7 +211,7 @@ thread_local unsigned seenTrailGeneration=0;
 // 0 waiting for a player, 1 submitted to GPU, 2 game renderer busy/unavailable.
 std::atomic<int> hatStatus{0}, trailStatus{0}, hatFillStatus{0}, trailFillStatus{0};
 std::atomic<ULONGLONG> lastHatSubmit{0}, lastTrailSubmit{0};
-bool anyVisual() { return enabled.load(std::memory_order_acquire) || trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire) || accessoryEnabled.load(std::memory_order_acquire) || katanaEnabled.load(std::memory_order_acquire); }
+bool anyVisual() { return enabled.load(std::memory_order_acquire) || trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire) || accessoryEnabled.load(std::memory_order_acquire) || katanaEnabled.load(std::memory_order_acquire) || hitFxEnabled.load(std::memory_order_acquire); }
 // 0 = not attempted, 1 = installing, 2 = installed, 3 = failed.
 std::atomic<int> hookState{0};
 HatCreateHook createHook=nullptr; HatToggleHook enableHook=nullptr, disableHook=nullptr, removeHook=nullptr;
@@ -439,6 +441,7 @@ void renderHat(const PlayerFrame& player);
 void renderTrail(const PlayerFrame& player);
 void renderJump(const PlayerFrame& player);
 void renderAccessory(const PlayerFrame& player);
+void renderHitFx(const PlayerFrame& player);
 ID3D11DeviceContext* sameThreadContext() {
  ID3D11DeviceContext* ctx=nullptr;
  AcquireSRWLockShared(&contextLock);
@@ -482,7 +485,7 @@ std::intptr_t entitiesDiagnosticHook(void* self,float partial) {
   occlusionStatus.store(!worldReady || !gpuReady ? 3 : 2,std::memory_order_relaxed);
  } else {
   PlayerFrame visible=frame; frame.valid=false; PlayerFrame local=visible;
-  if ((trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire) || accessoryEnabled.load(std::memory_order_acquire) || katanaEnabled.load(std::memory_order_acquire)) && !local.valid) {
+  if ((trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire) || accessoryEnabled.load(std::memory_order_acquire) || katanaEnabled.load(std::memory_order_acquire) || hitFxEnabled.load(std::memory_order_acquire)) && !local.valid) {
    std::uintptr_t actor=0;
    if (localPlayer(actor)) { rememberPlayer(reinterpret_cast<void*>(actor),partial); local=frame; frame.valid=false; }
   }
@@ -497,6 +500,7 @@ std::intptr_t entitiesDiagnosticHook(void* self,float partial) {
   }
   renderTrail(local);
   renderJump(local);
+  renderHitFx(local);
   renderAccessory(local);
   renderKatana(local);
   visual_gpu_depth::expectedContext=nullptr; visual_gpu_depth::expectedDepth=nullptr;
@@ -1031,6 +1035,157 @@ void renderJump(const PlayerFrame& player) {
  }
  std::memcpy(reinterpret_cast<void*>(color),saved,sizeof(saved)); *reinterpret_cast<std::uint8_t*>(flag)=oldFlag;
 }
+// ---- hit fx: impact sparkles and rings on attack clicks --------------------
+// The burst is triggered by the rising edge of the left mouse button while no
+// UI is open, aimed along the verified look rotation at a configurable reach.
+// Everything is state owned by the render thread: the click poll is
+// edge-based and the physics update is wall-clock dt, so being called from
+// both the entity pass and the screen pass in one frame is harmless (the
+// second call sees dt ~= 0 and the same button state).
+std::atomic<int> hitFxStatus{0};
+hit_fx::State hitState;
+hit_fx::Rng hitRng{0x5EED1234u};
+bool hitPrevDown=false;
+ULONGLONG hitLastTick=0, hitLastBurst=0;
+
+void renderHitFx(const PlayerFrame& player) {
+ if (!hitFxEnabled.load(std::memory_order_acquire)) { hitState.clear(); hitPrevDown=false; hitLastTick=0; hitFxStatus.store(0,std::memory_order_relaxed); return; }
+ const ULONGLONG now=GetTickCount64();
+ hit_fx::Config config;
+ config.count=static_cast<int>(param(VisualParam::HitCount)+0.5f);
+ config.size=param(VisualParam::HitSize);
+ config.speed=param(VisualParam::HitSpeed);
+ config.life=param(VisualParam::HitLife);
+ config.gravity=param(VisualParam::HitGravity);
+ config.reach=param(VisualParam::HitReach);
+ config.ringCount=static_cast<int>(param(VisualParam::HitRingCount)+0.5f);
+ config.ringSize=param(VisualParam::HitRingSize);
+ config.ringLife=param(VisualParam::HitRingLife);
+ config.cycleSpeed=param(VisualParam::HitCycleSpeed);
+ config.ar=param(VisualParam::HitARed); config.ag=param(VisualParam::HitAGreen); config.ab=param(VisualParam::HitABlue);
+ config.br=param(VisualParam::HitBRed); config.bg=param(VisualParam::HitBGreen); config.bb=param(VisualParam::HitBBlue);
+ std::uintptr_t actor=0;
+ if (!player.valid || now<player.at || now-player.at>250 || !localPlayer(actor) || actor!=player.entity) {
+  // No player frame: keep the existing burst animating, just no new clicks.
+  hitPrevDown=false;
+ } else {
+  const bool down=(GetAsyncKeyState(VK_LBUTTON)&0x8000)!=0;
+  const bool clicked=down&&!hitPrevDown;
+  hitPrevDown=down;
+  if (clicked && !hitFxUiActive.load(std::memory_order_acquire) && now-hitLastBurst>=120) {
+   auto memory=[](std::uintptr_t address,void* out,std::size_t n) { return read(address,out,n); };
+   katana_rotation::Reading rotation;
+   if (katana_rotation::readRotation(base,clientInstance.load(std::memory_order_acquire),memory,rotation)) {
+    hitLastBurst=now;
+    float yaw=rotation.yaw+(katanaYawSign.load(std::memory_order_relaxed)<0?3.14159265f:0.f);
+    const auto look=katana_pose::look(yaw,rotation.pitchUp);
+    const hit_fx::Vec3 eye{player.world.x,player.world.y,player.world.z};
+    const hit_fx::Vec3 dir{look.x,look.y,look.z};
+    hitState.spawn(config,{eye.x+dir.x*config.reach,eye.y+dir.y*config.reach,eye.z+dir.z*config.reach},dir,hitRng);
+   }
+  }
+ }
+ float dt=hitLastTick?(now-hitLastTick)/1000.f:0.f;
+ hitLastTick=now;
+ hitState.update(dt,config);
+ if (!hitState.alive()) { hitFxStatus.store(0,std::memory_order_relaxed); return; }
+ hitFxStatus.store(2,std::memory_order_relaxed);
+ // The billboards must face the camera every frame: rebuild the basis from
+ // the current look rotation (same verified convention the katana uses).
+ auto readMemory=[](std::uintptr_t address,void* out,std::size_t n) { return read(address,out,n); };
+ katana_rotation::Reading rotation;
+ if (!katana_rotation::readRotation(base,clientInstance.load(std::memory_order_acquire),readMemory,rotation)) {
+  hitFxStatus.store(13,std::memory_order_relaxed); return;
+ }
+ float yaw=rotation.yaw+(katanaYawSign.load(std::memory_order_relaxed)<0?3.14159265f:0.f);
+ const auto look=katana_pose::look(yaw,rotation.pitchUp);
+ hit_fx::Vec3 right,up;
+ hit_fx::basisFromLook({look.x,look.y,look.z},right,up);
+ float origin[3]{},saved[4]{}; std::uint8_t oldFlag=0;
+ auto tess=base+tessRva,color=base+shaderColorRva,flag=base+shaderFlagRva;
+ if (!read(base+originRva,origin,sizeof(origin)) || !read(color,saved,sizeof(saved)) || !fetch(flag,oldFlag) ||
+     !writable(color,sizeof(saved)) || !writable(flag,1)) return;
+ for(float v:origin) if(!std::isfinite(v)) return;
+ auto* t=reinterpret_cast<void*>(tess);
+ auto channel=[](float x) { return static_cast<std::uint8_t>(std::clamp(x,0.f,1.f)*255.f+.5f); };
+ const float shimmerT=static_cast<float>(now%1000000)/1000.f;
+ // Particles in four opacity buckets: the pipeline has no per-vertex alpha,
+ // the batch-wide shader tint carries it (same knob the jump rings use).
+ int bucketOf[hit_fx::kParticleCapacity];
+ for (std::size_t i=0;i<hit_fx::kParticleCapacity;++i) {
+  bucketOf[i]=-1;
+  const hit_fx::Particle& p=hitState.parts[i];
+  if (!p.live || p.life<=0.f) continue;
+  const hit_fx::Vec3 rel{p.pos.x-origin[0],p.pos.y-origin[1],p.pos.z-origin[2]};
+  if (std::fabs(rel.x)>48.f||std::fabs(rel.y)>48.f||std::fabs(rel.z)>48.f) continue;
+  const float a=hit_fx::alphaCurve(p.age/p.life);
+  if (a<=0.f) continue;
+  bucketOf[i]=std::min(3,static_cast<int>(a*4.f));
+ }
+ for (int bucket=0;bucket<4;++bucket) {
+  int verts=0;
+  for (std::size_t i=0;i<hit_fx::kParticleCapacity;++i)
+   if (bucketOf[i]==bucket) verts+=hit_fx::kStarVertices+hit_fx::kGlowVertices;
+  if (!verts) continue;
+  if (!tessIdle(tess)) break;
+  const float opacity=(static_cast<float>(bucket)+0.5f)/4.f;
+  const float tint[4]={1.f,1.f,1.f,opacity};
+  std::memcpy(reinterpret_cast<void*>(color),tint,sizeof(tint)); *reinterpret_cast<std::uint8_t*>(flag)=1;
+  tessBegin(t,2,verts);
+  auto emit=[&](float x,float y,float z,float r,float g,float b) {
+   tessColor(t,channel(r),channel(g),channel(b),255);
+   tessVertex(t,x,y,z);
+  };
+  for (std::size_t i=0;i<hit_fx::kParticleCapacity;++i) {
+   if (bucketOf[i]!=bucket) continue;
+   const hit_fx::Particle& p=hitState.parts[i];
+   const float nt=p.age/p.life;
+   const float w=hit_fx::colorMix(shimmerT,config.cycleSpeed,p.phase);
+   const float cr=config.ar+(config.br-config.ar)*w;
+   const float cg=config.ag+(config.bg-config.ag)*w;
+   const float cb=config.ab+(config.bb-config.ab)*w;
+   const float size=p.size*hit_fx::sizeCurve(nt);
+   const hit_fx::Vec3 rel{p.pos.x-origin[0],p.pos.y-origin[1],p.pos.z-origin[2]};
+   hit_fx::glowQuad(rel,right,up,size,cr*.30f,cg*.30f,cb*.30f,emit);
+   hit_fx::star(rel,right,up,size,p.rot,cr,cg,cb,emit);
+  }
+  submitVisual(t,opacity);
+  alignas(16) std::uint8_t scratch[0x200]{};
+  tessEnd(t,scratch,0,0);
+ }
+ // Rings: bright narrow band plus a translucent halo, per ring (jump-ring
+ // pattern). The ground ring wraps around the hit victim's feet.
+ for (const hit_fx::RingFx& r : hitState.rings) {
+  if (!r.visible()) continue;
+  const hit_fx::Vec3 rel{r.center.x-origin[0],r.center.y-origin[1],r.center.z-origin[2]};
+  if (std::fabs(rel.x)>48.f||std::fabs(rel.y)>48.f||std::fabs(rel.z)>48.f) continue;
+  const float prog=r.progress();
+  const float w=hit_fx::colorMix(shimmerT,config.cycleSpeed,r.phase);
+  const float cr=config.ar+(config.br-config.ar)*w;
+  const float cg=config.ag+(config.bg-config.ag)*w;
+  const float cb=config.ab+(config.bb-config.ab)*w;
+  const float radius=hit_fx::ringRadius(prog,r.maxRadius);
+  const float alpha=hit_fx::alphaCurve(prog);
+  for (int layer=0;layer<2;++layer) {
+   if (!tessIdle(tess)) break;
+   const float layerOpacity=alpha*(layer==0?1.f:.22f);
+   const float width=layer==0?std::max(.02f,radius*.10f):std::max(.06f,radius*.30f);
+   const float tint[4]={1.f,1.f,1.f,layerOpacity};
+   std::memcpy(reinterpret_cast<void*>(color),tint,sizeof(tint)); *reinterpret_cast<std::uint8_t*>(flag)=1;
+   tessBegin(t,2,hit_fx::kRingVertices);
+   auto emit=[&](float x,float y,float z,float er,float eg,float eb) {
+    tessColor(t,channel(er),channel(eg),channel(eb),255);
+    tessVertex(t,x,y,z);
+   };
+   hit_fx::annulus(rel,r.right,r.up,radius,width,layer==0?cr:cr*.60f,layer==0?cg:cg*.60f,layer==0?cb:cb*.60f,emit);
+   submitVisual(t,layerOpacity);
+   alignas(16) std::uint8_t ringScratch[0x200]{};
+   tessEnd(t,ringScratch,0,0);
+  }
+ }
+ std::memcpy(reinterpret_cast<void*>(color),saved,sizeof(saved)); *reinterpret_cast<std::uint8_t*>(flag)=oldFlag;
+ hitFxStatus.store(1,std::memory_order_relaxed);
+}
 void screenHook(void* self,void* ctx) {
  if (inScreen) { originalScreen(self,ctx); return; }
  inScreen=true;
@@ -1042,12 +1197,13 @@ void screenHook(void* self,void* ctx) {
  // Submit the verified hat before collecting/drawing the experimental trail.
  renderHat(visible);
  PlayerFrame local=visible;
- if ((trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire) || accessoryEnabled.load(std::memory_order_acquire)) && !local.valid) {
+ if ((trailEnabled.load(std::memory_order_acquire) || jumpEnabled.load(std::memory_order_acquire) || accessoryEnabled.load(std::memory_order_acquire) || hitFxEnabled.load(std::memory_order_acquire)) && !local.valid) {
   std::uintptr_t actor=0;
   if (localPlayer(actor)) { rememberPlayer(reinterpret_cast<void*>(actor),1.0f); local=frame; frame.valid=false; }
  }
  renderTrail(local);
  renderJump(local);
+ renderHitFx(local);
  renderAccessory(local);
  renderKatana(local);
  inScreen=false;
@@ -1244,6 +1400,10 @@ int AccessoryStatus() {
  return status==1 && (!then || now<then || now-then>1000) ? 0 : status;
 }
 bool JumpEnabled() { return jumpEnabled.load(std::memory_order_acquire); }
+bool HitFxEnabled() { return hitFxEnabled.load(std::memory_order_acquire); }
+void SetHitFxEnabled(bool value) { hitFxEnabled.store(value,std::memory_order_release); }
+void SetHitFxUiActive(bool value) { hitFxUiActive.store(value,std::memory_order_release); }
+int HitFxStatus() { return hitFxStatus.load(std::memory_order_relaxed); }
 void SetJumpEnabled(bool value) {
  if (!value) { jumpEnabled.store(false,std::memory_order_release); jumpGeneration.fetch_add(1,std::memory_order_acq_rel); jumpStatus.store(0,std::memory_order_relaxed); return; }
  jumpStatus.store(0,std::memory_order_relaxed);

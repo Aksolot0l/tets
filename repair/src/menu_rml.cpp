@@ -286,7 +286,7 @@ bool shadowModule(int moduleId) {
 // ---------------------------------------------------------------------------
 
 enum class SwKind {
-    AgModule, ChinaHat, Trail, Jump, Katana,
+    AgModule, ChinaHat, Trail, Jump, Katana, HitFx,
     ChFill, ChRainbow, TrFill, TrRainbow, JrRainbow
 };
 
@@ -313,6 +313,7 @@ const SwitchDef kSwitches[] = {
     {"sw-gfx-chinahat", SwKind::ChinaHat, 0},
     {"sw-gfx-trail", SwKind::Trail, 0},
     {"sw-gfx-jump", SwKind::Jump, 0},
+    {"sw-gfx-hit", SwKind::HitFx, 0},
     {"sw-kt-master", SwKind::Katana, 0},
     {"sw-ch-fill", SwKind::ChFill, 0},
     {"sw-ch-rainbow", SwKind::ChRainbow, 0},
@@ -333,6 +334,7 @@ bool readSwitch(const SwitchDef& def) {
         case SwKind::ChinaHat: return ChinaHatEnabled();
         case SwKind::Trail: return TrailEnabled();
         case SwKind::Jump: return JumpEnabled();
+        case SwKind::HitFx: return HitFxEnabled();
         case SwKind::Katana: return KatanaEnabled();
         case SwKind::ChFill: return HatFillEnabled();
         case SwKind::ChRainbow: return HatRainbowEnabled();
@@ -349,6 +351,7 @@ void applySwitch(const SwitchDef& def, bool on) {
         case SwKind::ChinaHat: SetChinaHatEnabled(on); break;
         case SwKind::Trail: SetTrailEnabled(on); break;
         case SwKind::Jump: SetJumpEnabled(on); break;
+        case SwKind::HitFx: SetHitFxEnabled(on); break;
         case SwKind::Katana: SetKatanaEnabled(on); break;
         case SwKind::ChFill: SetHatFillEnabled(on); break;
         case SwKind::ChRainbow: SetHatRainbowEnabled(on); break;
@@ -405,6 +408,23 @@ const SliderDef kSliders[] = {
     {"sl-kt-opacity", VisualParam::KatanaOpacity, "%.0f%%"},
     {"sl-kt-fpside", VisualParam::KatanaFirstSide, "%.0f%%"},
     {"sl-kt-fpforward", VisualParam::KatanaFirstForward, "%.0f%%"},
+    // Hit fx (graphics tab).
+    {"sl-hit-count", VisualParam::HitCount, "%.0f%%"},
+    {"sl-hit-size", VisualParam::HitSize, "%.0f%%"},
+    {"sl-hit-speed", VisualParam::HitSpeed, "%.0f%%"},
+    {"sl-hit-life", VisualParam::HitLife, "%.0f%%"},
+    {"sl-hit-gravity", VisualParam::HitGravity, "%.0f%%"},
+    {"sl-hit-reach", VisualParam::HitReach, "%.0f%%"},
+    {"sl-hit-rings", VisualParam::HitRingCount, "%.0f%%"},
+    {"sl-hit-ringsize", VisualParam::HitRingSize, "%.0f%%"},
+    {"sl-hit-ringlife", VisualParam::HitRingLife, "%.0f%%"},
+    {"sl-hit-cycle", VisualParam::HitCycleSpeed, "%.0f%%"},
+    {"sl-hit-ar", VisualParam::HitARed, "%.0f%%"},
+    {"sl-hit-ag", VisualParam::HitAGreen, "%.0f%%"},
+    {"sl-hit-ab", VisualParam::HitABlue, "%.0f%%"},
+    {"sl-hit-br", VisualParam::HitBRed, "%.0f%%"},
+    {"sl-hit-bg", VisualParam::HitBGreen, "%.0f%%"},
+    {"sl-hit-bb", VisualParam::HitBBlue, "%.0f%%"},
 };
 
 // One uniform percent scale for every slider: the DOM value is 0..100 and
@@ -963,6 +983,8 @@ void syncSliders() {
         {"chip-ch", VisualParam::HatRed, VisualParam::HatGreen, VisualParam::HatBlue},
         {"chip-tr", VisualParam::TrailRed, VisualParam::TrailGreen, VisualParam::TrailBlue},
         {"chip-jr", VisualParam::JumpRed, VisualParam::JumpGreen, VisualParam::JumpBlue},
+        {"chip-hita", VisualParam::HitARed, VisualParam::HitAGreen, VisualParam::HitABlue},
+        {"chip-hitb", VisualParam::HitBRed, VisualParam::HitBGreen, VisualParam::HitBBlue},
     };
     for (const ChipDef& chip : kChips) {
         Rml::Element* element = g_menuDoc->GetElementById(chip.id);

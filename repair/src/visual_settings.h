@@ -12,7 +12,10 @@ enum class VisualParam : std::size_t {
  JumpRadius, JumpSeconds, JumpOpacity, JumpRed, JumpGreen, JumpBlue, JumpRainbowSpeed,
  AccessoryScale, AccessoryOffset, AccessoryOpacity, AccessoryRed, AccessoryGreen, AccessoryBlue,
  KatanaScale, KatanaTilt, KatanaSide, KatanaHeight, KatanaForward, KatanaOpacity,
- KatanaFirstSide, KatanaFirstForward, Count
+ KatanaFirstSide, KatanaFirstForward,
+ HitCount, HitSize, HitSpeed, HitLife, HitGravity, HitReach,
+ HitRingCount, HitRingSize, HitRingLife, HitCycleSpeed,
+ HitARed, HitAGreen, HitABlue, HitBRed, HitBGreen, HitBBlue, Count
 };
 struct VisualParamSpec { float value, low, high; };
 constexpr VisualParamSpec visualParamSpecs[] = {
@@ -28,7 +31,10 @@ constexpr VisualParamSpec visualParamSpecs[] = {
  {1.f,0.f,1.f},{.76f,0.f,1.f},{.14f,0.f,1.f},
  {.052f,.020f,.100f},{1.0f,.20f,1.55f},{.32f,0.f,.80f},
  {1.30f,.60f,1.80f},{.10f,-.50f,1.00f},{1.f,0.f,1.f},
- {.34f,0.f,.80f},{.30f,-.30f,1.00f}
+ {.34f,0.f,.80f},{.30f,-.30f,1.00f},
+ {24.f,4.f,48.f},{.32f,.08f,.80f},{4.2f,1.f,10.f},{.70f,.25f,1.60f},{5.5f,0.f,14.f},{2.8f,1.f,4.5f},
+ {3.f,0.f,5.f},{1.4f,.40f,3.0f},{.55f,.20f,1.2f},{.90f,.05f,3.f},
+ {1.f,0.f,1.f},{1.f,0.f,1.f},{1.f,0.f,1.f},{1.f,0.f,1.f},{.15f,0.f,1.f},{.10f,0.f,1.f}
 };
 static_assert(sizeof(visualParamSpecs)/sizeof(visualParamSpecs[0])==static_cast<std::size_t>(VisualParam::Count),"visual parameters mismatch");
 inline float sanitizeVisualParam(VisualParam param,float value) {

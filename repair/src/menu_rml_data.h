@@ -457,6 +457,32 @@ static const char kMenuRml[] = R"RML(
                 <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-jr-b" min="0" max="100" step="1" value="42"/><div class="slider-value" id="ro-jr-b"/></div>
             </div>
         </div>
+        <div class="sec" id="sec-hit">
+            <div class="sec-head">
+                <span class="sec-title">УДАРЫ</span>
+                <span class="sec-flex"/>
+                <button class="check" id="sw-gfx-hit"><span class="ck"/></button>
+                <span class="sec-fold"><span class="f-plus">+</span><span class="f-minus">-</span></span>
+            </div>
+            <div class="sec-body">
+                <div class="slider-row"><div class="slider-label">Количество частиц</div><input type="range" id="sl-hit-count" min="0" max="100" step="1" value="45"/><div class="slider-value" id="ro-hit-count"/></div>
+                <div class="slider-row"><div class="slider-label">Размер частиц</div><input type="range" id="sl-hit-size" min="0" max="100" step="1" value="33"/><div class="slider-value" id="ro-hit-size"/></div>
+                <div class="slider-row"><div class="slider-label">Скорость разлёта</div><input type="range" id="sl-hit-speed" min="0" max="100" step="1" value="36"/><div class="slider-value" id="ro-hit-speed"/></div>
+                <div class="slider-row"><div class="slider-label">Время жизни</div><input type="range" id="sl-hit-life" min="0" max="100" step="1" value="33"/><div class="slider-value" id="ro-hit-life"/></div>
+                <div class="slider-row"><div class="slider-label">Гравитация</div><input type="range" id="sl-hit-gravity" min="0" max="100" step="1" value="39"/><div class="slider-value" id="ro-hit-gravity"/></div>
+                <div class="slider-row"><div class="slider-label">Дистанция удара</div><input type="range" id="sl-hit-reach" min="0" max="100" step="1" value="51"/><div class="slider-value" id="ro-hit-reach"/></div>
+                <div class="slider-row"><div class="slider-label">Колец удара</div><input type="range" id="sl-hit-rings" min="0" max="100" step="1" value="60"/><div class="slider-value" id="ro-hit-rings"/></div>
+                <div class="slider-row"><div class="slider-label">Размер колец</div><input type="range" id="sl-hit-ringsize" min="0" max="100" step="1" value="38"/><div class="slider-value" id="ro-hit-ringsize"/></div>
+                <div class="slider-row"><div class="slider-label">Время колец</div><input type="range" id="sl-hit-ringlife" min="0" max="100" step="1" value="35"/><div class="slider-value" id="ro-hit-ringlife"/></div>
+                <div class="slider-row"><div class="slider-label">Скорость перелива</div><input type="range" id="sl-hit-cycle" min="0" max="100" step="1" value="29"/><div class="slider-value" id="ro-hit-cycle"/></div>
+                <div class="slider-row"><div class="slider-label">Цвет A: красный</div><input type="range" id="sl-hit-ar" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-hit-ar"/><div class="color-chip" id="chip-hita"/></div>
+                <div class="slider-row"><div class="slider-label">Цвет A: зелёный</div><input type="range" id="sl-hit-ag" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-hit-ag"/></div>
+                <div class="slider-row"><div class="slider-label">Цвет A: синий</div><input type="range" id="sl-hit-ab" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-hit-ab"/></div>
+                <div class="slider-row"><div class="slider-label">Цвет B: красный</div><input type="range" id="sl-hit-br" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-hit-br"/><div class="color-chip" id="chip-hitb"/></div>
+                <div class="slider-row"><div class="slider-label">Цвет B: зелёный</div><input type="range" id="sl-hit-bg" min="0" max="100" step="1" value="15"/><div class="slider-value" id="ro-hit-bg"/></div>
+                <div class="slider-row"><div class="slider-label">Цвет B: синий</div><input type="range" id="sl-hit-bb" min="0" max="100" step="1" value="10"/><div class="slider-value" id="ro-hit-bb"/></div>
+            </div>
+        </div>
         <div class="sec" id="sec-kt">
             <div class="sec-head">
                 <span class="sec-title">КАТАНА</span>

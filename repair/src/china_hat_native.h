@@ -68,6 +68,11 @@ void SetJumpEnabled(bool enabled);
 bool JumpRainbowEnabled();
 void SetJumpRainbowEnabled(bool enabled);
 int JumpStatus();
+// Hit fx: impact sparkles and rings on attack clicks.
+bool HitFxEnabled();
+void SetHitFxEnabled(bool enabled);
+void SetHitFxUiActive(bool active);
+int HitFxStatus();
 bool TrailEnabled();
 void SetTrailEnabled(bool enabled);
 float ChinaHatHeight();
