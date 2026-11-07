@@ -76,6 +76,25 @@ assert 'SetVisualParam(VisualParam::HatRed' in m and 'SetVisualParam(VisualParam
 assert 'SetHatRainbowEnabled' in m and 'SetTrailRainbowEnabled' in m and 'SetJumpRainbowEnabled' in m
 assert 'SetHatFillEnabled' in m and 'SetTrailFillEnabled' in m
 
+# The HUD tab toggles route through the same queued SetModule path as the
+# modules tab; without this the flags snapped back to the live state.
+for wiring in ('"hud.showFps") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::Fps)',
+               '"hud.showWatermark") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::Watermark)',
+               '"hud.showPerformance") == 0) {',
+               '"hud.showModuleList") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::ActiveModules)'):
+    assert wiring in m, wiring
+# Module flags come from the menu-owned shadow (seeded once from the live
+# state) so the toggles never race the queued SetModule calls.
+assert 'g_moduleShadow[ag::kModuleCount]' in m and 'g_moduleShadowReady' in m
+assert 'syncModuleShadow();' in m and 'shadowModule(static_cast<int>(ag::ModuleId::Fps))' in m
+
+# The design canvas was tuned so the menu lands near 1.5x on 1080p-class
+# game screens (17 px text was unreadable at the old 1:1 fit).
+assert 'constexpr float kShellWidth = 1040.0f;' in menucpp
+assert 'constexpr float kShellHeight = 580.0f;' in menucpp
+assert 'std::clamp(fit, 0.55f, 1.80f)' in menucpp
+assert 'std::clamp(state.ui.menuScale / 100.0f, 0.70f, 1.50f)' in menucpp
+
 # The vendored Dear ImGui implementation matches the header version the menu
 # was developed against (the shipped DLL links these exact sources).
 version=re.search(r'#define IMGUI_VERSION\s+"([^"]+)"',(r/'vendor/imgui/imgui.h').read_text()).group(1)

@@ -49,6 +49,9 @@ bool g_initFailed = false;
 // Set once the backend has actually built its device objects (font texture
 // uploaded); only then does the embed replace the legacy interface.
 std::atomic<bool> g_renderOk{false};
+// The menu's own copy of the game's HUD module flags (indexed by ag::ModuleId).
+bool g_moduleShadow[ag::kModuleCount] = {};
+bool g_moduleShadowReady = false;
 
 std::atomic<bool> g_gameMenuOpen{false};
 std::atomic<bool> g_hiddenByClose{false};
@@ -153,22 +156,57 @@ void pushJumpRings() {
     SetVisualParam(VisualParam::JumpBlue, clamp01(jump.color.z));
 }
 
+void queueAgModule(int moduleId, bool enable) {
+    // The shadow is the menu's own view of the module flags: it initializes
+    // from the live state once and then follows the user's toggles, because
+    // re-reading the game state every frame raced the queued SetModule calls
+    // and the switch visibly jumped back to its old position.
+    const int index = moduleId;
+    if (index >= 0 && index < static_cast<int>(ag::kModuleCount))
+        g_moduleShadow[index] = enable;
+    std::lock_guard<std::mutex> lock(g_pendingMutex);
+    if (g_pendingToggles.size() < 32) g_pendingToggles.emplace_back(moduleId, enable);
+}
+
+void syncModuleShadow() {
+    if (g_moduleShadowReady || !g_moduleStateReader) return;
+    for (int i = 0; i < static_cast<int>(ag::kModuleCount); ++i)
+        g_moduleShadow[i] = g_moduleStateReader(i);
+    g_moduleShadowReady = true;
+}
+
+bool shadowModule(int moduleId) {
+    if (moduleId < 0 || moduleId >= static_cast<int>(ag::kModuleCount)) return false;
+    return g_moduleShadow[moduleId];
+}
+
 void onSettingChanged(const char* path) {
     if (!path) return;
+    // The HUD tab toggles are the game's own HUD modules: route them through
+    // the same queued SetModule path as the modules tab, otherwise the flags
+    // below would immediately snap back to the live game state.
+    if (std::strcmp(path, "hud.showFps") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::Fps), g_state.hud.showFps); return; }
+    if (std::strcmp(path, "hud.showCps") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::Cps), g_state.hud.showCps); return; }
+    if (std::strcmp(path, "hud.showClock") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::Clock), g_state.hud.showClock); return; }
+    if (std::strcmp(path, "hud.showKeystrokes") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::Keystrokes), g_state.hud.showKeystrokes); return; }
+    if (std::strcmp(path, "hud.showWatermark") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::Watermark), g_state.hud.showWatermark); return; }
+    if (std::strcmp(path, "hud.showCoordinates") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::Coordinates), g_state.hud.showCoordinates); return; }
+    if (std::strcmp(path, "hud.showResolution") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::Resolution), g_state.hud.showResolution); return; }
+    if (std::strcmp(path, "hud.showPerformance") == 0) {
+        queueAgModule(static_cast<int>(ag::ModuleId::Cpu), g_state.hud.showPerformance);
+        queueAgModule(static_cast<int>(ag::ModuleId::Ram), g_state.hud.showPerformance);
+        return;
+    }
+    if (std::strcmp(path, "hud.showModuleList") == 0) { queueAgModule(static_cast<int>(ag::ModuleId::ActiveModules), g_state.hud.showModuleList); return; }
     if (std::strcmp(path, "graphics.chinaHat.enabled") == 0) { SetChinaHatEnabled(g_state.graphics.chinaHat.enabled); return; }
     if (std::strncmp(path, "graphics.chinaHat.", 18) == 0) { pushChinaHat(); return; }
     if (std::strcmp(path, "graphics.trail.enabled") == 0) { SetTrailEnabled(g_state.graphics.trail.enabled); return; }
     if (std::strncmp(path, "graphics.trail.", 15) == 0) { pushTrail(); return; }
     if (std::strcmp(path, "graphics.jumpRings.enabled") == 0) { SetJumpEnabled(g_state.graphics.jumpRings.enabled); return; }
     if (std::strncmp(path, "graphics.jumpRings.", 19) == 0) { pushJumpRings(); return; }
-    // hud.*, ui.*, sound.* and controls.* stay in the menu state for now:
-    // the game HUD layout, sound and key bindings are not exposed by the
-    // adapter's verified surface, and nothing is guessed here.
-}
-
-void queueAgModule(int moduleId, bool enable) {
-    std::lock_guard<std::mutex> lock(g_pendingMutex);
-    if (g_pendingToggles.size() < 32) g_pendingToggles.emplace_back(moduleId, enable);
+    // Remaining hud.* look settings, ui.*, sound.* and controls.* stay in the
+    // menu state for now: the game HUD layout, sound and key bindings are not
+    // exposed by the adapter's verified surface, and nothing is guessed here.
 }
 
 void onModuleToggled(ModuleId id, bool enable) {
@@ -194,6 +232,8 @@ void onModuleToggled(ModuleId id, bool enable) {
 }
 
 // Mirror the live game state into the menu so the toggles never drift.
+// HUD module flags come from the shadow (see queueAgModule): the live read
+// only seeds it once, after that the user's own toggles are the truth.
 void syncLiveState() {
     g_state.graphics.chinaHat.enabled = ChinaHatEnabled();
     g_state.graphics.trail.enabled = TrailEnabled();
@@ -211,16 +251,17 @@ void syncLiveState() {
             default: break;
         }
     }
-    if (g_moduleStateReader) {
-        g_state.hud.showFps = g_moduleStateReader(static_cast<int>(ag::ModuleId::Fps));
-        g_state.hud.showCps = g_moduleStateReader(static_cast<int>(ag::ModuleId::Cps));
-        g_state.hud.showClock = g_moduleStateReader(static_cast<int>(ag::ModuleId::Clock));
-        g_state.hud.showKeystrokes = g_moduleStateReader(static_cast<int>(ag::ModuleId::Keystrokes));
-        g_state.hud.showWatermark = g_moduleStateReader(static_cast<int>(ag::ModuleId::Watermark));
-        g_state.hud.showCoordinates = g_moduleStateReader(static_cast<int>(ag::ModuleId::Coordinates));
-        g_state.hud.showResolution = g_moduleStateReader(static_cast<int>(ag::ModuleId::Resolution));
-        g_state.hud.showPerformance = g_moduleStateReader(static_cast<int>(ag::ModuleId::Cpu));
-        g_state.hud.showModuleList = g_moduleStateReader(static_cast<int>(ag::ModuleId::ActiveModules));
+    syncModuleShadow();
+    if (g_moduleShadowReady) {
+        g_state.hud.showFps = shadowModule(static_cast<int>(ag::ModuleId::Fps));
+        g_state.hud.showCps = shadowModule(static_cast<int>(ag::ModuleId::Cps));
+        g_state.hud.showClock = shadowModule(static_cast<int>(ag::ModuleId::Clock));
+        g_state.hud.showKeystrokes = shadowModule(static_cast<int>(ag::ModuleId::Keystrokes));
+        g_state.hud.showWatermark = shadowModule(static_cast<int>(ag::ModuleId::Watermark));
+        g_state.hud.showCoordinates = shadowModule(static_cast<int>(ag::ModuleId::Coordinates));
+        g_state.hud.showResolution = shadowModule(static_cast<int>(ag::ModuleId::Resolution));
+        g_state.hud.showPerformance = shadowModule(static_cast<int>(ag::ModuleId::Cpu));
+        g_state.hud.showModuleList = shadowModule(static_cast<int>(ag::ModuleId::ActiveModules));
     }
 }
 

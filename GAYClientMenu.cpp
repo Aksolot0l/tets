@@ -16,8 +16,11 @@ namespace
     // ─────────────────────────────────────────────────────────────────────────
     // Константы и мелкие утилиты
     // ─────────────────────────────────────────────────────────────────────────
-    constexpr float kShellWidth = 1560.0f;
-    constexpr float kShellHeight = 870.0f;
+    // Адаптер: канвас уменьшен в полтора раза (было 1560x870, пропорции
+    // сохранены), чтобы на игровом экране ~1080p масштаб был около 1.5x и
+    // текст оставался читаемым; весь остальной макет не менялся.
+    constexpr float kShellWidth = 1040.0f;
+    constexpr float kShellHeight = 580.0f;
     constexpr float kRailWidth = 268.0f;
     constexpr float kTopbarHeight = 54.0f;
     constexpr float kFooterHeight = 34.0f;
@@ -2177,8 +2180,8 @@ bool RenderMenu(MenuState& state, const MenuActions& actions)
 
     // Масштабируем окно под размер игрового экрана, но не растягиваем на весь экран.
     float fit = std::min((io.DisplaySize.x - 40.0f) / kShellWidth, (io.DisplaySize.y - 40.0f) / kShellHeight);
-    fit = std::clamp(fit, 0.55f, 1.30f);
-    const float userScale = std::clamp(state.ui.menuScale / 100.0f, 0.80f, 1.20f);
+    fit = std::clamp(fit, 0.55f, 1.80f);  // адаптер: было 1.30 — меньшему канвасу нужен больший предел
+    const float userScale = std::clamp(state.ui.menuScale / 100.0f, 0.70f, 1.50f);  // адаптер: было 0.80..1.20 — чтобы ползунок реально работал в игре
     float windowWidth = kShellWidth * fit * userScale;
     float windowHeight = kShellHeight * fit * userScale;
     windowWidth = std::min(windowWidth, io.DisplaySize.x - 24.0f);
