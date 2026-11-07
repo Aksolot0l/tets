@@ -179,4 +179,17 @@ assert len(_re.findall(r'id="brand-sub"', d)) == 1
 assert 'id="brand-ver"' in d
 assert '#brand-sub, #brand-ver {' in d
 
+# 13. Web bridge: the web replica (repair/menu-web, root index.html) drives
+#     the same verified setters through a localhost-only WebSocket server.
+#     Commands are applied on the Present thread; bridge failure is non-fatal;
+#     the socket thread never touches the RmlUi DOM.
+assert 'namespace bridge {' in m
+assert '127.0.0.1' in m and '39731' in m
+assert 'Sec-WebSocket-Accept' in m and '258EAFA5-E914-47DA-95CA-C5AB0DC85B11' in m
+assert 'bridge::start();' in m and 'bridge::tick();' in m
+assert m.index('bridge::start();') > m.index('g_ready = true;')
+assert m.index('bridge::tick();') < m.index('if (!menuVisible) return;')
+assert 'queueCommand(' in m and 'pushOutbox(' in m
+assert '"-lws2_32"' in b
+
 print('check_menu_rml: ok')

@@ -1,11 +1,15 @@
 #include "menu_rml.h"
 
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -622,6 +626,356 @@ bool initBackend(ID3D11Device* device, unsigned width, unsigned height) {
 }
 
 // ---------------------------------------------------------------------------
+// Web bridge: a minimal localhost WebSocket server (127.0.0.1:39731) that
+// lets the web replica of this menu (repair/menu-web, root index.html) drive
+// exactly the same verified setters the in-game menu uses. The socket thread
+// only parses frames and queues line commands; commands are applied on the
+// Present thread (the same thread the RmlUi menu runs on) and snapshots for
+// the client are built there too. Any failure to start the bridge is
+// non-fatal: the in-game menu keeps working exactly as before.
+//
+// Line protocol (UTF-8 text frames, '\n' terminated):
+//   client -> game:  "set <id> <value>"   (switch 0/1, slider DOM-scale value)
+//                    "state"              (request an immediate snapshot)
+//   game -> client:  "sw <id> <0|1>" and "sl <id> <value>" lines, one frame
+//                    per snapshot (frame boundary == snapshot boundary)
+// ---------------------------------------------------------------------------
+namespace bridge {
+
+constexpr unsigned short kPort = 39731;
+
+std::atomic<bool> g_started{false};
+std::atomic<bool> g_client{false};
+std::atomic<bool> g_forceSnapshot{false};
+std::mutex g_mutex;                                    // guards both queues
+std::deque<std::pair<Rml::String, float>> g_commands;  // web -> game
+std::deque<Rml::String> g_outbox;                      // game -> web
+int g_snapshotTimer = 0;
+
+void queueCommand(const Rml::String& id, float value) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_commands.size() < 256) g_commands.emplace_back(id, value);
+}
+
+void pushOutbox(const Rml::String& frame) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_outbox.size() < 16) g_outbox.push_back(frame);
+}
+
+bool sendAll(SOCKET s, const char* data, int len) {
+    int off = 0;
+    while (off < len) {
+        const int n = send(s, data + off, len - off, 0);
+        if (n <= 0) return false;
+        off += n;
+    }
+    return true;
+}
+
+bool sendTextFrame(SOCKET s, const Rml::String& text) {
+    const size_t len = text.size();
+    unsigned char header[10];
+    if (len < 126) {
+        header[0] = 0x81; header[1] = (unsigned char)len;
+        if (!sendAll(s, (const char*)header, 2)) return false;
+    } else if (len < 65536) {
+        header[0] = 0x81; header[1] = 126;
+        header[2] = (unsigned char)(len >> 8); header[3] = (unsigned char)len;
+        if (!sendAll(s, (const char*)header, 4)) return false;
+    } else {
+        header[0] = 0x81; header[1] = 127;
+        for (int i = 0; i < 8; ++i) header[2 + i] = (unsigned char)((unsigned long long)len >> (56 - 8 * i));
+        if (!sendAll(s, (const char*)header, 10)) return false;
+    }
+    return sendAll(s, text.data(), (int)len);
+}
+
+bool recvExact(SOCKET s, void* buf, int len) {
+    char* p = (char*)buf;
+    int left = len;
+    while (left > 0) {
+        const int n = recv(s, p, left, MSG_WAITALL);
+        if (n <= 0) return false;
+        p += n; left -= n;
+    }
+    return true;
+}
+
+void base64Encode(const unsigned char* data, int len, char out[32]) {
+    static const char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    int o = 0;
+    for (int i = 0; i < len; i += 3) {
+        const unsigned v = (unsigned)data[i] << 16 |
+                            (i + 1 < len ? (unsigned)data[i + 1] << 8 : 0) |
+                            (i + 2 < len ? (unsigned)data[i + 2] : 0);
+        out[o++] = kAlphabet[(v >> 18) & 63];
+        out[o++] = kAlphabet[(v >> 12) & 63];
+        out[o++] = i + 1 < len ? kAlphabet[(v >> 6) & 63] : '=';
+        out[o++] = i + 2 < len ? kAlphabet[v & 63] : '=';
+    }
+    out[o] = '\0';
+}
+
+// Self-contained SHA-1 (RFC 3174) for the WebSocket handshake: no CNG header
+// quirks, works in every environment the adapter is built for.
+struct Sha1State {
+    unsigned h[5] = {0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u, 0xC3D2E1F0u};
+
+    void process(const unsigned char block[64]) {
+        unsigned w[80];
+        for (int i = 0; i < 16; ++i)
+            w[i] = (unsigned)block[i * 4] << 24 | (unsigned)block[i * 4 + 1] << 16 |
+                   (unsigned)block[i * 4 + 2] << 8 | (unsigned)block[i * 4 + 3];
+        for (int i = 16; i < 80; ++i) {
+            const unsigned v = w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16];
+            w[i] = (v << 1) | (v >> 31);
+        }
+        unsigned a = h[0], b = h[1], c = h[2], d = h[3], e = h[4];
+        for (int i = 0; i < 80; ++i) {
+            unsigned f, k;
+            if (i < 20) { f = (b & c) | (~b & d); k = 0x5A827999u; }
+            else if (i < 40) { f = b ^ c ^ d; k = 0x6ED9EBA1u; }
+            else if (i < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8F1BBCDCu; }
+            else { f = b ^ c ^ d; k = 0xCA62C1D6u; }
+            const unsigned temp = ((a << 5) | (a >> 27)) + f + e + k + w[i];
+            e = d; d = c; c = (b << 30) | (b >> 2); b = a; a = temp;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e;
+    }
+};
+
+void sha1(const unsigned char* data, size_t len, unsigned char out[20]) {
+    Sha1State state;
+    size_t offset = 0;
+    while (len - offset >= 64) {
+        state.process(data + offset);
+        offset += 64;
+    }
+    unsigned char tail[128]{};
+    const size_t rest = len - offset;
+    memcpy(tail, data + offset, rest);
+    tail[rest] = 0x80;
+    unsigned char* lengthBlock = rest + 1 <= 56 ? tail : tail + 64;
+    const unsigned long long bits = (unsigned long long)len * 8;
+    for (int i = 0; i < 8; ++i)
+        lengthBlock[63 - i] = (unsigned char)(bits >> (8 * i));
+    state.process(tail);
+    if (lengthBlock == tail + 64) state.process(tail + 64);
+    for (int i = 0; i < 5; ++i) {
+        out[i * 4] = (unsigned char)(state.h[i] >> 24);
+        out[i * 4 + 1] = (unsigned char)(state.h[i] >> 16);
+        out[i * 4 + 2] = (unsigned char)(state.h[i] >> 8);
+        out[i * 4 + 3] = (unsigned char)state.h[i];
+    }
+}
+
+// RFC 6455 accept key: base64(SHA1(client-key + magic GUID)).
+bool computeAccept(const char* key, char out[64]) {
+    char cat[128]{};
+    _snprintf(cat, sizeof(cat), "%s258EAFA5-E914-47DA-95CA-C5AB0DC85B11", key);
+    unsigned char hash[20];
+    sha1((const unsigned char*)cat, strlen(cat), hash);
+    base64Encode(hash, sizeof(hash), out);
+    return true;
+}
+
+void serveClient(SOCKET s) {
+    // 1) Read the HTTP upgrade request (until the blank line).
+    char buf[2048];
+    Rml::String request;
+    while (request.find("\r\n\r\n") == Rml::String::npos && request.size() < 8192) {
+        const int n = recv(s, buf, sizeof(buf), 0);
+        if (n <= 0) return;
+        request.append(buf, (size_t)n);
+    }
+    Rml::String key;
+    size_t pos = 0;
+    while ((pos = request.find("\r\n", pos)) != Rml::String::npos) {
+        size_t lineStart = request.rfind('\n', pos) + 1;
+        Rml::String line = request.substr(lineStart, pos - lineStart);
+        if (line.size() > 19 && (line.compare(0, 19, "Sec-WebSocket-Key: ") == 0 ||
+                                 line.compare(0, 19, "sec-websocket-key: ") == 0)) {
+            key = line.substr(19);
+            break;
+        }
+        pos += 2;
+    }
+    if (key.empty()) return;
+    char accept[64]{};
+    if (!computeAccept(key.c_str(), accept)) return;
+    const Rml::String response =
+        "HTTP/1.1 101 Switching Protocols\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Sec-WebSocket-Accept: " + Rml::String(accept) + "\r\n\r\n";
+    if (!sendAll(s, response.data(), (int)response.size())) return;
+    g_client.store(true, std::memory_order_relaxed);
+    menuLog("bridge: web client connected");
+
+    // 2) Frame loop: select() with a timeout so the outbox is flushed too.
+    std::string pending;
+    for (;;) {
+        fd_set readSet;
+        FD_ZERO(&readSet);
+        FD_SET(s, &readSet);
+        timeval timeout{0, 200000};
+        if (select(0, &readSet, nullptr, nullptr, &timeout) > 0) {
+            unsigned char header[2];
+            if (!recvExact(s, header, 2)) break;
+            const unsigned opcode = header[0] & 0x0f;
+            const bool masked = (header[1] & 0x80) != 0;
+            size_t len = header[1] & 0x7f;
+            if (len == 126) {
+                unsigned char ext[2];
+                if (!recvExact(s, ext, 2)) break;
+                len = (size_t)ext[0] << 8 | ext[1];
+            } else if (len == 127) {
+                unsigned char ext[8];
+                if (!recvExact(s, ext, 8)) break;
+                len = 0;
+                for (int i = 0; i < 8; ++i) len = len << 8 | ext[i];
+            }
+            if (len > 65536) break;
+            unsigned char mask[4]{};
+            if (masked && !recvExact(s, mask, 4)) break;
+            std::string payload(len, '\0');
+            if (len && !recvExact(s, &payload[0], (int)len)) break;
+            if (masked)
+                for (size_t i = 0; i < payload.size(); ++i) payload[i] = (char)((unsigned char)payload[i] ^ mask[i & 3]);
+            if (opcode == 8) {  // close
+                const unsigned char closeFrame[2] = {0x88, 0x00};
+                sendAll(s, (const char*)closeFrame, 2);
+                break;
+            }
+            if (opcode == 9) {  // ping -> pong
+                unsigned char pong[2 + 125];
+                pong[0] = 0x8a; pong[1] = (unsigned char)payload.size();
+                if (!payload.empty()) memcpy(pong + 2, payload.data(), payload.size());
+                if (!sendAll(s, (const char*)pong, 2 + (int)payload.size())) break;
+                continue;
+            }
+            if (opcode != 1) continue;  // text frames only
+            pending += payload;
+            size_t nl;
+            while ((nl = pending.find('\n')) != std::string::npos) {
+                std::string line = pending.substr(0, nl);
+                pending.erase(0, nl + 1);
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                if (line.compare(0, 4, "set ") == 0) {
+                    const size_t space = line.find(' ', 4);
+                    if (space != std::string::npos && space > 4)
+                        queueCommand(line.substr(4, space - 4), (float)atof(line.c_str() + space + 1));
+                } else if (line == "state") {
+                    g_forceSnapshot.store(true, std::memory_order_relaxed);
+                }
+            }
+        }
+        // Flush the outbox (snapshots) to the client.
+        for (;;) {
+            Rml::String frame;
+            {
+                std::lock_guard<std::mutex> lock(g_mutex);
+                if (g_outbox.empty()) break;
+                frame = g_outbox.front();
+                g_outbox.pop_front();
+            }
+            if (!sendTextFrame(s, frame)) goto disconnect;
+        }
+    }
+disconnect:
+    g_client.store(false, std::memory_order_relaxed);
+    menuLog("bridge: web client disconnected");
+}
+
+DWORD WINAPI threadMain(LPVOID) {
+    WSADATA wsa{};
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+        menuLog("bridge: disabled, WSAStartup failed");
+        return 0;
+    }
+    SOCKET listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (listener == INVALID_SOCKET) return 0;
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_port = htons(kPort);
+    address.sin_addr.s_addr = htonl(0x7f000001);  // localhost only
+    if (bind(listener, (sockaddr*)&address, sizeof(address)) != 0 || listen(listener, 1) != 0) {
+        closesocket(listener);
+        menuLog("bridge: disabled, port %u unavailable", (unsigned)kPort);
+        return 0;
+    }
+    menuLog("bridge: listening on 127.0.0.1:%u", (unsigned)kPort);
+    for (;;) {
+        const SOCKET client = accept(listener, nullptr, nullptr);
+        if (client == INVALID_SOCKET) break;
+        int noDelay = 1;
+        setsockopt(client, IPPROTO_TCP, TCP_NODELAY, (const char*)&noDelay, sizeof(noDelay));
+        serveClient(client);
+        closesocket(client);
+    }
+    return 0;
+}
+
+void start() {
+    bool expected = false;
+    if (!g_started.compare_exchange_strong(expected, true)) return;
+    HANDLE thread = CreateThread(nullptr, 0, threadMain, nullptr, 0, nullptr);
+    if (thread) {
+        CloseHandle(thread);
+    } else {
+        g_started.store(false, std::memory_order_relaxed);
+    }
+}
+
+// Runs on the Present thread every frame: applies queued web commands through
+// the exact same code paths the RmlUi menu uses, then (while a web client is
+// connected) publishes a full state snapshot about twice per second.
+void tick() {
+    std::deque<std::pair<Rml::String, float>> local;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        local.swap(g_commands);
+    }
+    for (const auto& command : local) {
+        if (const SwitchDef* def = findSwitch(command.first))
+            applySwitch(*def, command.second >= 0.5f);
+        else if (const SliderDef* def = findSlider(command.first))
+            SetVisualParam(def->param, paramFromDom(*def, command.second));
+        else
+            menuLog("bridge: unknown id '%s'", command.first.c_str());
+    }
+    if (!g_client.load(std::memory_order_relaxed)) return;
+    if (g_snapshotTimer > 0 && !g_forceSnapshot.load(std::memory_order_relaxed)) {
+        --g_snapshotTimer;
+        return;
+    }
+    g_snapshotTimer = 30;
+    g_forceSnapshot.store(false, std::memory_order_relaxed);
+    syncModuleShadow();
+    Rml::String snapshot;
+    char line[160];
+    const char* emitted[64];
+    size_t emittedCount = 0;
+    for (const SwitchDef& def : kSwitches) {
+        bool seen = false;
+        for (size_t i = 0; i < emittedCount; ++i)
+            if (strcmp(emitted[i], def.id) == 0) { seen = true; break; }
+        if (seen) continue;
+        if (emittedCount < 64) emitted[emittedCount++] = def.id;
+        std::snprintf(line, sizeof(line), "sw %s %d\n", def.id, readSwitch(def) ? 1 : 0);
+        snapshot += line;
+    }
+    for (const SliderDef& def : kSliders) {
+        std::snprintf(line, sizeof(line), "sl %s %.6g\n", def.id,
+                      domFromParam(def, GetVisualParam(def.param)));
+        snapshot += line;
+    }
+    pushOutbox(snapshot);
+}
+
+} // namespace bridge
+
+// ---------------------------------------------------------------------------
 // Per-frame synchronization and input.
 // ---------------------------------------------------------------------------
 
@@ -835,6 +1189,7 @@ void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
         }
         g_ready = true;
         clampShell(width, height);
+        bridge::start();
     }
     if (width != g_width || height != g_height) {
         g_width = width;
@@ -849,6 +1204,7 @@ void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
         !g_hiddenByClose.load(std::memory_order_relaxed);
     const bool toolsVisible = menuVisible && (KatanaEnabled() || AccessoryEnabled());
     updateDocVisibility(menuVisible, toolsVisible);
+    bridge::tick();
     if (!menuVisible) return;
 
     feedInput(width, height);

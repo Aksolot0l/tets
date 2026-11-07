@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RotateCcw } from "lucide-react";
 import {
   ACCENT_THEMES,
@@ -15,6 +15,7 @@ import {
   usePrefersReducedMotion,
   useToasts,
 } from "./hooks/useClientState";
+import { connectBridge, type BridgeStatus } from "./lib/bridge";
 import { ClosedBackdrop } from "./components/AbstractArt";
 import { PixelLogo } from "./components/PixelArt";
 import { TitleBar } from "./components/TitleBar";
@@ -124,6 +125,52 @@ export default function App() {
     window.innerWidth >= 1200,
   );
   const [menuOpen, setMenuOpen] = usePersistedState<boolean>("menuOpen", true);
+  const [bridgeStatus, setBridgeStatus] = useState<BridgeStatus>("demo");
+  const bridgeRef = useRef<ReturnType<typeof connectBridge> | null>(null);
+  const lastLocalEdit = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    bridgeRef.current = connectBridge(
+      (snapshot) => {
+        const now = Date.now();
+        const fresh = (key: string) => now - (lastLocalEdit.current[key] ?? 0) < 800;
+        setModules((previous) => {
+          const next = { ...previous };
+          let changed = false;
+          for (const [id, on] of Object.entries(snapshot.switches)) {
+            if (fresh(id) || next[id] === on) continue;
+            next[id] = on;
+            changed = true;
+          }
+          return changed ? next : previous;
+        });
+        setGraphicsToggles((previous) => {
+          const next = { ...previous };
+          let changed = false;
+          for (const [id, on] of Object.entries(snapshot.switches)) {
+            if (fresh(id) || next[id] === on) continue;
+            next[id] = on;
+            changed = true;
+          }
+          return changed ? next : previous;
+        });
+        setGraphicsValues((previous) => {
+          const next = { ...previous };
+          let changed = false;
+          for (const [id, value] of Object.entries(snapshot.sliders)) {
+            if (fresh(id) || next[id] === value) continue;
+            next[id] = value;
+            changed = true;
+          }
+          return changed ? next : previous;
+        });
+      },
+      (status) => setBridgeStatus(status),
+    );
+    return () => {
+      bridgeRef.current = null;
+    };
+  }, [setModules, setGraphicsToggles, setGraphicsValues]);
 
   useViewportScale();
 
@@ -145,21 +192,27 @@ export default function App() {
 
   const toggleModule = useCallback(
     (id: string, next: boolean) => {
+      lastLocalEdit.current[id] = Date.now();
       setModules((previous) => ({ ...previous, [id]: next }));
+      bridgeRef.current?.sendSwitch(id, next);
     },
     [setModules],
   );
 
   const updateGraphicsValue = useCallback(
     (id: string, value: number) => {
+      lastLocalEdit.current[id] = Date.now();
       setGraphicsValues((previous) => ({ ...previous, [id]: value }));
+      bridgeRef.current?.sendSlider(id, value);
     },
     [setGraphicsValues],
   );
 
   const toggleGraphics = useCallback(
     (id: string, next: boolean) => {
+      lastLocalEdit.current[id] = Date.now();
       setGraphicsToggles((previous) => ({ ...previous, [id]: next }));
+      bridgeRef.current?.sendSwitch(id, next);
     },
     [setGraphicsToggles],
   );
@@ -217,7 +270,7 @@ export default function App() {
 
       {menuOpen ? (
         <div className="shell" role="dialog" aria-label="GAYClient - внутриигровое меню настроек">
-          <TitleBar fps={fps} onClose={() => setMenuOpen(false)} />
+          <TitleBar fps={fps} bridgeStatus={bridgeStatus} onClose={() => setMenuOpen(false)} />
 
           <div className="shell-body">
             <NavRail

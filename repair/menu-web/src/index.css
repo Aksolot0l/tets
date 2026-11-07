@@ -4411,3 +4411,49 @@ html[data-motion="off"] .trail-block {
   place-items: center;
   color: var(--muted-2);
 }
+
+
+/* ---------- Game bridge status badge ---------- */
+.bridge-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 5px 12px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: #89a792;
+  white-space: nowrap;
+}
+
+.bridge-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+  flex: none;
+}
+
+.bridge-connected {
+  border-color: rgba(var(--accent-rgb), 0.4);
+  background: linear-gradient(180deg, rgba(var(--accent-rgb), 0.14), rgba(var(--accent-rgb), 0.05));
+  color: #c9ffd7;
+}
+
+.bridge-connected .bridge-dot {
+  background: var(--accent);
+  box-shadow: 0 0 10px 1px rgba(var(--accent-rgb), 0.8);
+  animation: pulse-soft 2.2s ease-in-out infinite;
+}
+
+.bridge-connecting {
+  color: #d8c98a;
+}
+
+.bridge-connecting .bridge-dot {
+  background: #d8c98a;
+  animation: pulse-soft 1.1s ease-in-out infinite;
+}

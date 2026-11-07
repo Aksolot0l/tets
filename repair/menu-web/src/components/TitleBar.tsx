@@ -1,9 +1,24 @@
 import { X } from "lucide-react";
+import type { BridgeStatus } from "../lib/bridge";
 import { PixelLogo } from "./PixelArt";
 
 const FPS_LEVELS = [30, 60, 90, 120];
 
-export function TitleBar({ fps, onClose }: { fps: number; onClose: () => void }) {
+const BRIDGE_LABEL: Record<BridgeStatus, string> = {
+  connected: "ИГРА",
+  connecting: "ПОИСК",
+  demo: "ДЕМО",
+};
+
+export function TitleBar({
+  fps,
+  bridgeStatus,
+  onClose,
+}: {
+  fps: number;
+  bridgeStatus: BridgeStatus;
+  onClose: () => void;
+}) {
   return (
     <header className="titlebar">
       <div className="brand">
@@ -37,6 +52,18 @@ export function TitleBar({ fps, onClose }: { fps: number; onClose: () => void })
           ))}
         </span>
       </div>
+
+      <span
+        className={`bridge-badge bridge-${bridgeStatus}`}
+        title={
+          bridgeStatus === "connected"
+            ? "Мост активен: изменения применяются в игре"
+            : "Игра не найдена — локальный демо-режим"
+        }
+      >
+        <span className="bridge-dot" aria-hidden="true" />
+        {BRIDGE_LABEL[bridgeStatus]}
+      </span>
 
       <span className="version-chip">v1.2</span>
 
