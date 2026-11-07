@@ -210,6 +210,35 @@ zig c++ -target x86_64-windows-gnu -std=c++17 -shared -O2 repair/src/client_auto
 python3 repair/src/patch_client.py
 ```
 
+## Веб-версия внутриигрового меню (repair/menu-web)
+
+`repair/menu-web/` — автономная веб-реплика внутриигрового RmlUi-меню на том
+же стеке, что интерфейс лаунчера: React 19 + TypeScript + Vite 7 + Tailwind
+CSS v4 + lucide-react + @fontsource (Manrope / Russo One / Press Start 2P).
+Это витрина GUI «как в лаунчере»: вкладки Модули/Графика/HUD/Инфо, 14
+модулей с тумблерами, все слайдеры эффектов (China Hat / След / Кольца /
+Катана / Корона) с живыми значениями, плавающее окно Test tools с
+перетаскиванием, пиксельные SVG-иконки и превью эффектов, темы акцента,
+тосты, сохранение состояния в localStorage. Данные и поведение —
+демонстрационные: приложение не подключается к игре, EXE/DLL не изменяет и
+служит визуальным референсом дизайна внутриигрового меню.
+
+Запуск (Node 20.19+ / 22):
+
+```
+cd repair/menu-web
+PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install   # при первом клоне
+npm run dev        # http://localhost:5173
+npm run build      # dist/index.html — единый файл (vite-plugin-singlefile)
+```
+
+`vite.config.ts` уже настроен на превью в песочнице (`server.host`,
+`allowedHosts`). Ветка интерфейса загружена пользователем (zip
+`gayclient-web-menu-development.zip` в корне репозитория) и разложена сюда
+как исходники; собранный однофайловый `index.html` в корне — результат
+`npm run build` этого проекта.
+
+
 `repair/tools/build_adapter.py` компилирует вендоренные FreeType (19 файлов с
 минимальным набором модулей) и RmlUi (192 файла: кора + DX11-рендерер), плюс
 исходники адаптера (`compat.cpp`, `uwp_extra.cpp`, `china_hat_native.cpp`,
