@@ -74,9 +74,15 @@ assert 'queueAgModule' in m and 'g_pendingToggles.size() < 32' in m
 assert 'SetChinaHatEnabled(on)' in m and 'SetTrailEnabled(on)' in m
 assert 'SetJumpEnabled(on)' in m and 'SetKatanaEnabled(on)' in m
 assert 'SetAccessoryEnabled' not in m
-assert 'SetHatFillEnabled(on)' in m and 'SetHatRainbowEnabled(on)' in m
-assert 'SetTrailFillEnabled(on)' in m and 'SetTrailRainbowEnabled(on)' in m
-assert 'SetJumpRainbowEnabled(on)' in m
+assert 'SetHatFillEnabled(on)' in m
+assert 'SetTrailFillEnabled(on)' in m
+# v11: the rainbow setters are unwired from the menu (the gradient wells
+# replaced the toggles) but stay exported for the native defaults.
+assert 'SetHatRainbowEnabled(on)' not in m
+assert 'SetTrailRainbowEnabled(on)' not in m
+assert 'SetJumpRainbowEnabled(on)' not in m
+# v11: the palette writes colors straight into the visual parameters.
+assert 'SetVisualParam(g_paletteTarget->r, c.r / 255.0f)' in m
 # v9: the change listener must read the event parameter - the widget updates
 # the "value" attribute only after dispatching "change", so the attribute is
 # one step stale inside the listener (the rubber-band bug).
@@ -94,8 +100,7 @@ assert 'input->SetAttribute("step", 1.0f);' in m
 for switch_id in ('sw-fps', 'sw-cps', 'sw-clock', 'sw-keys', 'sw-watermark',
                   'sw-coords', 'sw-res', 'sw-perf', 'sw-modlist', 'sw-preview',
                   'sw-gfx-chinahat', 'sw-gfx-trail', 'sw-gfx-jump',
-                  'sw-ch-fill', 'sw-ch-rainbow', 'sw-tr-fill', 'sw-tr-rainbow',
-                  'sw-jr-rainbow', 'sw-kt-master'):
+                  'sw-ch-fill', 'sw-tr-fill', 'sw-kt-master'):
     assert f'"{switch_id}"' in m, switch_id
     assert f'id="{switch_id}"' in d, switch_id
 for slider_id in ('sl-ch-rainbow', 'sl-ch-opacity', 'sl-ch-radius', 'sl-ch-height',
@@ -106,10 +111,18 @@ for slider_id in ('sl-ch-rainbow', 'sl-ch-opacity', 'sl-ch-radius', 'sl-ch-heigh
                   'sl-kt-forward', 'sl-kt-opacity', 'sl-kt-fpside', 'sl-kt-fpforward'):
     assert f'"{slider_id}"' in m, slider_id
     assert f'id="{slider_id}"' in d, slider_id
-# Crown ids are gone from both sides.
+# Crown ids are gone from both sides, and v11 removed the RGB sliders, the
+# rainbow toggles and the color chips in favor of gradient wells + palette.
 for gone in ('sw-crown', 'sw-cr-master', 'sl-cr-scale', 'sl-cr-offset',
              'sl-cr-opacity', 'sl-cr-r', 'sl-cr-g', 'sl-cr-b', 'win-cr',
              'win-ch', 'win-tr', 'win-jr', 'win-kt',
+             'sl-ch-r', 'sl-ch-g', 'sl-ch-b', 'sl-tr-r', 'sl-tr-g', 'sl-tr-b',
+             'sl-jr-r', 'sl-jr-g', 'sl-jr-b',
+             'sl-hit-ar', 'sl-hit-ag', 'sl-hit-ab',
+             'sl-hit-br', 'sl-hit-bg', 'sl-hit-bb',
+             'sw-ch-rainbow', 'sw-tr-rainbow', 'sw-jr-rainbow',
+             'chip-ch', 'chip-tr', 'chip-jr', 'chip-hita', 'chip-hitb',
+             'ChRainbow', 'TrRainbow', 'JrRainbow',
              # v6: the duplicate master rows at the top of Visuals are gone;
              # only the section toggles remain.
              'sw-chinahat', 'sw-trail', 'sw-jump', 'sw-katana'):
@@ -229,8 +242,8 @@ assert '.check {' in d and 'width: 26px' in d and 'height: 26px' in d
 assert '.check .ck {' in d and 'border-left: 3px #05230f' in d
 assert 'border-bottom: 3px #05230f' in d and 'rotate(-45deg)' in d
 assert '.check.on {' in d and '.check.on .ck { opacity: 1; }' in d
-assert d.count('class="check"') == 20
-assert d.count('<span class="ck"/>') == 20
+assert d.count('class="check"') == 17
+assert d.count('<span class="ck"/>') == 17
 # v7: every effect's master checkbox sits directly on its section head
 assert '.sec-flex { flex-grow: 1; }' in d and '.sec-head .check { margin-right: 8px; }' in d
 for pair in ('id="sec-ch"... id="sw-gfx-chinahat"', 'id="sec-tr"... id="sw-gfx-trail"',
@@ -249,8 +262,22 @@ assert 'id="sl-ch-offset" min="0" max="100" step="1"' in d
 assert 'id="sec-hit"' in d and '<span class="sec-title">УДАРЫ</span>' in d
 assert 'id="sl-hit-count" min="0" max="100" step="1"' in d
 assert 'id="sl-hit-cycle" min="0" max="100" step="1"' in d
-assert 'id="chip-hita"' in d and 'id="chip-hitb"' in d
-assert d.count('id="sl-hit-') == 16
+# v11: two gradient wells + a diagnostics line per color effect, the shared
+# palette popup with 40 fixed cells, and no RGB rows or rainbow toggles left.
+for well in ('cw-ch-a', 'cw-ch-b', 'cw-tr-a', 'cw-tr-b',
+             'cw-jr-a', 'cw-jr-b', 'cw-hit-a', 'cw-hit-b'):
+    assert f'id="{well}"' in d, well
+    assert f'"{well}"' in m, well
+assert d.count('class="cswatch"') == 8 and d.count('id="cpalette"') == 1
+assert '.ccell {' in d and 'z-index: 300' in d
+assert 'id="tt-hitdiag"' in d
+assert 'Скорость градиента' in d and d.count('Скорость градиента') == 4
+assert d.count('>Градиент</div>') == 4
+assert 'Радужный режим' not in d and 'Скорость радуги' not in d
+assert 'Цвет: красный' not in d and 'Цвет A:' not in d and 'Цвет B:' not in d
+assert 'SetProperty("background-color", Rml::CreateString("rgb(%d, %d, %d)"' in m  # swatch sync
+assert 'kPaletteColors' in m and 'Rml::CreateString("cc-%d", i)' in m
+assert d.count('id="sl-hit-') == 10
 # no icon machinery, no section count captions
 for gone in ('.m-ico', '.ip ', 'class="ip', '.sec-count', 'body.anim'):
     assert gone not in d, gone
@@ -345,15 +372,19 @@ _names = [n.strip() for n in _re.search(
 _trips = _re.findall(
     r'\{\s*([\d.\-]+)f?\s*,\s*([\d.\-]+)f?\s*,\s*([\d.\-]+)f?\s*\}',
     _re.search(r'visualParamSpecs\[\]\s*=\s*\{(.*?)\};', vs, _re.S).group(1))
-assert len(_names) == len(_trips) == 54, (len(_names), len(_trips))
+assert len(_names) == len(_trips) == 63, (len(_names), len(_trips))
 _specs = {n: (float(lo), float(hi)) for n, (v, lo, hi) in zip(_names, _trips)}
+# v11: the second gradient colors exist as parameters.
+for _extra in ('Hat2Red', 'Hat2Green', 'Hat2Blue', 'Trail2Red', 'Trail2Green',
+               'Trail2Blue', 'Jump2Red', 'Jump2Green', 'Jump2Blue'):
+    assert _extra in _specs, _extra
 # the katana opacity floor is gone: 0% is a real zero
 assert _specs['KatanaOpacity'][0] == 0.0, _specs['KatanaOpacity']
 _reg = {}
 for _m in _re.finditer(
         r'\{"(sl-[\w-]+)",\s*VisualParam::(\w+),\s*"([^"]*)"\}', m):
     _reg[_m.group(1)] = (_m.group(2), _m.group(3))
-assert len(_reg) == 48, len(_reg)
+assert len(_reg) == 33, len(_reg)
 for _id, (_param, _fmt) in _reg.items():
     assert _param in _specs, _id
     assert _fmt == '%.0f%%', (_id, _fmt)

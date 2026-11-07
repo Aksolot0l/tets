@@ -22,11 +22,17 @@ assert 'hitFxEnabled.load(std::memory_order_acquire) || hitFxEnabled' in n or \
        'katanaEnabled.load(std::memory_order_acquire) || hitFxEnabled.load(std::memory_order_acquire)) && !local.valid' in n
 assert 'bool anyVisual()' in n and 'hitFxEnabled.load(std::memory_order_acquire); }' in n
 
-# 3. The trigger: rising edge of the left button, suppressed while UI is open.
-assert 'GetAsyncKeyState(VK_LBUTTON)&0x8000' in n
-assert 'clicked=down&&!hitPrevDown' in n
-assert 'hitFxUiActive.load(std::memory_order_acquire)' in n
+# 3. The v11 trigger: the click is detected on the UI thread (compat draw())
+# through the verified UWP key bridge and forwarded as an atomic burst
+# request; the render thread only drains it. GetAsyncKeyState never fired
+# on the render thread in this UWP game, so v10 showed no effect.
+assert 'GetAsyncKeyState' not in n and 'VK_LBUTTON' not in n
+assert 'hitFxUiActive' not in n and 'hitPrevDown' not in n
+assert 'hitBurstRequests.exchange(0' in n
+assert 'hitBurstTotal.fetch_add(1' in n
 assert 'now-hitLastBurst>=120' in n
+assert 'if (hitDown && !hitPrevDown && !menuOpen) RequestHitBurst();' in u
+assert 'keyDown(VK_LBUTTON)' in u
 # aimed along the verified look rotation at the configured reach
 assert 'katana_rotation::readRotation' in n
 assert 'eye.x+dir.x*config.reach' in n
@@ -42,24 +48,32 @@ assert 'hit_fx::glowQuad(rel,right,up,size' in n and 'hit_fx::star(rel,right,up,
 assert 'hit_fx::annulus(rel,r.right,r.up,radius,width' in n
 assert 'hit_fx::basisFromLook' in n
 
-# 5. Public API + UI suppression flag.
-assert 'bool HitFxEnabled();' in (r/'src/china_hat_native.h').read_text(encoding='utf-8')
-assert 'void SetHitFxUiActive(bool active);' in (r/'src/china_hat_native.h').read_text(encoding='utf-8')
-assert 'SetHitFxUiActive(menuOpen)' in u
+# 5. Public API: burst request + diagnostics counters.
+_hh = (r/'src/china_hat_native.h').read_text(encoding='utf-8')
+assert 'bool HitFxEnabled();' in _hh
+assert 'void RequestHitBurst();' in _hh
+assert 'unsigned HitFxBursts();' in _hh and 'unsigned HitFxLive();' in _hh
+assert 'SetHitFxUiActive' not in _hh and 'SetHitFxUiActive' not in u
 
-# 6. Menu wiring: master switch + 16 sliders + two color chips.
+# 6. Menu wiring: master switch + 10 sliders + two gradient wells + the
+# diagnostics line.
 assert '{"sw-gfx-hit", SwKind::HitFx, 0}' in m
 assert 'case SwKind::HitFx: return HitFxEnabled();' in m
 assert 'case SwKind::HitFx: SetHitFxEnabled(on); break;' in m
-assert m.count('{"sl-hit-') == 16
-assert '{"chip-hita", VisualParam::HitARed' in m and '{"chip-hitb", VisualParam::HitBRed' in m
+assert m.count('{"sl-hit-') == 10
+assert '{"cw-hit-a", VisualParam::HitARed' in m and '{"cw-hit-b", VisualParam::HitBRed' in m
+assert 'HitFxBursts(), HitFxLive()' in m
+assert 'id="tt-hitdiag"' in (r/'src/menu_rml_data.h').read_text(encoding='utf-8')
 assert 'id="sec-hit"' in d and '<span class="sec-title">УДАРЫ</span>' in d
-assert d.count('id="sl-hit-') == 16
+assert d.count('id="sl-hit-') == 10
 
-# 7. Parameters: 16 new ones with specs, appended after the katana block.
+# 7. Parameters: 16 hit ones plus the v11 second gradient colors, appended
+# after the katana block.
 for name in ('HitCount, HitSize, HitSpeed, HitLife, HitGravity, HitReach,',
              'HitRingCount, HitRingSize, HitRingLife, HitCycleSpeed,',
-             'HitARed, HitAGreen, HitABlue, HitBRed, HitBGreen, HitBBlue, Count'):
+             'HitARed, HitAGreen, HitABlue, HitBRed, HitBGreen, HitBBlue,',
+             ' Hat2Red, Hat2Green, Hat2Blue, Trail2Red, Trail2Green, Trail2Blue,',
+             ' Jump2Red, Jump2Green, Jump2Blue, Count'):
     assert name in vs, name
 
 # 8. The pure module has a compiled unit test.

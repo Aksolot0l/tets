@@ -91,6 +91,7 @@ Rml::Context* g_rmlContext = nullptr;
 Rml::ElementDocument* g_menuDoc = nullptr;
 Rml::Element* g_ttStatus = nullptr;
 Rml::Element* g_ttDiag = nullptr;
+Rml::Element* g_ttHitDiag = nullptr;
 unsigned g_width = 0, g_height = 0;
 bool g_menuShown = false;
 // Document fade: frames left to keep rendering after the menu closed (the
@@ -194,6 +195,7 @@ WinState g_win[kWindowCount];
 int g_zTop = 20;
 std::string g_ttStatusCache;
 std::string g_ttDiagCache;
+std::string g_ttHitDiagCache;
 
 // 3D preview toggle (Visuals window).
 std::atomic<bool> g_previewOn{true};
@@ -287,7 +289,7 @@ bool shadowModule(int moduleId) {
 
 enum class SwKind {
     AgModule, ChinaHat, Trail, Jump, Katana, HitFx,
-    ChFill, ChRainbow, TrFill, TrRainbow, JrRainbow
+    ChFill, TrFill
 };
 
 struct SwitchDef {
@@ -316,10 +318,7 @@ const SwitchDef kSwitches[] = {
     {"sw-gfx-hit", SwKind::HitFx, 0},
     {"sw-kt-master", SwKind::Katana, 0},
     {"sw-ch-fill", SwKind::ChFill, 0},
-    {"sw-ch-rainbow", SwKind::ChRainbow, 0},
     {"sw-tr-fill", SwKind::TrFill, 0},
-    {"sw-tr-rainbow", SwKind::TrRainbow, 0},
-    {"sw-jr-rainbow", SwKind::JrRainbow, 0},
 };
 
 const SwitchDef* findSwitch(const Rml::String& id) {
@@ -337,10 +336,7 @@ bool readSwitch(const SwitchDef& def) {
         case SwKind::HitFx: return HitFxEnabled();
         case SwKind::Katana: return KatanaEnabled();
         case SwKind::ChFill: return HatFillEnabled();
-        case SwKind::ChRainbow: return HatRainbowEnabled();
         case SwKind::TrFill: return TrailFillEnabled();
-        case SwKind::TrRainbow: return TrailRainbowEnabled();
-        case SwKind::JrRainbow: return JumpRainbowEnabled();
     }
     return false;
 }
@@ -354,11 +350,91 @@ void applySwitch(const SwitchDef& def, bool on) {
         case SwKind::HitFx: SetHitFxEnabled(on); break;
         case SwKind::Katana: SetKatanaEnabled(on); break;
         case SwKind::ChFill: SetHatFillEnabled(on); break;
-        case SwKind::ChRainbow: SetHatRainbowEnabled(on); break;
         case SwKind::TrFill: SetTrailFillEnabled(on); break;
-        case SwKind::TrRainbow: SetTrailRainbowEnabled(on); break;
-        case SwKind::JrRainbow: SetJumpRainbowEnabled(on); break;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Gradient swatches: two color wells per effect. A well click opens the
+// shared palette popup, a cell tap writes the color into the live visual
+// parameters. Replaces the old RGB sliders and rainbow toggles.
+// ---------------------------------------------------------------------------
+
+struct SwatchDef {
+    const char* id;       // DOM id of the <button class="cswatch">
+    VisualParam r, g, b;  // the three parameters this well edits
+};
+
+const SwatchDef kSwatches[] = {
+    {"cw-ch-a", VisualParam::HatRed, VisualParam::HatGreen, VisualParam::HatBlue},
+    {"cw-ch-b", VisualParam::Hat2Red, VisualParam::Hat2Green, VisualParam::Hat2Blue},
+    {"cw-tr-a", VisualParam::TrailRed, VisualParam::TrailGreen, VisualParam::TrailBlue},
+    {"cw-tr-b", VisualParam::Trail2Red, VisualParam::Trail2Green, VisualParam::Trail2Blue},
+    {"cw-jr-a", VisualParam::JumpRed, VisualParam::JumpGreen, VisualParam::JumpBlue},
+    {"cw-jr-b", VisualParam::Jump2Red, VisualParam::Jump2Green, VisualParam::Jump2Blue},
+    {"cw-hit-a", VisualParam::HitARed, VisualParam::HitAGreen, VisualParam::HitABlue},
+    {"cw-hit-b", VisualParam::HitBRed, VisualParam::HitBGreen, VisualParam::HitBBlue},
+};
+
+const SwatchDef* findSwatch(const Rml::String& id) {
+    for (const SwatchDef& def : kSwatches)
+        if (id == def.id) return &def;
+    return nullptr;
+}
+
+// The palette: 40 fixed colors, 8 per row. Pure code, no image assets.
+struct PaletteColor { unsigned char r, g, b; };
+const PaletteColor kPaletteColors[] = {
+    {0x00,0x00,0x00},{0x26,0x26,0x26},{0x4d,0x4d,0x4d},{0x76,0x76,0x76},
+    {0xa8,0xa8,0xa8},{0xd4,0xd4,0xd4},{0xff,0xff,0xff},{0x1b,0x1b,0x2f},
+    {0xff,0x00,0x00},{0xc0,0x00,0x00},{0x8b,0x00,0x00},{0xff,0x6b,0x6b},
+    {0xff,0x45,0x00},{0xff,0x8c,0x00},{0xff,0xa5,0x00},{0xff,0xd7,0x00},
+    {0xff,0xff,0x00},{0xad,0xff,0x2f},{0x7c,0xfc,0x00},{0x00,0xff,0x00},
+    {0x00,0xc0,0x00},{0x00,0x80,0x00},{0x90,0xee,0x90},{0x20,0xb2,0xaa},
+    {0x00,0xce,0xd1},{0x00,0xff,0xff},{0x00,0xbf,0xff},{0x1e,0x90,0xff},
+    {0x41,0x69,0xe1},{0x00,0x00,0xff},{0x00,0x00,0x8b},{0x48,0x3d,0x8b},
+    {0x6a,0x5a,0xcd},{0x8a,0x2b,0xe2},{0x94,0x00,0xd3},{0xba,0x55,0xd3},
+    {0xff,0x00,0xff},{0xff,0x69,0xb4},{0xff,0xc0,0xcb},{0x8b,0x45,0x13},
+};
+constexpr int kPaletteCount = static_cast<int>(sizeof(kPaletteColors) / sizeof(kPaletteColors[0]));
+
+// The palette popup: one shared element, retargeted per click.
+const SwatchDef* g_paletteTarget = nullptr;
+
+void closePalette() {
+    if (!g_menuDoc) return;
+    if (Rml::Element* pal = g_menuDoc->GetElementById("cpalette"))
+        pal->SetProperty("display", "none");
+    g_paletteTarget = nullptr;
+}
+
+void openPalette(const SwatchDef* def, Rml::Element* swatch) {
+    if (!g_menuDoc || !def || !swatch) return;
+    Rml::Element* pal = g_menuDoc->GetElementById("cpalette");
+    if (!pal) return;
+    g_paletteTarget = def;
+    // Drop the popup under the well, clamped into the viewport.
+    const Rml::Vector2f pos = swatch->GetAbsoluteOffset();
+    const float w = static_cast<float>(g_width), h = static_cast<float>(g_height);
+    float left = pos.x;
+    float top = pos.y + swatch->GetOffsetHeight() + 2.0f;
+    if (w > 0 && left > w - 190.0f) left = w - 190.0f;
+    if (h > 0 && top > h - 130.0f) top = h - 130.0f;
+    if (left < 0) left = 0;
+    if (top < 0) top = 0;
+    pal->SetProperty("left", Rml::CreateString("%dpx", static_cast<int>(left)));
+    pal->SetProperty("top", Rml::CreateString("%dpx", static_cast<int>(top)));
+    pal->SetProperty("display", "block");
+}
+
+// A cell tap: write the color into the targeted well and close.
+void applyPaletteCell(int index) {
+    if (!g_paletteTarget || index < 0 || index >= kPaletteCount) { closePalette(); return; }
+    const PaletteColor& c = kPaletteColors[index];
+    SetVisualParam(g_paletteTarget->r, c.r / 255.0f);
+    SetVisualParam(g_paletteTarget->g, c.g / 255.0f);
+    SetVisualParam(g_paletteTarget->b, c.b / 255.0f);
+    closePalette();
 }
 
 // ---------------------------------------------------------------------------
@@ -380,25 +456,16 @@ const SliderDef kSliders[] = {
     {"sl-ch-offset", VisualParam::HatOffset, "%.0f%%"},
     {"sl-ch-amp", VisualParam::HatBobAmplitude, "%.0f%%"},
     {"sl-ch-floatspeed", VisualParam::HatBobSpeed, "%.0f%%"},
-    {"sl-ch-r", VisualParam::HatRed, "%.0f%%"},
-    {"sl-ch-g", VisualParam::HatGreen, "%.0f%%"},
-    {"sl-ch-b", VisualParam::HatBlue, "%.0f%%"},
     // Trail.
     {"sl-tr-rainbow", VisualParam::TrailRainbowSpeed, "%.0f%%"},
     {"sl-tr-opacity", VisualParam::TrailOpacity, "%.0f%%"},
     {"sl-tr-height", VisualParam::TrailHeight, "%.0f%%"},
     {"sl-tr-life", VisualParam::TrailSeconds, "%.0f%%"},
-    {"sl-tr-r", VisualParam::TrailRed, "%.0f%%"},
-    {"sl-tr-g", VisualParam::TrailGreen, "%.0f%%"},
-    {"sl-tr-b", VisualParam::TrailBlue, "%.0f%%"},
     // Jump rings.
     {"sl-jr-rainbow", VisualParam::JumpRainbowSpeed, "%.0f%%"},
     {"sl-jr-opacity", VisualParam::JumpOpacity, "%.0f%%"},
     {"sl-jr-radius", VisualParam::JumpRadius, "%.0f%%"},
     {"sl-jr-duration", VisualParam::JumpSeconds, "%.0f%%"},
-    {"sl-jr-r", VisualParam::JumpRed, "%.0f%%"},
-    {"sl-jr-g", VisualParam::JumpGreen, "%.0f%%"},
-    {"sl-jr-b", VisualParam::JumpBlue, "%.0f%%"},
     // Katana (graphics tab).
     {"sl-kt-scale", VisualParam::KatanaScale, "%.0f%%"},
     {"sl-kt-tilt", VisualParam::KatanaTilt, "%.0f%%"},
@@ -419,12 +486,6 @@ const SliderDef kSliders[] = {
     {"sl-hit-ringsize", VisualParam::HitRingSize, "%.0f%%"},
     {"sl-hit-ringlife", VisualParam::HitRingLife, "%.0f%%"},
     {"sl-hit-cycle", VisualParam::HitCycleSpeed, "%.0f%%"},
-    {"sl-hit-ar", VisualParam::HitARed, "%.0f%%"},
-    {"sl-hit-ag", VisualParam::HitAGreen, "%.0f%%"},
-    {"sl-hit-ab", VisualParam::HitABlue, "%.0f%%"},
-    {"sl-hit-br", VisualParam::HitBRed, "%.0f%%"},
-    {"sl-hit-bg", VisualParam::HitBGreen, "%.0f%%"},
-    {"sl-hit-bb", VisualParam::HitBBlue, "%.0f%%"},
 };
 
 // One uniform percent scale for every slider: the DOM value is 0..100 and
@@ -705,6 +766,11 @@ void MenuClickListener::ProcessEvent(Rml::Event& event) {
     if (!element || !g_menuDoc) return;
     const Rml::String id = element->GetId();
 
+    // Clicks outside the gradient palette close it (wells re-open it below).
+    // Cell ids are "cc-N": N can be a single digit, so guard at 4 chars.
+    if (g_paletteTarget && !(id.size() >= 4 && (id.compare(0, 3, "cw-") == 0 || id.compare(0, 3, "cc-") == 0)) && id != "cpalette")
+        closePalette();
+
     if (id == "btn-close") {
         g_hiddenByClose.store(true, std::memory_order_relaxed);
         return;
@@ -760,6 +826,18 @@ void MenuClickListener::ProcessEvent(Rml::Event& event) {
         applySwitch(*def, !readSwitch(*def));
         return;
     }
+    if (id.size() >= 4 && id.compare(0, 3, "cw-") == 0) {
+        // Gradient well: open the palette on this well.
+        openPalette(findSwatch(id), element);
+        return;
+    }
+    if (id.size() >= 4 && id.compare(0, 3, "cc-") == 0) {
+        // Palette cell: apply the color to the targeted well.
+        int index = 0;
+        if (std::sscanf(id.c_str() + 3, "%d", &index) == 1) applyPaletteCell(index);
+        return;
+    }
+    if (id == "cpalette") return;  // padding inside the popup keeps it open
 }
 
 // ---------------------------------------------------------------------------
@@ -808,11 +886,25 @@ bool buildRegistry() {
     if (!g_menuDoc) return false;
     g_ttStatus = g_menuDoc->GetElementById("tt-status");
     g_ttDiag = g_menuDoc->GetElementById("tt-diag");
+    g_ttHitDiag = g_menuDoc->GetElementById("tt-hitdiag");
     g_previewSwitch = g_menuDoc->GetElementById("sw-preview");
-    if (!g_ttStatus || !g_ttDiag || !g_previewSwitch) return false;
+    if (!g_ttStatus || !g_ttDiag || !g_ttHitDiag || !g_previewSwitch) return false;
     g_previewSwitch->SetClass("on", g_previewOn.load(std::memory_order_relaxed));
 
     g_menuDoc->AddEventListener("click", &g_clickListener);
+
+    // Palette popup: one shared element with the fixed color cells. Clicks
+    // bubble to the document listener and dispatch on the cc-N cell ids.
+    if (Rml::Element* pal = g_menuDoc->GetElementById("cpalette")) {
+        for (int i = 0; i < kPaletteCount; ++i) {
+            Rml::ElementPtr cell = g_menuDoc->CreateElement("div");
+            cell->SetId(Rml::CreateString("cc-%d", i));
+            cell->SetClass("ccell", true);
+            cell->SetProperty("background-color", Rml::CreateString("rgb(%d, %d, %d)",
+                kPaletteColors[i].r, kPaletteColors[i].g, kPaletteColors[i].b));
+            pal->AppendChild(std::move(cell));
+        }
+    }
 
     // Windows: geometry is applied by layoutWindows() right after init; the
     // listeners carry focus, z-order and title-bar dragging. Natural sizes
@@ -977,21 +1069,13 @@ void syncSliders() {
             }
         }
     }
-    // Color chips follow the live RGB parameters.
-    struct ChipDef { const char* id; VisualParam r, g, b; };
-    static const ChipDef kChips[] = {
-        {"chip-ch", VisualParam::HatRed, VisualParam::HatGreen, VisualParam::HatBlue},
-        {"chip-tr", VisualParam::TrailRed, VisualParam::TrailGreen, VisualParam::TrailBlue},
-        {"chip-jr", VisualParam::JumpRed, VisualParam::JumpGreen, VisualParam::JumpBlue},
-        {"chip-hita", VisualParam::HitARed, VisualParam::HitAGreen, VisualParam::HitABlue},
-        {"chip-hitb", VisualParam::HitBRed, VisualParam::HitBGreen, VisualParam::HitBBlue},
-    };
-    for (const ChipDef& chip : kChips) {
-        Rml::Element* element = g_menuDoc->GetElementById(chip.id);
+    // Gradient swatches follow the live RGB parameters.
+    for (const SwatchDef& sw : kSwatches) {
+        Rml::Element* element = g_menuDoc->GetElementById(sw.id);
         if (!element) continue;
-        const int r = static_cast<int>(clamp01(GetVisualParam(chip.r)) * 255.0f + 0.5f);
-        const int g = static_cast<int>(clamp01(GetVisualParam(chip.g)) * 255.0f + 0.5f);
-        const int b = static_cast<int>(clamp01(GetVisualParam(chip.b)) * 255.0f + 0.5f);
+        const int r = static_cast<int>(clamp01(GetVisualParam(sw.r)) * 255.0f + 0.5f);
+        const int g = static_cast<int>(clamp01(GetVisualParam(sw.g)) * 255.0f + 0.5f);
+        const int b = static_cast<int>(clamp01(GetVisualParam(sw.b)) * 255.0f + 0.5f);
         element->SetProperty("background-color", Rml::CreateString("rgb(%d, %d, %d)", r, g, b));
     }
 }
@@ -1047,6 +1131,27 @@ void syncTtStatus() {
     if (diag != g_ttDiagCache) {
         g_ttDiagCache = diag;
         g_ttDiag->SetInnerRML(diag);
+    }
+}
+
+// Hit fx diagnostics, cached like the katana line. If bursts grow but the
+// effect stays invisible the trigger works and the render path is the
+// suspect; if bursts stay at zero the click bridge itself never fired.
+void syncHitDiag() {
+    if (!g_menuShown || !g_ttHitDiag) return;
+    const char* statusText;
+    switch (HitFxStatus()) {
+        case 1: statusText = "кадр"; break;
+        case 2: statusText = "рисуется"; break;
+        case 13: statusText = "поворот нечитаем"; break;
+        default: statusText = "нет"; break;
+    }
+    char line[128];
+    std::snprintf(line, sizeof(line), "Взрывы: %u, искр: %u, статус: %s",
+                  HitFxBursts(), HitFxLive(), statusText);
+    if (g_ttHitDiagCache != line) {
+        g_ttHitDiagCache = line;
+        g_ttHitDiag->SetInnerRML(line);
     }
 }
 
@@ -1194,6 +1299,7 @@ void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
         syncSwitches();
         syncSliders();
         syncTtStatus();
+        syncHitDiag();
     }
     stepWindowAnims();
     g_rmlContext->Update();

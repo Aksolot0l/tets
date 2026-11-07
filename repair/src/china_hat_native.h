@@ -71,8 +71,10 @@ int JumpStatus();
 // Hit fx: impact sparkles and rings on attack clicks.
 bool HitFxEnabled();
 void SetHitFxEnabled(bool enabled);
-void SetHitFxUiActive(bool active);
+void RequestHitBurst();
 int HitFxStatus();
+unsigned HitFxBursts();
+unsigned HitFxLive();
 bool TrailEnabled();
 void SetTrailEnabled(bool enabled);
 float ChinaHatHeight();

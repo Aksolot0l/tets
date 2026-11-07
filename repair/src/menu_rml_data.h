@@ -247,12 +247,42 @@ input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
     font-size: 15px;
     color: #a5c5ae;
 }
-.color-chip {
-    width: 24px;
-    height: 24px;
+.cswatch {
+    display: inline-block;
+    width: 34px;
+    height: 22px;
     margin-left: 8px;
-    border-radius: 7px;
-    border: 1px #ffffff2e;
+    border-radius: 6px;
+    border: 1px #ffffff45;
+    background-color: #40ff70ff;
+}
+.cswatch:hover { border-color: #6ef58c; }
+#cpalette {
+    display: none;
+    position: absolute;
+    width: 184px;
+    left: 0px;
+    top: 0px;
+    z-index: 300;
+    background-color: #0c130eee;
+    border: 1px #2c4436;
+    border-radius: 8px;
+    padding: 6px;
+}
+.ccell {
+    display: inline-block;
+    width: 19px;
+    height: 16px;
+    margin: 1px;
+    border-radius: 3px;
+    border: 1px #ffffff26;
+}
+.ccell:hover { border-color: #ffffffaa; }
+#tt-hitdiag {
+    display: block;
+    font-size: 12px;
+    color: #89a792;
+    padding-bottom: 4px;
 }
 .greenbtn {
     display: block;
@@ -407,17 +437,14 @@ static const char kMenuRml[] = R"RML(
             </div>
             <div class="sec-body">
                                 <div class="slider-row"><div class="slider-label">Заливка конуса</div><button class="check" id="sw-ch-fill"><span class="ck"/></button></div>
-                <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="check" id="sw-ch-rainbow"><span class="ck"/></button></div>
-                <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-ch-rainbow" min="0" max="100" step="1" value="16"/><div class="slider-value" id="ro-ch-rainbow"/><div class="color-chip" id="chip-ch"/></div>
+                <div class="slider-row"><div class="slider-label">Скорость градиента</div><input type="range" id="sl-ch-rainbow" min="0" max="100" step="1" value="16"/><div class="slider-value" id="ro-ch-rainbow"/></div>
+                <div class="slider-row"><div class="slider-label">Градиент</div><button class="cswatch" id="cw-ch-a"/><button class="cswatch" id="cw-ch-b"/></div>
                 <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-ch-opacity" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-ch-opacity"/></div>
                 <div class="slider-row"><div class="slider-label">Радиус</div><input type="range" id="sl-ch-radius" min="0" max="100" step="1" value="40"/><div class="slider-value" id="ro-ch-radius"/></div>
                 <div class="slider-row"><div class="slider-label">Высота конуса</div><input type="range" id="sl-ch-height" min="0" max="100" step="1" value="32"/><div class="slider-value" id="ro-ch-height"/></div>
                 <div class="slider-row"><div class="slider-label">Отступ от головы</div><input type="range" id="sl-ch-offset" min="0" max="100" step="1" value="33"/><div class="slider-value" id="ro-ch-offset"/></div>
                 <div class="slider-row"><div class="slider-label">Амплитуда плавания</div><input type="range" id="sl-ch-amp" min="0" max="100" step="1" value="35"/><div class="slider-value" id="ro-ch-amp"/></div>
                 <div class="slider-row"><div class="slider-label">Скорость плавания</div><input type="range" id="sl-ch-floatspeed" min="0" max="100" step="1" value="24"/><div class="slider-value" id="ro-ch-floatspeed"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-ch-r" min="0" max="100" step="1" value="20"/><div class="slider-value" id="ro-ch-r"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-ch-g" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-ch-g"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-ch-b" min="0" max="100" step="1" value="42"/><div class="slider-value" id="ro-ch-b"/></div>
             </div>
         </div>
         <div class="sec" id="sec-tr">
@@ -429,14 +456,11 @@ static const char kMenuRml[] = R"RML(
             </div>
             <div class="sec-body">
                                 <div class="slider-row"><div class="slider-label">Заливка</div><button class="check" id="sw-tr-fill"><span class="ck"/></button></div>
-                <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="check" id="sw-tr-rainbow"><span class="ck"/></button></div>
-                <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-tr-rainbow" min="0" max="100" step="1" value="16"/><div class="slider-value" id="ro-tr-rainbow"/><div class="color-chip" id="chip-tr"/></div>
+                <div class="slider-row"><div class="slider-label">Скорость градиента</div><input type="range" id="sl-tr-rainbow" min="0" max="100" step="1" value="16"/><div class="slider-value" id="ro-tr-rainbow"/></div>
+                <div class="slider-row"><div class="slider-label">Градиент</div><button class="cswatch" id="cw-tr-a"/><button class="cswatch" id="cw-tr-b"/></div>
                 <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-tr-opacity" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-tr-opacity"/></div>
                 <div class="slider-row"><div class="slider-label">Высота следа</div><input type="range" id="sl-tr-height" min="0" max="100" step="1" value="71"/><div class="slider-value" id="ro-tr-height"/></div>
                 <div class="slider-row"><div class="slider-label">Время жизни следа</div><input type="range" id="sl-tr-life" min="0" max="100" step="1" value="40"/><div class="slider-value" id="ro-tr-life"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-tr-r" min="0" max="100" step="1" value="8"/><div class="slider-value" id="ro-tr-r"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-tr-g" min="0" max="100" step="1" value="86"/><div class="slider-value" id="ro-tr-g"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-tr-b" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-tr-b"/></div>
             </div>
         </div>
         <div class="sec" id="sec-jr">
@@ -447,14 +471,11 @@ static const char kMenuRml[] = R"RML(
                 <span class="sec-fold"><span class="f-plus">+</span><span class="f-minus">-</span></span>
             </div>
             <div class="sec-body">
-                                <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="check" id="sw-jr-rainbow"><span class="ck"/></button></div>
-                <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-jr-rainbow" min="0" max="100" step="1" value="16"/><div class="slider-value" id="ro-jr-rainbow"/><div class="color-chip" id="chip-jr"/></div>
+                                <div class="slider-row"><div class="slider-label">Скорость градиента</div><input type="range" id="sl-jr-rainbow" min="0" max="100" step="1" value="16"/><div class="slider-value" id="ro-jr-rainbow"/></div>
+                <div class="slider-row"><div class="slider-label">Градиент</div><button class="cswatch" id="cw-jr-a"/><button class="cswatch" id="cw-jr-b"/></div>
                 <div class="slider-row"><div class="slider-label">Радиус</div><input type="range" id="sl-jr-radius" min="0" max="100" step="1" value="38"/><div class="slider-value" id="ro-jr-radius"/></div>
                 <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-jr-opacity" min="0" max="100" step="1" value="85"/><div class="slider-value" id="ro-jr-opacity"/></div>
                 <div class="slider-row"><div class="slider-label">Длительность</div><input type="range" id="sl-jr-duration" min="0" max="100" step="1" value="26"/><div class="slider-value" id="ro-jr-duration"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-jr-r" min="0" max="100" step="1" value="20"/><div class="slider-value" id="ro-jr-r"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-jr-g" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-jr-g"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-jr-b" min="0" max="100" step="1" value="42"/><div class="slider-value" id="ro-jr-b"/></div>
             </div>
         </div>
         <div class="sec" id="sec-hit">
@@ -474,13 +495,9 @@ static const char kMenuRml[] = R"RML(
                 <div class="slider-row"><div class="slider-label">Колец удара</div><input type="range" id="sl-hit-rings" min="0" max="100" step="1" value="60"/><div class="slider-value" id="ro-hit-rings"/></div>
                 <div class="slider-row"><div class="slider-label">Размер колец</div><input type="range" id="sl-hit-ringsize" min="0" max="100" step="1" value="38"/><div class="slider-value" id="ro-hit-ringsize"/></div>
                 <div class="slider-row"><div class="slider-label">Время колец</div><input type="range" id="sl-hit-ringlife" min="0" max="100" step="1" value="35"/><div class="slider-value" id="ro-hit-ringlife"/></div>
-                <div class="slider-row"><div class="slider-label">Скорость перелива</div><input type="range" id="sl-hit-cycle" min="0" max="100" step="1" value="29"/><div class="slider-value" id="ro-hit-cycle"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет A: красный</div><input type="range" id="sl-hit-ar" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-hit-ar"/><div class="color-chip" id="chip-hita"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет A: зелёный</div><input type="range" id="sl-hit-ag" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-hit-ag"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет A: синий</div><input type="range" id="sl-hit-ab" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-hit-ab"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет B: красный</div><input type="range" id="sl-hit-br" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-hit-br"/><div class="color-chip" id="chip-hitb"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет B: зелёный</div><input type="range" id="sl-hit-bg" min="0" max="100" step="1" value="15"/><div class="slider-value" id="ro-hit-bg"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет B: синий</div><input type="range" id="sl-hit-bb" min="0" max="100" step="1" value="10"/><div class="slider-value" id="ro-hit-bb"/></div>
+                <div class="slider-row"><div class="slider-label">Скорость градиента</div><input type="range" id="sl-hit-cycle" min="0" max="100" step="1" value="29"/><div class="slider-value" id="ro-hit-cycle"/></div>
+                <div class="slider-row"><div class="slider-label">Градиент</div><button class="cswatch" id="cw-hit-a"/><button class="cswatch" id="cw-hit-b"/></div>
+                <div id="tt-hitdiag"> </div>
             </div>
         </div>
         <div class="sec" id="sec-kt">
@@ -506,6 +523,7 @@ static const char kMenuRml[] = R"RML(
         <div class="foot">v1.4</div>
     </div>
 </div>
+<div id="cpalette"/>
 </body>
 </rml>
 )RML";

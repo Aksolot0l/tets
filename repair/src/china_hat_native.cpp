@@ -155,7 +155,9 @@ bool katanaVisibleRecently(ULONGLONG now) {
 std::atomic<int> accessoryStatus{0};
 std::atomic<ULONGLONG> lastAccessorySubmit{0};
 std::atomic<bool> jumpEnabled{false}, jumpRainbow{false};
-std::atomic<bool> hitFxEnabled{true}, hitFxUiActive{false};
+std::atomic<bool> hitFxEnabled{true};
+std::atomic<int> hitBurstRequests{0};    // queued click bursts, UI thread -> render thread
+std::atomic<unsigned> hitBurstTotal{0};  // bursts actually spawned, for diagnostics
 std::atomic<bool> trailEnabled{false}, materialTint{true}, hatFill{true}, trailFill{true};
 std::atomic<bool> hatRainbow{true}, trailRainbow{true}, vertexGradient{false};
 // Default to fail-closed world rendering. Legacy screen rendering is a manual
@@ -582,8 +584,10 @@ void renderHat(const PlayerFrame& player) {
  const bool gradient=materialTint.load(std::memory_order_acquire) && hatRainbow.load(std::memory_order_acquire) && vertexGradient.load(std::memory_order_acquire);
  const float phase=gradient ? visual_gradient::phase(now,param(VisualParam::HatRainbowSpeed)) : static_cast<float>(now%8000)/8000.0f;
  if (!china_hat::build(mesh,head,param(VisualParam::HatRadius),param(VisualParam::HatConeHeight),48,phase,255)) return;
- auto tint=visual_color::animated(materialTint.load(std::memory_order_acquire),hatRainbow.load(std::memory_order_acquire),
-    {{param(VisualParam::HatRed),param(VisualParam::HatGreen),param(VisualParam::HatBlue)}},param(VisualParam::HatRainbowSpeed),now);
+ auto tint=visual_color::gradient(
+    {{param(VisualParam::HatRed),param(VisualParam::HatGreen),param(VisualParam::HatBlue)}},
+    {{param(VisualParam::Hat2Red),param(VisualParam::Hat2Green),param(VisualParam::Hat2Blue)}},
+    static_cast<float>(now%1000000)*0.001f*param(VisualParam::HatRainbowSpeed));
  if (gradient) tint={{1.f,1.f,1.f,1.f}};
  tint[3]=param(VisualParam::HatOpacity); // The game's material must support alpha/blending.
  std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
@@ -955,12 +959,21 @@ void renderTrail(const PlayerFrame& player) {
   valid[i]=std::fabs(v.position.x)<32 && std::fabs(v.position.y)<32 && std::fabs(v.position.z)<32;
   float age=static_cast<float>(now-p.time)/static_cast<float>(ttl);
   const auto alpha=static_cast<std::uint8_t>(255.f*(1.f-std::clamp(age,0.f,1.f)));
-  v.color=gradient ? visual_gradient::trail(i,trail.size(),phase,alpha) : china_hat::rainbow(.38f+static_cast<float>(i)*.002f,alpha);
+  {
+   const float w=0.5f-0.5f*std::cos(6.28318530718f*(phase+static_cast<float>(i)*0.045f));
+   const auto mixc=[&](float a,float b) { return static_cast<std::uint8_t>(std::lround(std::clamp(a+(b-a)*w,0.f,1.f)*255.f)); };
+   v.color={mixc(param(VisualParam::TrailRed),param(VisualParam::Trail2Red)),
+            mixc(param(VisualParam::TrailGreen),param(VisualParam::Trail2Green)),
+            mixc(param(VisualParam::TrailBlue),param(VisualParam::Trail2Blue)),alpha};
+  }
   if (i && valid[i] && valid[i-1]) ++segments;
  }
  if (!segments) return;
- auto tint=visual_color::animated(materialTint.load(std::memory_order_acquire),trailRainbow.load(std::memory_order_acquire),
-    {{param(VisualParam::TrailRed),param(VisualParam::TrailGreen),param(VisualParam::TrailBlue)}},param(VisualParam::TrailRainbowSpeed),now);
+ auto tint=visual_color::gradient(
+    {{param(VisualParam::TrailRed),param(VisualParam::TrailGreen),param(VisualParam::TrailBlue)}},
+    {{param(VisualParam::Trail2Red),param(VisualParam::Trail2Green),param(VisualParam::Trail2Blue)}},
+    static_cast<float>(now%1000000)*0.001f*param(VisualParam::TrailRainbowSpeed));
+ (void)gradient;  // the two-color gradient replaced the experimental vertex path
  if (gradient) tint={{1.f,1.f,1.f,1.f}};
  tint[3]=param(VisualParam::TrailOpacity); // The game's material must support alpha/blending.
  std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
@@ -1013,8 +1026,10 @@ void renderJump(const PlayerFrame& player) {
   china_hat::Point c{ring.center.x-origin[0],ring.center.y-origin[1],ring.center.z-origin[2]};
   if(std::fabs(c.x)>32 || std::fabs(c.y)>32 || std::fabs(c.z)>32 || !tessIdle(tess)) continue;
   const float opacity=param(VisualParam::JumpOpacity)*visual_jump::alpha(p);
-  auto tint=visual_color::animated(true,jumpRainbow.load(std::memory_order_acquire),
-      {{param(VisualParam::JumpRed),param(VisualParam::JumpGreen),param(VisualParam::JumpBlue)}},param(VisualParam::JumpRainbowSpeed),now);
+  auto tint=visual_color::gradient(
+      {{param(VisualParam::JumpRed),param(VisualParam::JumpGreen),param(VisualParam::JumpBlue)}},
+      {{param(VisualParam::Jump2Red),param(VisualParam::Jump2Green),param(VisualParam::Jump2Blue)}},
+      static_cast<float>(now-ring.start)*0.001f*param(VisualParam::JumpRainbowSpeed)+static_cast<float>(i)*0.25f);
   const float radius=visual_jump::radius(p,param(VisualParam::JumpRadius));
   // Two bounded batches per ring: bright detail first, translucent halo
   // second. Each uses the game's existing material and guarded depth draw;
@@ -1045,11 +1060,10 @@ void renderJump(const PlayerFrame& player) {
 std::atomic<int> hitFxStatus{0};
 hit_fx::State hitState;
 hit_fx::Rng hitRng{0x5EED1234u};
-bool hitPrevDown=false;
 ULONGLONG hitLastTick=0, hitLastBurst=0;
 
 void renderHitFx(const PlayerFrame& player) {
- if (!hitFxEnabled.load(std::memory_order_acquire)) { hitState.clear(); hitPrevDown=false; hitLastTick=0; hitFxStatus.store(0,std::memory_order_relaxed); return; }
+ if (!hitFxEnabled.load(std::memory_order_acquire)) { hitState.clear(); hitBurstRequests.store(0,std::memory_order_relaxed); hitLastTick=0; hitFxStatus.store(0,std::memory_order_relaxed); return; }
  const ULONGLONG now=GetTickCount64();
  hit_fx::Config config;
  config.count=static_cast<int>(param(VisualParam::HitCount)+0.5f);
@@ -1064,19 +1078,24 @@ void renderHitFx(const PlayerFrame& player) {
  config.cycleSpeed=param(VisualParam::HitCycleSpeed);
  config.ar=param(VisualParam::HitARed); config.ag=param(VisualParam::HitAGreen); config.ab=param(VisualParam::HitABlue);
  config.br=param(VisualParam::HitBRed); config.bg=param(VisualParam::HitBGreen); config.bb=param(VisualParam::HitBBlue);
+ // v11: the click is detected on the UI thread (compat draw()) through the
+ // same verified UWP key bridge the menu uses and forwarded here as a burst
+ // request. Polling the async key state on this render thread never fired in
+ // the user's UWP game, so v10 showed no effect at all.
  std::uintptr_t actor=0;
- if (!player.valid || now<player.at || now-player.at>250 || !localPlayer(actor) || actor!=player.entity) {
-  // No player frame: keep the existing burst animating, just no new clicks.
-  hitPrevDown=false;
+ const bool playerFrame=player.valid && player.at<=now && now-player.at<=250 && localPlayer(actor) && actor==player.entity;
+ if (!playerFrame) {
+  // No player frame: keep the existing burst animating, drop stale clicks.
+  hitBurstRequests.store(0,std::memory_order_relaxed);
  } else {
-  const bool down=(GetAsyncKeyState(VK_LBUTTON)&0x8000)!=0;
-  const bool clicked=down&&!hitPrevDown;
-  hitPrevDown=down;
-  if (clicked && !hitFxUiActive.load(std::memory_order_acquire) && now-hitLastBurst>=120) {
+  int requests=hitBurstRequests.exchange(0,std::memory_order_acq_rel);
+  if (requests>3) requests=3;  // bounded catch-up after a frame hitch
+  if (requests>0 && now-hitLastBurst>=120) {
    auto memory=[](std::uintptr_t address,void* out,std::size_t n) { return read(address,out,n); };
    katana_rotation::Reading rotation;
    if (katana_rotation::readRotation(base,clientInstance.load(std::memory_order_acquire),memory,rotation)) {
     hitLastBurst=now;
+    hitBurstTotal.fetch_add(1,std::memory_order_relaxed);
     float yaw=rotation.yaw+(katanaYawSign.load(std::memory_order_relaxed)<0?3.14159265f:0.f);
     const auto look=katana_pose::look(yaw,rotation.pitchUp);
     const hit_fx::Vec3 eye{player.world.x,player.world.y,player.world.z};
@@ -1402,8 +1421,14 @@ int AccessoryStatus() {
 bool JumpEnabled() { return jumpEnabled.load(std::memory_order_acquire); }
 bool HitFxEnabled() { return hitFxEnabled.load(std::memory_order_acquire); }
 void SetHitFxEnabled(bool value) { hitFxEnabled.store(value,std::memory_order_release); }
-void SetHitFxUiActive(bool value) { hitFxUiActive.store(value,std::memory_order_release); }
+void RequestHitBurst() {
+ hitBurstRequests.fetch_add(1,std::memory_order_acq_rel);
+ if (hitBurstRequests.load(std::memory_order_relaxed)>8)
+  hitBurstRequests.store(8,std::memory_order_relaxed);
+}
 int HitFxStatus() { return hitFxStatus.load(std::memory_order_relaxed); }
+unsigned HitFxBursts() { return hitBurstTotal.load(std::memory_order_relaxed); }
+unsigned HitFxLive() { return static_cast<unsigned>(hitState.liveParticles()); }
 void SetJumpEnabled(bool value) {
  if (!value) { jumpEnabled.store(false,std::memory_order_release); jumpGeneration.fetch_add(1,std::memory_order_acq_rel); jumpStatus.store(0,std::memory_order_relaxed); return; }
  jumpStatus.store(0,std::memory_order_relaxed);

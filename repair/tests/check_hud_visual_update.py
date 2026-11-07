@@ -23,7 +23,11 @@ assert u.index('if (hudHookCreated) {') > u.index('mhApply())')
 for name in ('HatOpacity','TrailOpacity'):
     assert 'VisualParam::'+name in n and 'VisualParam::'+name in u and name in settings
 assert 'vertexGradient{false}' in n and 'Vertex gradient (test)' in u
-assert 'visual_gradient::trail(' in n and 'visual_gradient::phase(' in n
+assert 'visual_gradient::phase(' in n  # wireframe helix phase, unchanged
+# v11: the trail vertices now mix the two gradient colors instead of the old
+# experimental vertex-gradient helper.
+assert 'visual_gradient::trail(' not in n
+assert 'param(VisualParam::Trail2Red)' in n and 'param(VisualParam::Trail2Green)' in n
 assert 'sampleOutputMerger(depthWorld)' in n and 'sampleOutputMerger(depthBefore)' in n and 'sampleOutputMerger(depthAfter)' in n
 assert 'OMGetDepthStencilState' in n and 'OMGetBlendState' in n
 assert 'OMSetDepthStencilState' not in n and 'OMSetBlendState' not in n

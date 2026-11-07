@@ -1127,9 +1127,16 @@ static void patchedDrawGui(void* runtime) {
     SetMenuMouseOpen(menuOpen);
     if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }
     menu_rml::SetGameMenuOpen(menuOpen);
-    // While any UI is open the mouse belongs to it: attack clicks in the
-    // menu must not spawn hit fx.
-    SetHitFxUiActive(menuOpen);
+    // v11: hit fx trigger. The v10 build polled GetAsyncKeyState on the
+    // render thread inside china_hat_native and never saw a click in this
+    // UWP game. This is the only proven button path here: the UWP bridge the
+    // menu itself uses, with GetAsyncKeyState as a plain fallback. Rising
+    // edge only, and only while no UI is open.
+    static bool hitPrevDown=false;
+    const bool hitDown=(pageKeysReady && keyDown) ? keyDown(VK_LBUTTON)
+        : (GetAsyncKeyState(VK_LBUTTON)&0x8000)!=0;
+    if (hitDown && !hitPrevDown && !menuOpen) RequestHitBurst();
+    hitPrevDown=hitDown;
     // While the embedded new menu is alive it replaces the legacy click GUI
     // and the old test panels; if its initialization ever failed, everything
     // below falls back to the previous interface unchanged.

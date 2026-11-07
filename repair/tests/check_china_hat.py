@@ -29,7 +29,7 @@ assert 'OMSetDepthStencilState' not in n  # scoped guard owns and restores GPU s
 assert 'trailGeneration' in n and 'trail.clear()' in n
 assert 'tessBegin(t,4,segments*2)' in n
 hat=n[n.index('void renderHat(const PlayerFrame& player) {'):n.index('void renderTrail(const PlayerFrame& player) {')]
-assert 'visual_color::animated(materialTint.load' in hat and 'hatRainbow.load' in hat
+assert 'visual_color::gradient(' in hat and 'Hat2Red' in hat and 'visual_color::animated' not in hat
 assert 'Enable colors' in u and 'materialTint{true}' in n
 assert 'Filled hat (test)' in u and 'Filled trail (test)' in u
 assert 'hatFill{true}, trailFill{true}' in n
@@ -44,7 +44,7 @@ for symbol in ('_ZN5ImGui11BeginTabBarEPKci','_ZN5ImGui9EndTabBarEv',
     assert symbol in u and symbol.encode() in (r.parent/'GAYClientInternal.dll').read_bytes(), symbol
 assert 'drawVisualEditor(); return;' in u and 'drawEffectPreview(current)' in u
 trail=n[n.index('void renderTrail(const PlayerFrame& player) {'):n.index('void screenHook(')]
-assert 'visual_color::animated(materialTint.load' in trail and 'trailRainbow.load' in trail
+assert 'visual_color::gradient(' in trail and 'Trail2Red' in trail and 'visual_color::animated' not in trail
 assert 'saved,sizeof(saved)' in hat and 'saved,sizeof(saved)' in trail
 assert 'constexpr int segments=48, spokes=12' in hat
 assert 'tessBegin(t,4,2*(segments+spokes))' in hat and 'china_hat::emitWireframe' in hat

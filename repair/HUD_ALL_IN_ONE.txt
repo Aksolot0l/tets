@@ -1,7 +1,7 @@
-GAYCLIENT REPAIR - HUD + ВНУТРИИГРОВОЕ МЕНЮ, ВСЁ В ОДНОМ ФАЙЛЕ (v10)
+GAYCLIENT REPAIR - HUD + ВНУТРИИГРОВОЕ МЕНЮ, ВСЁ В ОДНОМ ФАЙЛЕ (v11)
 ====================================================================
 
-Версия v10 внутриигрового меню (RmlUi, встроен в GAYClientInternal.dll),
+Версия v11 внутриигрового меню (RmlUi, встроен в GAYClientInternal.dll),
 исправление ползунков из v7:
 - Найдена причина "мёртвых" ползунков: диапазоны в разметке не совпадали
   с реальными диапазонами параметров адаптера (visualParamSpecs).
@@ -44,6 +44,21 @@ GAYCLIENT REPAIR - HUD + ВНУТРИИГРОВОЕ МЕНЮ, ВСЁ В ОДНО
   в чистом hit_fx.h (линукс-тесты tests/hit_fx.cpp), нативная часть -
   renderHitFx в china_hat_native.cpp. 16 новых параметров, секция
   "УДАРЫ" в Visuals. Файлов картинок нет - всё процедурно.
+- v11: ПОЧИНЕН ТРИГГЕР УДАРОВ + ГРАДИЕНТ-ПИКЕР. В v10 эффект не появлялся:
+  опрос кнопки на рендер-потоке в этой UWP-игре никогда не срабатывал.
+  Теперь клик ловится в compat draw() через тот же проверенный UWP-мост
+  ввода, что и меню (фронт ЛКМ, только при закрытом меню), и уходит в
+  рендер атомарным RequestHitBurst(); renderHitFx дренит очередь и
+  спавнит взрыв. Цвета ВСЕХ эффектов (шляпа, след, кольца прыжка,
+  удары) теперь задаются градиентом: строка "Градиент" с двумя окошками,
+  клик по окошку открывает палитру из 40 цветов, тап по цвету применяет
+  его; RGB-ползунки и радуга-тумблеры убраны, "Скорость радуги" стала
+  "Скоростью градиента". След дополнительно течёт по длине лентой от
+  цвета A к цвету B. В секцию УДАРЫ добавлена строка диагностики
+  (взрывы/искры/статус) - сразу видно, доходит ли триггер. Итого 63
+  параметра, 33 ползунка, 17 чекбоксов, 8 окошек градиента; в харнессе
+  143 проверки, включая полный сценарий палитры (открытие, выбор,
+  закрытие, повторное открытие).
 
 Состав сборки не изменился: два окна (Home + Visuals), HUD-редактор
 перетаскиванием, 3D-превью игрока, адаптер не трогает client.exe.
@@ -1179,9 +1194,16 @@ static void patchedDrawGui(void* runtime) {
     SetMenuMouseOpen(menuOpen);
     if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }
     menu_rml::SetGameMenuOpen(menuOpen);
-    // While any UI is open the mouse belongs to it: attack clicks in the
-    // menu must not spawn hit fx.
-    SetHitFxUiActive(menuOpen);
+    // v11: hit fx trigger. The v10 build polled GetAsyncKeyState on the
+    // render thread inside china_hat_native and never saw a click in this
+    // UWP game. This is the only proven button path here: the UWP bridge the
+    // menu itself uses, with GetAsyncKeyState as a plain fallback. Rising
+    // edge only, and only while no UI is open.
+    static bool hitPrevDown=false;
+    const bool hitDown=(pageKeysReady && keyDown) ? keyDown(VK_LBUTTON)
+        : (GetAsyncKeyState(VK_LBUTTON)&0x8000)!=0;
+    if (hitDown && !hitPrevDown && !menuOpen) RequestHitBurst();
+    hitPrevDown=hitDown;
     // While the embedded new menu is alive it replaces the legacy click GUI
     // and the old test panels; if its initialization ever failed, everything
     // below falls back to the previous interface unchanged.
@@ -2066,9 +2088,15 @@ assert 'queueAgModule' in m and 'g_pendingToggles.size() < 32' in m
 assert 'SetChinaHatEnabled(on)' in m and 'SetTrailEnabled(on)' in m
 assert 'SetJumpEnabled(on)' in m and 'SetKatanaEnabled(on)' in m
 assert 'SetAccessoryEnabled' not in m
-assert 'SetHatFillEnabled(on)' in m and 'SetHatRainbowEnabled(on)' in m
-assert 'SetTrailFillEnabled(on)' in m and 'SetTrailRainbowEnabled(on)' in m
-assert 'SetJumpRainbowEnabled(on)' in m
+assert 'SetHatFillEnabled(on)' in m
+assert 'SetTrailFillEnabled(on)' in m
+# v11: the rainbow setters are unwired from the menu (the gradient wells
+# replaced the toggles) but stay exported for the native defaults.
+assert 'SetHatRainbowEnabled(on)' not in m
+assert 'SetTrailRainbowEnabled(on)' not in m
+assert 'SetJumpRainbowEnabled(on)' not in m
+# v11: the palette writes colors straight into the visual parameters.
+assert 'SetVisualParam(g_paletteTarget->r, c.r / 255.0f)' in m
 # v9: the change listener must read the event parameter - the widget updates
 # the "value" attribute only after dispatching "change", so the attribute is
 # one step stale inside the listener (the rubber-band bug).
@@ -2086,8 +2114,7 @@ assert 'input->SetAttribute("step", 1.0f);' in m
 for switch_id in ('sw-fps', 'sw-cps', 'sw-clock', 'sw-keys', 'sw-watermark',
                   'sw-coords', 'sw-res', 'sw-perf', 'sw-modlist', 'sw-preview',
                   'sw-gfx-chinahat', 'sw-gfx-trail', 'sw-gfx-jump',
-                  'sw-ch-fill', 'sw-ch-rainbow', 'sw-tr-fill', 'sw-tr-rainbow',
-                  'sw-jr-rainbow', 'sw-kt-master'):
+                  'sw-ch-fill', 'sw-tr-fill', 'sw-kt-master'):
     assert f'"{switch_id}"' in m, switch_id
     assert f'id="{switch_id}"' in d, switch_id
 for slider_id in ('sl-ch-rainbow', 'sl-ch-opacity', 'sl-ch-radius', 'sl-ch-height',
@@ -2098,10 +2125,18 @@ for slider_id in ('sl-ch-rainbow', 'sl-ch-opacity', 'sl-ch-radius', 'sl-ch-heigh
                   'sl-kt-forward', 'sl-kt-opacity', 'sl-kt-fpside', 'sl-kt-fpforward'):
     assert f'"{slider_id}"' in m, slider_id
     assert f'id="{slider_id}"' in d, slider_id
-# Crown ids are gone from both sides.
+# Crown ids are gone from both sides, and v11 removed the RGB sliders, the
+# rainbow toggles and the color chips in favor of gradient wells + palette.
 for gone in ('sw-crown', 'sw-cr-master', 'sl-cr-scale', 'sl-cr-offset',
              'sl-cr-opacity', 'sl-cr-r', 'sl-cr-g', 'sl-cr-b', 'win-cr',
              'win-ch', 'win-tr', 'win-jr', 'win-kt',
+             'sl-ch-r', 'sl-ch-g', 'sl-ch-b', 'sl-tr-r', 'sl-tr-g', 'sl-tr-b',
+             'sl-jr-r', 'sl-jr-g', 'sl-jr-b',
+             'sl-hit-ar', 'sl-hit-ag', 'sl-hit-ab',
+             'sl-hit-br', 'sl-hit-bg', 'sl-hit-bb',
+             'sw-ch-rainbow', 'sw-tr-rainbow', 'sw-jr-rainbow',
+             'chip-ch', 'chip-tr', 'chip-jr', 'chip-hita', 'chip-hitb',
+             'ChRainbow', 'TrRainbow', 'JrRainbow',
              # v6: the duplicate master rows at the top of Visuals are gone;
              # only the section toggles remain.
              'sw-chinahat', 'sw-trail', 'sw-jump', 'sw-katana'):
@@ -2221,8 +2256,8 @@ assert '.check {' in d and 'width: 26px' in d and 'height: 26px' in d
 assert '.check .ck {' in d and 'border-left: 3px #05230f' in d
 assert 'border-bottom: 3px #05230f' in d and 'rotate(-45deg)' in d
 assert '.check.on {' in d and '.check.on .ck { opacity: 1; }' in d
-assert d.count('class="check"') == 20
-assert d.count('<span class="ck"/>') == 20
+assert d.count('class="check"') == 17
+assert d.count('<span class="ck"/>') == 17
 # v7: every effect's master checkbox sits directly on its section head
 assert '.sec-flex { flex-grow: 1; }' in d and '.sec-head .check { margin-right: 8px; }' in d
 for pair in ('id="sec-ch"... id="sw-gfx-chinahat"', 'id="sec-tr"... id="sw-gfx-trail"',
@@ -2241,8 +2276,22 @@ assert 'id="sl-ch-offset" min="0" max="100" step="1"' in d
 assert 'id="sec-hit"' in d and '<span class="sec-title">УДАРЫ</span>' in d
 assert 'id="sl-hit-count" min="0" max="100" step="1"' in d
 assert 'id="sl-hit-cycle" min="0" max="100" step="1"' in d
-assert 'id="chip-hita"' in d and 'id="chip-hitb"' in d
-assert d.count('id="sl-hit-') == 16
+# v11: two gradient wells + a diagnostics line per color effect, the shared
+# palette popup with 40 fixed cells, and no RGB rows or rainbow toggles left.
+for well in ('cw-ch-a', 'cw-ch-b', 'cw-tr-a', 'cw-tr-b',
+             'cw-jr-a', 'cw-jr-b', 'cw-hit-a', 'cw-hit-b'):
+    assert f'id="{well}"' in d, well
+    assert f'"{well}"' in m, well
+assert d.count('class="cswatch"') == 8 and d.count('id="cpalette"') == 1
+assert '.ccell {' in d and 'z-index: 300' in d
+assert 'id="tt-hitdiag"' in d
+assert 'Скорость градиента' in d and d.count('Скорость градиента') == 4
+assert d.count('>Градиент</div>') == 4
+assert 'Радужный режим' not in d and 'Скорость радуги' not in d
+assert 'Цвет: красный' not in d and 'Цвет A:' not in d and 'Цвет B:' not in d
+assert 'SetProperty("background-color", Rml::CreateString("rgb(%d, %d, %d)"' in m  # swatch sync
+assert 'kPaletteColors' in m and 'Rml::CreateString("cc-%d", i)' in m
+assert d.count('id="sl-hit-') == 10
 # no icon machinery, no section count captions
 for gone in ('.m-ico', '.ip ', 'class="ip', '.sec-count', 'body.anim'):
     assert gone not in d, gone
@@ -2337,15 +2386,19 @@ _names = [n.strip() for n in _re.search(
 _trips = _re.findall(
     r'\{\s*([\d.\-]+)f?\s*,\s*([\d.\-]+)f?\s*,\s*([\d.\-]+)f?\s*\}',
     _re.search(r'visualParamSpecs\[\]\s*=\s*\{(.*?)\};', vs, _re.S).group(1))
-assert len(_names) == len(_trips) == 54, (len(_names), len(_trips))
+assert len(_names) == len(_trips) == 63, (len(_names), len(_trips))
 _specs = {n: (float(lo), float(hi)) for n, (v, lo, hi) in zip(_names, _trips)}
+# v11: the second gradient colors exist as parameters.
+for _extra in ('Hat2Red', 'Hat2Green', 'Hat2Blue', 'Trail2Red', 'Trail2Green',
+               'Trail2Blue', 'Jump2Red', 'Jump2Green', 'Jump2Blue'):
+    assert _extra in _specs, _extra
 # the katana opacity floor is gone: 0% is a real zero
 assert _specs['KatanaOpacity'][0] == 0.0, _specs['KatanaOpacity']
 _reg = {}
 for _m in _re.finditer(
         r'\{"(sl-[\w-]+)",\s*VisualParam::(\w+),\s*"([^"]*)"\}', m):
     _reg[_m.group(1)] = (_m.group(2), _m.group(3))
-assert len(_reg) == 48, len(_reg)
+assert len(_reg) == 33, len(_reg)
 for _id, (_param, _fmt) in _reg.items():
     assert _param in _specs, _id
     assert _fmt == '%.0f%%', (_id, _fmt)
@@ -2830,7 +2883,9 @@ bool katanaVisibleRecently(ULONGLONG now) {
 std::atomic<int> accessoryStatus{0};
 std::atomic<ULONGLONG> lastAccessorySubmit{0};
 std::atomic<bool> jumpEnabled{false}, jumpRainbow{false};
-std::atomic<bool> hitFxEnabled{true}, hitFxUiActive{false};
+std::atomic<bool> hitFxEnabled{true};
+std::atomic<int> hitBurstRequests{0};    // queued click bursts, UI thread -> render thread
+std::atomic<unsigned> hitBurstTotal{0};  // bursts actually spawned, for diagnostics
 std::atomic<bool> trailEnabled{false}, materialTint{true}, hatFill{true}, trailFill{true};
 std::atomic<bool> hatRainbow{true}, trailRainbow{true}, vertexGradient{false};
 // Default to fail-closed world rendering. Legacy screen rendering is a manual
@@ -3257,8 +3312,10 @@ void renderHat(const PlayerFrame& player) {
  const bool gradient=materialTint.load(std::memory_order_acquire) && hatRainbow.load(std::memory_order_acquire) && vertexGradient.load(std::memory_order_acquire);
  const float phase=gradient ? visual_gradient::phase(now,param(VisualParam::HatRainbowSpeed)) : static_cast<float>(now%8000)/8000.0f;
  if (!china_hat::build(mesh,head,param(VisualParam::HatRadius),param(VisualParam::HatConeHeight),48,phase,255)) return;
- auto tint=visual_color::animated(materialTint.load(std::memory_order_acquire),hatRainbow.load(std::memory_order_acquire),
-    {{param(VisualParam::HatRed),param(VisualParam::HatGreen),param(VisualParam::HatBlue)}},param(VisualParam::HatRainbowSpeed),now);
+ auto tint=visual_color::gradient(
+    {{param(VisualParam::HatRed),param(VisualParam::HatGreen),param(VisualParam::HatBlue)}},
+    {{param(VisualParam::Hat2Red),param(VisualParam::Hat2Green),param(VisualParam::Hat2Blue)}},
+    static_cast<float>(now%1000000)*0.001f*param(VisualParam::HatRainbowSpeed));
  if (gradient) tint={{1.f,1.f,1.f,1.f}};
  tint[3]=param(VisualParam::HatOpacity); // The game's material must support alpha/blending.
  std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
@@ -3630,12 +3687,21 @@ void renderTrail(const PlayerFrame& player) {
   valid[i]=std::fabs(v.position.x)<32 && std::fabs(v.position.y)<32 && std::fabs(v.position.z)<32;
   float age=static_cast<float>(now-p.time)/static_cast<float>(ttl);
   const auto alpha=static_cast<std::uint8_t>(255.f*(1.f-std::clamp(age,0.f,1.f)));
-  v.color=gradient ? visual_gradient::trail(i,trail.size(),phase,alpha) : china_hat::rainbow(.38f+static_cast<float>(i)*.002f,alpha);
+  {
+   const float w=0.5f-0.5f*std::cos(6.28318530718f*(phase+static_cast<float>(i)*0.045f));
+   const auto mixc=[&](float a,float b) { return static_cast<std::uint8_t>(std::lround(std::clamp(a+(b-a)*w,0.f,1.f)*255.f)); };
+   v.color={mixc(param(VisualParam::TrailRed),param(VisualParam::Trail2Red)),
+            mixc(param(VisualParam::TrailGreen),param(VisualParam::Trail2Green)),
+            mixc(param(VisualParam::TrailBlue),param(VisualParam::Trail2Blue)),alpha};
+  }
   if (i && valid[i] && valid[i-1]) ++segments;
  }
  if (!segments) return;
- auto tint=visual_color::animated(materialTint.load(std::memory_order_acquire),trailRainbow.load(std::memory_order_acquire),
-    {{param(VisualParam::TrailRed),param(VisualParam::TrailGreen),param(VisualParam::TrailBlue)}},param(VisualParam::TrailRainbowSpeed),now);
+ auto tint=visual_color::gradient(
+    {{param(VisualParam::TrailRed),param(VisualParam::TrailGreen),param(VisualParam::TrailBlue)}},
+    {{param(VisualParam::Trail2Red),param(VisualParam::Trail2Green),param(VisualParam::Trail2Blue)}},
+    static_cast<float>(now%1000000)*0.001f*param(VisualParam::TrailRainbowSpeed));
+ (void)gradient;  // the two-color gradient replaced the experimental vertex path
  if (gradient) tint={{1.f,1.f,1.f,1.f}};
  tint[3]=param(VisualParam::TrailOpacity); // The game's material must support alpha/blending.
  std::memcpy(reinterpret_cast<void*>(color),tint.data(),sizeof(float)*tint.size()); *reinterpret_cast<std::uint8_t*>(flag)=1;
@@ -3688,8 +3754,10 @@ void renderJump(const PlayerFrame& player) {
   china_hat::Point c{ring.center.x-origin[0],ring.center.y-origin[1],ring.center.z-origin[2]};
   if(std::fabs(c.x)>32 || std::fabs(c.y)>32 || std::fabs(c.z)>32 || !tessIdle(tess)) continue;
   const float opacity=param(VisualParam::JumpOpacity)*visual_jump::alpha(p);
-  auto tint=visual_color::animated(true,jumpRainbow.load(std::memory_order_acquire),
-      {{param(VisualParam::JumpRed),param(VisualParam::JumpGreen),param(VisualParam::JumpBlue)}},param(VisualParam::JumpRainbowSpeed),now);
+  auto tint=visual_color::gradient(
+      {{param(VisualParam::JumpRed),param(VisualParam::JumpGreen),param(VisualParam::JumpBlue)}},
+      {{param(VisualParam::Jump2Red),param(VisualParam::Jump2Green),param(VisualParam::Jump2Blue)}},
+      static_cast<float>(now-ring.start)*0.001f*param(VisualParam::JumpRainbowSpeed)+static_cast<float>(i)*0.25f);
   const float radius=visual_jump::radius(p,param(VisualParam::JumpRadius));
   // Two bounded batches per ring: bright detail first, translucent halo
   // second. Each uses the game's existing material and guarded depth draw;
@@ -3720,11 +3788,10 @@ void renderJump(const PlayerFrame& player) {
 std::atomic<int> hitFxStatus{0};
 hit_fx::State hitState;
 hit_fx::Rng hitRng{0x5EED1234u};
-bool hitPrevDown=false;
 ULONGLONG hitLastTick=0, hitLastBurst=0;
 
 void renderHitFx(const PlayerFrame& player) {
- if (!hitFxEnabled.load(std::memory_order_acquire)) { hitState.clear(); hitPrevDown=false; hitLastTick=0; hitFxStatus.store(0,std::memory_order_relaxed); return; }
+ if (!hitFxEnabled.load(std::memory_order_acquire)) { hitState.clear(); hitBurstRequests.store(0,std::memory_order_relaxed); hitLastTick=0; hitFxStatus.store(0,std::memory_order_relaxed); return; }
  const ULONGLONG now=GetTickCount64();
  hit_fx::Config config;
  config.count=static_cast<int>(param(VisualParam::HitCount)+0.5f);
@@ -3739,19 +3806,24 @@ void renderHitFx(const PlayerFrame& player) {
  config.cycleSpeed=param(VisualParam::HitCycleSpeed);
  config.ar=param(VisualParam::HitARed); config.ag=param(VisualParam::HitAGreen); config.ab=param(VisualParam::HitABlue);
  config.br=param(VisualParam::HitBRed); config.bg=param(VisualParam::HitBGreen); config.bb=param(VisualParam::HitBBlue);
+ // v11: the click is detected on the UI thread (compat draw()) through the
+ // same verified UWP key bridge the menu uses and forwarded here as a burst
+ // request. Polling the async key state on this render thread never fired in
+ // the user's UWP game, so v10 showed no effect at all.
  std::uintptr_t actor=0;
- if (!player.valid || now<player.at || now-player.at>250 || !localPlayer(actor) || actor!=player.entity) {
-  // No player frame: keep the existing burst animating, just no new clicks.
-  hitPrevDown=false;
+ const bool playerFrame=player.valid && player.at<=now && now-player.at<=250 && localPlayer(actor) && actor==player.entity;
+ if (!playerFrame) {
+  // No player frame: keep the existing burst animating, drop stale clicks.
+  hitBurstRequests.store(0,std::memory_order_relaxed);
  } else {
-  const bool down=(GetAsyncKeyState(VK_LBUTTON)&0x8000)!=0;
-  const bool clicked=down&&!hitPrevDown;
-  hitPrevDown=down;
-  if (clicked && !hitFxUiActive.load(std::memory_order_acquire) && now-hitLastBurst>=120) {
+  int requests=hitBurstRequests.exchange(0,std::memory_order_acq_rel);
+  if (requests>3) requests=3;  // bounded catch-up after a frame hitch
+  if (requests>0 && now-hitLastBurst>=120) {
    auto memory=[](std::uintptr_t address,void* out,std::size_t n) { return read(address,out,n); };
    katana_rotation::Reading rotation;
    if (katana_rotation::readRotation(base,clientInstance.load(std::memory_order_acquire),memory,rotation)) {
     hitLastBurst=now;
+    hitBurstTotal.fetch_add(1,std::memory_order_relaxed);
     float yaw=rotation.yaw+(katanaYawSign.load(std::memory_order_relaxed)<0?3.14159265f:0.f);
     const auto look=katana_pose::look(yaw,rotation.pitchUp);
     const hit_fx::Vec3 eye{player.world.x,player.world.y,player.world.z};
@@ -4077,8 +4149,14 @@ int AccessoryStatus() {
 bool JumpEnabled() { return jumpEnabled.load(std::memory_order_acquire); }
 bool HitFxEnabled() { return hitFxEnabled.load(std::memory_order_acquire); }
 void SetHitFxEnabled(bool value) { hitFxEnabled.store(value,std::memory_order_release); }
-void SetHitFxUiActive(bool value) { hitFxUiActive.store(value,std::memory_order_release); }
+void RequestHitBurst() {
+ hitBurstRequests.fetch_add(1,std::memory_order_acq_rel);
+ if (hitBurstRequests.load(std::memory_order_relaxed)>8)
+  hitBurstRequests.store(8,std::memory_order_relaxed);
+}
 int HitFxStatus() { return hitFxStatus.load(std::memory_order_relaxed); }
+unsigned HitFxBursts() { return hitBurstTotal.load(std::memory_order_relaxed); }
+unsigned HitFxLive() { return static_cast<unsigned>(hitState.liveParticles()); }
 void SetJumpEnabled(bool value) {
  if (!value) { jumpEnabled.store(false,std::memory_order_release); jumpGeneration.fetch_add(1,std::memory_order_acq_rel); jumpStatus.store(0,std::memory_order_relaxed); return; }
  jumpStatus.store(0,std::memory_order_relaxed);
@@ -4210,8 +4288,10 @@ int JumpStatus();
 // Hit fx: impact sparkles and rings on attack clicks.
 bool HitFxEnabled();
 void SetHitFxEnabled(bool enabled);
-void SetHitFxUiActive(bool active);
+void RequestHitBurst();
 int HitFxStatus();
+unsigned HitFxBursts();
+unsigned HitFxLive();
 bool TrailEnabled();
 void SetTrailEnabled(bool enabled);
 float ChinaHatHeight();
@@ -4253,7 +4333,9 @@ enum class VisualParam : std::size_t {
  KatanaFirstSide, KatanaFirstForward,
  HitCount, HitSize, HitSpeed, HitLife, HitGravity, HitReach,
  HitRingCount, HitRingSize, HitRingLife, HitCycleSpeed,
- HitARed, HitAGreen, HitABlue, HitBRed, HitBGreen, HitBBlue, Count
+ HitARed, HitAGreen, HitABlue, HitBRed, HitBGreen, HitBBlue,
+ Hat2Red, Hat2Green, Hat2Blue, Trail2Red, Trail2Green, Trail2Blue,
+ Jump2Red, Jump2Green, Jump2Blue, Count
 };
 struct VisualParamSpec { float value, low, high; };
 constexpr VisualParamSpec visualParamSpecs[] = {
@@ -4272,7 +4354,9 @@ constexpr VisualParamSpec visualParamSpecs[] = {
  {.34f,0.f,.80f},{.30f,-.30f,1.00f},
  {24.f,4.f,48.f},{.32f,.08f,.80f},{4.2f,1.f,10.f},{.70f,.25f,1.60f},{5.5f,0.f,14.f},{2.8f,1.f,4.5f},
  {3.f,0.f,5.f},{1.4f,.40f,3.0f},{.55f,.20f,1.2f},{.90f,.05f,3.f},
- {1.f,0.f,1.f},{1.f,0.f,1.f},{1.f,0.f,1.f},{1.f,0.f,1.f},{.15f,0.f,1.f},{.10f,0.f,1.f}
+ {1.f,0.f,1.f},{1.f,0.f,1.f},{1.f,0.f,1.f},{1.f,0.f,1.f},{.15f,0.f,1.f},{.10f,0.f,1.f},
+ {1.f,0.f,1.f},{1.f,0.f,1.f},{1.f,0.f,1.f},{1.f,0.f,1.f},{1.f,0.f,1.f},{1.f,0.f,1.f},
+ {1.f,0.f,1.f},{1.f,0.f,1.f},{1.f,0.f,1.f}
 };
 static_assert(sizeof(visualParamSpecs)/sizeof(visualParamSpecs[0])==static_cast<std::size_t>(VisualParam::Count),"visual parameters mismatch");
 inline float sanitizeVisualParam(VisualParam param,float value) {
@@ -4910,6 +4994,13 @@ inline std::array<float,4> material(bool enabled,Effect effect) {
 }
 // Animate the whole material color; 1.1.5's active material did not honor our
 // per-vertex gradient in the user's test. Never imply per-vertex rainbow.
+// Two-color gradient: the effect breathes between baseA and baseB; phase is
+// in cycles (0 -> A, 0.5 -> B, 1 -> A again).
+inline std::array<float,4> gradient(std::array<float,3> baseA,std::array<float,3> baseB,float phase) {
+ float w=0.5f-0.5f*std::cos(6.28318530718f*phase);
+ return {{baseA[0]+(baseB[0]-baseA[0])*w,baseA[1]+(baseB[1]-baseA[1])*w,
+          baseA[2]+(baseB[2]-baseA[2])*w,1.f}};
+}
 inline std::array<float,4> animated(bool enabled,bool rainbow,std::array<float,3> base,float cyclesPerSecond,std::uint64_t ms) {
  if (!enabled) return {{1.f,1.f,1.f,1.f}};
  if (!rainbow) return {{base[0],base[1],base[2],1.f}};
@@ -5821,6 +5912,7 @@ Rml::Context* g_rmlContext = nullptr;
 Rml::ElementDocument* g_menuDoc = nullptr;
 Rml::Element* g_ttStatus = nullptr;
 Rml::Element* g_ttDiag = nullptr;
+Rml::Element* g_ttHitDiag = nullptr;
 unsigned g_width = 0, g_height = 0;
 bool g_menuShown = false;
 // Document fade: frames left to keep rendering after the menu closed (the
@@ -5924,6 +6016,7 @@ WinState g_win[kWindowCount];
 int g_zTop = 20;
 std::string g_ttStatusCache;
 std::string g_ttDiagCache;
+std::string g_ttHitDiagCache;
 
 // 3D preview toggle (Visuals window).
 std::atomic<bool> g_previewOn{true};
@@ -6017,7 +6110,7 @@ bool shadowModule(int moduleId) {
 
 enum class SwKind {
     AgModule, ChinaHat, Trail, Jump, Katana, HitFx,
-    ChFill, ChRainbow, TrFill, TrRainbow, JrRainbow
+    ChFill, TrFill
 };
 
 struct SwitchDef {
@@ -6046,10 +6139,7 @@ const SwitchDef kSwitches[] = {
     {"sw-gfx-hit", SwKind::HitFx, 0},
     {"sw-kt-master", SwKind::Katana, 0},
     {"sw-ch-fill", SwKind::ChFill, 0},
-    {"sw-ch-rainbow", SwKind::ChRainbow, 0},
     {"sw-tr-fill", SwKind::TrFill, 0},
-    {"sw-tr-rainbow", SwKind::TrRainbow, 0},
-    {"sw-jr-rainbow", SwKind::JrRainbow, 0},
 };
 
 const SwitchDef* findSwitch(const Rml::String& id) {
@@ -6067,10 +6157,7 @@ bool readSwitch(const SwitchDef& def) {
         case SwKind::HitFx: return HitFxEnabled();
         case SwKind::Katana: return KatanaEnabled();
         case SwKind::ChFill: return HatFillEnabled();
-        case SwKind::ChRainbow: return HatRainbowEnabled();
         case SwKind::TrFill: return TrailFillEnabled();
-        case SwKind::TrRainbow: return TrailRainbowEnabled();
-        case SwKind::JrRainbow: return JumpRainbowEnabled();
     }
     return false;
 }
@@ -6084,11 +6171,91 @@ void applySwitch(const SwitchDef& def, bool on) {
         case SwKind::HitFx: SetHitFxEnabled(on); break;
         case SwKind::Katana: SetKatanaEnabled(on); break;
         case SwKind::ChFill: SetHatFillEnabled(on); break;
-        case SwKind::ChRainbow: SetHatRainbowEnabled(on); break;
         case SwKind::TrFill: SetTrailFillEnabled(on); break;
-        case SwKind::TrRainbow: SetTrailRainbowEnabled(on); break;
-        case SwKind::JrRainbow: SetJumpRainbowEnabled(on); break;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Gradient swatches: two color wells per effect. A well click opens the
+// shared palette popup, a cell tap writes the color into the live visual
+// parameters. Replaces the old RGB sliders and rainbow toggles.
+// ---------------------------------------------------------------------------
+
+struct SwatchDef {
+    const char* id;       // DOM id of the <button class="cswatch">
+    VisualParam r, g, b;  // the three parameters this well edits
+};
+
+const SwatchDef kSwatches[] = {
+    {"cw-ch-a", VisualParam::HatRed, VisualParam::HatGreen, VisualParam::HatBlue},
+    {"cw-ch-b", VisualParam::Hat2Red, VisualParam::Hat2Green, VisualParam::Hat2Blue},
+    {"cw-tr-a", VisualParam::TrailRed, VisualParam::TrailGreen, VisualParam::TrailBlue},
+    {"cw-tr-b", VisualParam::Trail2Red, VisualParam::Trail2Green, VisualParam::Trail2Blue},
+    {"cw-jr-a", VisualParam::JumpRed, VisualParam::JumpGreen, VisualParam::JumpBlue},
+    {"cw-jr-b", VisualParam::Jump2Red, VisualParam::Jump2Green, VisualParam::Jump2Blue},
+    {"cw-hit-a", VisualParam::HitARed, VisualParam::HitAGreen, VisualParam::HitABlue},
+    {"cw-hit-b", VisualParam::HitBRed, VisualParam::HitBGreen, VisualParam::HitBBlue},
+};
+
+const SwatchDef* findSwatch(const Rml::String& id) {
+    for (const SwatchDef& def : kSwatches)
+        if (id == def.id) return &def;
+    return nullptr;
+}
+
+// The palette: 40 fixed colors, 8 per row. Pure code, no image assets.
+struct PaletteColor { unsigned char r, g, b; };
+const PaletteColor kPaletteColors[] = {
+    {0x00,0x00,0x00},{0x26,0x26,0x26},{0x4d,0x4d,0x4d},{0x76,0x76,0x76},
+    {0xa8,0xa8,0xa8},{0xd4,0xd4,0xd4},{0xff,0xff,0xff},{0x1b,0x1b,0x2f},
+    {0xff,0x00,0x00},{0xc0,0x00,0x00},{0x8b,0x00,0x00},{0xff,0x6b,0x6b},
+    {0xff,0x45,0x00},{0xff,0x8c,0x00},{0xff,0xa5,0x00},{0xff,0xd7,0x00},
+    {0xff,0xff,0x00},{0xad,0xff,0x2f},{0x7c,0xfc,0x00},{0x00,0xff,0x00},
+    {0x00,0xc0,0x00},{0x00,0x80,0x00},{0x90,0xee,0x90},{0x20,0xb2,0xaa},
+    {0x00,0xce,0xd1},{0x00,0xff,0xff},{0x00,0xbf,0xff},{0x1e,0x90,0xff},
+    {0x41,0x69,0xe1},{0x00,0x00,0xff},{0x00,0x00,0x8b},{0x48,0x3d,0x8b},
+    {0x6a,0x5a,0xcd},{0x8a,0x2b,0xe2},{0x94,0x00,0xd3},{0xba,0x55,0xd3},
+    {0xff,0x00,0xff},{0xff,0x69,0xb4},{0xff,0xc0,0xcb},{0x8b,0x45,0x13},
+};
+constexpr int kPaletteCount = static_cast<int>(sizeof(kPaletteColors) / sizeof(kPaletteColors[0]));
+
+// The palette popup: one shared element, retargeted per click.
+const SwatchDef* g_paletteTarget = nullptr;
+
+void closePalette() {
+    if (!g_menuDoc) return;
+    if (Rml::Element* pal = g_menuDoc->GetElementById("cpalette"))
+        pal->SetProperty("display", "none");
+    g_paletteTarget = nullptr;
+}
+
+void openPalette(const SwatchDef* def, Rml::Element* swatch) {
+    if (!g_menuDoc || !def || !swatch) return;
+    Rml::Element* pal = g_menuDoc->GetElementById("cpalette");
+    if (!pal) return;
+    g_paletteTarget = def;
+    // Drop the popup under the well, clamped into the viewport.
+    const Rml::Vector2f pos = swatch->GetAbsoluteOffset();
+    const float w = static_cast<float>(g_width), h = static_cast<float>(g_height);
+    float left = pos.x;
+    float top = pos.y + swatch->GetOffsetHeight() + 2.0f;
+    if (w > 0 && left > w - 190.0f) left = w - 190.0f;
+    if (h > 0 && top > h - 130.0f) top = h - 130.0f;
+    if (left < 0) left = 0;
+    if (top < 0) top = 0;
+    pal->SetProperty("left", Rml::CreateString("%dpx", static_cast<int>(left)));
+    pal->SetProperty("top", Rml::CreateString("%dpx", static_cast<int>(top)));
+    pal->SetProperty("display", "block");
+}
+
+// A cell tap: write the color into the targeted well and close.
+void applyPaletteCell(int index) {
+    if (!g_paletteTarget || index < 0 || index >= kPaletteCount) { closePalette(); return; }
+    const PaletteColor& c = kPaletteColors[index];
+    SetVisualParam(g_paletteTarget->r, c.r / 255.0f);
+    SetVisualParam(g_paletteTarget->g, c.g / 255.0f);
+    SetVisualParam(g_paletteTarget->b, c.b / 255.0f);
+    closePalette();
 }
 
 // ---------------------------------------------------------------------------
@@ -6110,25 +6277,16 @@ const SliderDef kSliders[] = {
     {"sl-ch-offset", VisualParam::HatOffset, "%.0f%%"},
     {"sl-ch-amp", VisualParam::HatBobAmplitude, "%.0f%%"},
     {"sl-ch-floatspeed", VisualParam::HatBobSpeed, "%.0f%%"},
-    {"sl-ch-r", VisualParam::HatRed, "%.0f%%"},
-    {"sl-ch-g", VisualParam::HatGreen, "%.0f%%"},
-    {"sl-ch-b", VisualParam::HatBlue, "%.0f%%"},
     // Trail.
     {"sl-tr-rainbow", VisualParam::TrailRainbowSpeed, "%.0f%%"},
     {"sl-tr-opacity", VisualParam::TrailOpacity, "%.0f%%"},
     {"sl-tr-height", VisualParam::TrailHeight, "%.0f%%"},
     {"sl-tr-life", VisualParam::TrailSeconds, "%.0f%%"},
-    {"sl-tr-r", VisualParam::TrailRed, "%.0f%%"},
-    {"sl-tr-g", VisualParam::TrailGreen, "%.0f%%"},
-    {"sl-tr-b", VisualParam::TrailBlue, "%.0f%%"},
     // Jump rings.
     {"sl-jr-rainbow", VisualParam::JumpRainbowSpeed, "%.0f%%"},
     {"sl-jr-opacity", VisualParam::JumpOpacity, "%.0f%%"},
     {"sl-jr-radius", VisualParam::JumpRadius, "%.0f%%"},
     {"sl-jr-duration", VisualParam::JumpSeconds, "%.0f%%"},
-    {"sl-jr-r", VisualParam::JumpRed, "%.0f%%"},
-    {"sl-jr-g", VisualParam::JumpGreen, "%.0f%%"},
-    {"sl-jr-b", VisualParam::JumpBlue, "%.0f%%"},
     // Katana (graphics tab).
     {"sl-kt-scale", VisualParam::KatanaScale, "%.0f%%"},
     {"sl-kt-tilt", VisualParam::KatanaTilt, "%.0f%%"},
@@ -6149,12 +6307,6 @@ const SliderDef kSliders[] = {
     {"sl-hit-ringsize", VisualParam::HitRingSize, "%.0f%%"},
     {"sl-hit-ringlife", VisualParam::HitRingLife, "%.0f%%"},
     {"sl-hit-cycle", VisualParam::HitCycleSpeed, "%.0f%%"},
-    {"sl-hit-ar", VisualParam::HitARed, "%.0f%%"},
-    {"sl-hit-ag", VisualParam::HitAGreen, "%.0f%%"},
-    {"sl-hit-ab", VisualParam::HitABlue, "%.0f%%"},
-    {"sl-hit-br", VisualParam::HitBRed, "%.0f%%"},
-    {"sl-hit-bg", VisualParam::HitBGreen, "%.0f%%"},
-    {"sl-hit-bb", VisualParam::HitBBlue, "%.0f%%"},
 };
 
 // One uniform percent scale for every slider: the DOM value is 0..100 and
@@ -6435,6 +6587,11 @@ void MenuClickListener::ProcessEvent(Rml::Event& event) {
     if (!element || !g_menuDoc) return;
     const Rml::String id = element->GetId();
 
+    // Clicks outside the gradient palette close it (wells re-open it below).
+    // Cell ids are "cc-N": N can be a single digit, so guard at 4 chars.
+    if (g_paletteTarget && !(id.size() >= 4 && (id.compare(0, 3, "cw-") == 0 || id.compare(0, 3, "cc-") == 0)) && id != "cpalette")
+        closePalette();
+
     if (id == "btn-close") {
         g_hiddenByClose.store(true, std::memory_order_relaxed);
         return;
@@ -6490,6 +6647,18 @@ void MenuClickListener::ProcessEvent(Rml::Event& event) {
         applySwitch(*def, !readSwitch(*def));
         return;
     }
+    if (id.size() >= 4 && id.compare(0, 3, "cw-") == 0) {
+        // Gradient well: open the palette on this well.
+        openPalette(findSwatch(id), element);
+        return;
+    }
+    if (id.size() >= 4 && id.compare(0, 3, "cc-") == 0) {
+        // Palette cell: apply the color to the targeted well.
+        int index = 0;
+        if (std::sscanf(id.c_str() + 3, "%d", &index) == 1) applyPaletteCell(index);
+        return;
+    }
+    if (id == "cpalette") return;  // padding inside the popup keeps it open
 }
 
 // ---------------------------------------------------------------------------
@@ -6538,11 +6707,25 @@ bool buildRegistry() {
     if (!g_menuDoc) return false;
     g_ttStatus = g_menuDoc->GetElementById("tt-status");
     g_ttDiag = g_menuDoc->GetElementById("tt-diag");
+    g_ttHitDiag = g_menuDoc->GetElementById("tt-hitdiag");
     g_previewSwitch = g_menuDoc->GetElementById("sw-preview");
-    if (!g_ttStatus || !g_ttDiag || !g_previewSwitch) return false;
+    if (!g_ttStatus || !g_ttDiag || !g_ttHitDiag || !g_previewSwitch) return false;
     g_previewSwitch->SetClass("on", g_previewOn.load(std::memory_order_relaxed));
 
     g_menuDoc->AddEventListener("click", &g_clickListener);
+
+    // Palette popup: one shared element with the fixed color cells. Clicks
+    // bubble to the document listener and dispatch on the cc-N cell ids.
+    if (Rml::Element* pal = g_menuDoc->GetElementById("cpalette")) {
+        for (int i = 0; i < kPaletteCount; ++i) {
+            Rml::ElementPtr cell = g_menuDoc->CreateElement("div");
+            cell->SetId(Rml::CreateString("cc-%d", i));
+            cell->SetClass("ccell", true);
+            cell->SetProperty("background-color", Rml::CreateString("rgb(%d, %d, %d)",
+                kPaletteColors[i].r, kPaletteColors[i].g, kPaletteColors[i].b));
+            pal->AppendChild(std::move(cell));
+        }
+    }
 
     // Windows: geometry is applied by layoutWindows() right after init; the
     // listeners carry focus, z-order and title-bar dragging. Natural sizes
@@ -6707,21 +6890,13 @@ void syncSliders() {
             }
         }
     }
-    // Color chips follow the live RGB parameters.
-    struct ChipDef { const char* id; VisualParam r, g, b; };
-    static const ChipDef kChips[] = {
-        {"chip-ch", VisualParam::HatRed, VisualParam::HatGreen, VisualParam::HatBlue},
-        {"chip-tr", VisualParam::TrailRed, VisualParam::TrailGreen, VisualParam::TrailBlue},
-        {"chip-jr", VisualParam::JumpRed, VisualParam::JumpGreen, VisualParam::JumpBlue},
-        {"chip-hita", VisualParam::HitARed, VisualParam::HitAGreen, VisualParam::HitABlue},
-        {"chip-hitb", VisualParam::HitBRed, VisualParam::HitBGreen, VisualParam::HitBBlue},
-    };
-    for (const ChipDef& chip : kChips) {
-        Rml::Element* element = g_menuDoc->GetElementById(chip.id);
+    // Gradient swatches follow the live RGB parameters.
+    for (const SwatchDef& sw : kSwatches) {
+        Rml::Element* element = g_menuDoc->GetElementById(sw.id);
         if (!element) continue;
-        const int r = static_cast<int>(clamp01(GetVisualParam(chip.r)) * 255.0f + 0.5f);
-        const int g = static_cast<int>(clamp01(GetVisualParam(chip.g)) * 255.0f + 0.5f);
-        const int b = static_cast<int>(clamp01(GetVisualParam(chip.b)) * 255.0f + 0.5f);
+        const int r = static_cast<int>(clamp01(GetVisualParam(sw.r)) * 255.0f + 0.5f);
+        const int g = static_cast<int>(clamp01(GetVisualParam(sw.g)) * 255.0f + 0.5f);
+        const int b = static_cast<int>(clamp01(GetVisualParam(sw.b)) * 255.0f + 0.5f);
         element->SetProperty("background-color", Rml::CreateString("rgb(%d, %d, %d)", r, g, b));
     }
 }
@@ -6777,6 +6952,27 @@ void syncTtStatus() {
     if (diag != g_ttDiagCache) {
         g_ttDiagCache = diag;
         g_ttDiag->SetInnerRML(diag);
+    }
+}
+
+// Hit fx diagnostics, cached like the katana line. If bursts grow but the
+// effect stays invisible the trigger works and the render path is the
+// suspect; if bursts stay at zero the click bridge itself never fired.
+void syncHitDiag() {
+    if (!g_menuShown || !g_ttHitDiag) return;
+    const char* statusText;
+    switch (HitFxStatus()) {
+        case 1: statusText = "кадр"; break;
+        case 2: statusText = "рисуется"; break;
+        case 13: statusText = "поворот нечитаем"; break;
+        default: statusText = "нет"; break;
+    }
+    char line[128];
+    std::snprintf(line, sizeof(line), "Взрывы: %u, искр: %u, статус: %s",
+                  HitFxBursts(), HitFxLive(), statusText);
+    if (g_ttHitDiagCache != line) {
+        g_ttHitDiagCache = line;
+        g_ttHitDiag->SetInnerRML(line);
     }
 }
 
@@ -6924,6 +7120,7 @@ void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
         syncSwitches();
         syncSliders();
         syncTtStatus();
+        syncHitDiag();
     }
     stepWindowAnims();
     g_rmlContext->Update();
@@ -7196,12 +7393,42 @@ input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
     font-size: 15px;
     color: #a5c5ae;
 }
-.color-chip {
-    width: 24px;
-    height: 24px;
+.cswatch {
+    display: inline-block;
+    width: 34px;
+    height: 22px;
     margin-left: 8px;
-    border-radius: 7px;
-    border: 1px #ffffff2e;
+    border-radius: 6px;
+    border: 1px #ffffff45;
+    background-color: #40ff70ff;
+}
+.cswatch:hover { border-color: #6ef58c; }
+#cpalette {
+    display: none;
+    position: absolute;
+    width: 184px;
+    left: 0px;
+    top: 0px;
+    z-index: 300;
+    background-color: #0c130eee;
+    border: 1px #2c4436;
+    border-radius: 8px;
+    padding: 6px;
+}
+.ccell {
+    display: inline-block;
+    width: 19px;
+    height: 16px;
+    margin: 1px;
+    border-radius: 3px;
+    border: 1px #ffffff26;
+}
+.ccell:hover { border-color: #ffffffaa; }
+#tt-hitdiag {
+    display: block;
+    font-size: 12px;
+    color: #89a792;
+    padding-bottom: 4px;
 }
 .greenbtn {
     display: block;
@@ -7356,17 +7583,14 @@ static const char kMenuRml[] = R"RML(
             </div>
             <div class="sec-body">
                                 <div class="slider-row"><div class="slider-label">Заливка конуса</div><button class="check" id="sw-ch-fill"><span class="ck"/></button></div>
-                <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="check" id="sw-ch-rainbow"><span class="ck"/></button></div>
-                <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-ch-rainbow" min="0" max="100" step="1" value="16"/><div class="slider-value" id="ro-ch-rainbow"/><div class="color-chip" id="chip-ch"/></div>
+                <div class="slider-row"><div class="slider-label">Скорость градиента</div><input type="range" id="sl-ch-rainbow" min="0" max="100" step="1" value="16"/><div class="slider-value" id="ro-ch-rainbow"/></div>
+                <div class="slider-row"><div class="slider-label">Градиент</div><button class="cswatch" id="cw-ch-a"/><button class="cswatch" id="cw-ch-b"/></div>
                 <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-ch-opacity" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-ch-opacity"/></div>
                 <div class="slider-row"><div class="slider-label">Радиус</div><input type="range" id="sl-ch-radius" min="0" max="100" step="1" value="40"/><div class="slider-value" id="ro-ch-radius"/></div>
                 <div class="slider-row"><div class="slider-label">Высота конуса</div><input type="range" id="sl-ch-height" min="0" max="100" step="1" value="32"/><div class="slider-value" id="ro-ch-height"/></div>
                 <div class="slider-row"><div class="slider-label">Отступ от головы</div><input type="range" id="sl-ch-offset" min="0" max="100" step="1" value="33"/><div class="slider-value" id="ro-ch-offset"/></div>
                 <div class="slider-row"><div class="slider-label">Амплитуда плавания</div><input type="range" id="sl-ch-amp" min="0" max="100" step="1" value="35"/><div class="slider-value" id="ro-ch-amp"/></div>
                 <div class="slider-row"><div class="slider-label">Скорость плавания</div><input type="range" id="sl-ch-floatspeed" min="0" max="100" step="1" value="24"/><div class="slider-value" id="ro-ch-floatspeed"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-ch-r" min="0" max="100" step="1" value="20"/><div class="slider-value" id="ro-ch-r"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-ch-g" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-ch-g"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-ch-b" min="0" max="100" step="1" value="42"/><div class="slider-value" id="ro-ch-b"/></div>
             </div>
         </div>
         <div class="sec" id="sec-tr">
@@ -7378,14 +7602,11 @@ static const char kMenuRml[] = R"RML(
             </div>
             <div class="sec-body">
                                 <div class="slider-row"><div class="slider-label">Заливка</div><button class="check" id="sw-tr-fill"><span class="ck"/></button></div>
-                <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="check" id="sw-tr-rainbow"><span class="ck"/></button></div>
-                <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-tr-rainbow" min="0" max="100" step="1" value="16"/><div class="slider-value" id="ro-tr-rainbow"/><div class="color-chip" id="chip-tr"/></div>
+                <div class="slider-row"><div class="slider-label">Скорость градиента</div><input type="range" id="sl-tr-rainbow" min="0" max="100" step="1" value="16"/><div class="slider-value" id="ro-tr-rainbow"/></div>
+                <div class="slider-row"><div class="slider-label">Градиент</div><button class="cswatch" id="cw-tr-a"/><button class="cswatch" id="cw-tr-b"/></div>
                 <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-tr-opacity" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-tr-opacity"/></div>
                 <div class="slider-row"><div class="slider-label">Высота следа</div><input type="range" id="sl-tr-height" min="0" max="100" step="1" value="71"/><div class="slider-value" id="ro-tr-height"/></div>
                 <div class="slider-row"><div class="slider-label">Время жизни следа</div><input type="range" id="sl-tr-life" min="0" max="100" step="1" value="40"/><div class="slider-value" id="ro-tr-life"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-tr-r" min="0" max="100" step="1" value="8"/><div class="slider-value" id="ro-tr-r"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-tr-g" min="0" max="100" step="1" value="86"/><div class="slider-value" id="ro-tr-g"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-tr-b" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-tr-b"/></div>
             </div>
         </div>
         <div class="sec" id="sec-jr">
@@ -7396,14 +7617,11 @@ static const char kMenuRml[] = R"RML(
                 <span class="sec-fold"><span class="f-plus">+</span><span class="f-minus">-</span></span>
             </div>
             <div class="sec-body">
-                                <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="check" id="sw-jr-rainbow"><span class="ck"/></button></div>
-                <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-jr-rainbow" min="0" max="100" step="1" value="16"/><div class="slider-value" id="ro-jr-rainbow"/><div class="color-chip" id="chip-jr"/></div>
+                                <div class="slider-row"><div class="slider-label">Скорость градиента</div><input type="range" id="sl-jr-rainbow" min="0" max="100" step="1" value="16"/><div class="slider-value" id="ro-jr-rainbow"/></div>
+                <div class="slider-row"><div class="slider-label">Градиент</div><button class="cswatch" id="cw-jr-a"/><button class="cswatch" id="cw-jr-b"/></div>
                 <div class="slider-row"><div class="slider-label">Радиус</div><input type="range" id="sl-jr-radius" min="0" max="100" step="1" value="38"/><div class="slider-value" id="ro-jr-radius"/></div>
                 <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-jr-opacity" min="0" max="100" step="1" value="85"/><div class="slider-value" id="ro-jr-opacity"/></div>
                 <div class="slider-row"><div class="slider-label">Длительность</div><input type="range" id="sl-jr-duration" min="0" max="100" step="1" value="26"/><div class="slider-value" id="ro-jr-duration"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-jr-r" min="0" max="100" step="1" value="20"/><div class="slider-value" id="ro-jr-r"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-jr-g" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-jr-g"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-jr-b" min="0" max="100" step="1" value="42"/><div class="slider-value" id="ro-jr-b"/></div>
             </div>
         </div>
         <div class="sec" id="sec-hit">
@@ -7423,13 +7641,9 @@ static const char kMenuRml[] = R"RML(
                 <div class="slider-row"><div class="slider-label">Колец удара</div><input type="range" id="sl-hit-rings" min="0" max="100" step="1" value="60"/><div class="slider-value" id="ro-hit-rings"/></div>
                 <div class="slider-row"><div class="slider-label">Размер колец</div><input type="range" id="sl-hit-ringsize" min="0" max="100" step="1" value="38"/><div class="slider-value" id="ro-hit-ringsize"/></div>
                 <div class="slider-row"><div class="slider-label">Время колец</div><input type="range" id="sl-hit-ringlife" min="0" max="100" step="1" value="35"/><div class="slider-value" id="ro-hit-ringlife"/></div>
-                <div class="slider-row"><div class="slider-label">Скорость перелива</div><input type="range" id="sl-hit-cycle" min="0" max="100" step="1" value="29"/><div class="slider-value" id="ro-hit-cycle"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет A: красный</div><input type="range" id="sl-hit-ar" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-hit-ar"/><div class="color-chip" id="chip-hita"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет A: зелёный</div><input type="range" id="sl-hit-ag" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-hit-ag"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет A: синий</div><input type="range" id="sl-hit-ab" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-hit-ab"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет B: красный</div><input type="range" id="sl-hit-br" min="0" max="100" step="1" value="100"/><div class="slider-value" id="ro-hit-br"/><div class="color-chip" id="chip-hitb"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет B: зелёный</div><input type="range" id="sl-hit-bg" min="0" max="100" step="1" value="15"/><div class="slider-value" id="ro-hit-bg"/></div>
-                <div class="slider-row"><div class="slider-label">Цвет B: синий</div><input type="range" id="sl-hit-bb" min="0" max="100" step="1" value="10"/><div class="slider-value" id="ro-hit-bb"/></div>
+                <div class="slider-row"><div class="slider-label">Скорость градиента</div><input type="range" id="sl-hit-cycle" min="0" max="100" step="1" value="29"/><div class="slider-value" id="ro-hit-cycle"/></div>
+                <div class="slider-row"><div class="slider-label">Градиент</div><button class="cswatch" id="cw-hit-a"/><button class="cswatch" id="cw-hit-b"/></div>
+                <div id="tt-hitdiag"> </div>
             </div>
         </div>
         <div class="sec" id="sec-kt">
@@ -7455,6 +7669,7 @@ static const char kMenuRml[] = R"RML(
         <div class="foot">v1.4</div>
     </div>
 </div>
+<div id="cpalette"/>
 </body>
 </rml>
 )RML";
@@ -8091,6 +8306,20 @@ int main() {
  auto first=animated(true,true,custom,.5f,0), second=animated(true,true,custom,.5f,1000);
  assert(first!=second && first==animated(true,true,custom,.5f,2000));
  for (std::uint64_t t=0;t<10000;t+=83) for (float x:animated(true,true,custom,.15f,t)) assert(std::isfinite(x) && x>=0.f && x<=1.f);
+ // v11: the two-color gradient. Phase 0 is pure A, 0.5 is pure B, 1 wraps
+ // back to A; every phase stays inside the A..B box and the cycle repeats.
+ std::array<float,3> a{{.1f,.2f,.3f}}, b{{.9f,.8f,.7f}};
+ auto at0=gradient(a,b,0.f);  assert(at0[0]==a[0] && at0[1]==a[1] && at0[2]==a[2] && at0[3]==1.f);
+ auto half=gradient(a,b,.5f); assert(half[0]==b[0] && half[1]==b[1] && half[2]==b[2]);
+ auto wrap=gradient(a,b,1.f); assert(wrap[0]==a[0] && wrap[1]==a[1] && wrap[2]==a[2]);
+ auto quarter=gradient(a,b,.25f);
+ for (int i=0;i<3;++i) assert(quarter[i]>=a[i]-1e-6f && quarter[i]<=b[i]+1e-6f);
+ assert(quarter[0]>a[0] && quarter[0]<b[0]);
+ for (int i=0;i<=40;++i) {
+  auto c=gradient(a,b,i*.137f);
+  for (float x:c) assert(std::isfinite(x) && x>=0.f && x<=1.f);
+ }
+ assert(gradient(a,b,.0f)==gradient(a,b,2.f));  // periodic
 }
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/visual_color.cpp
@@ -8693,7 +8922,11 @@ assert u.index('if (hudHookCreated) {') > u.index('mhApply())')
 for name in ('HatOpacity','TrailOpacity'):
     assert 'VisualParam::'+name in n and 'VisualParam::'+name in u and name in settings
 assert 'vertexGradient{false}' in n and 'Vertex gradient (test)' in u
-assert 'visual_gradient::trail(' in n and 'visual_gradient::phase(' in n
+assert 'visual_gradient::phase(' in n  # wireframe helix phase, unchanged
+# v11: the trail vertices now mix the two gradient colors instead of the old
+# experimental vertex-gradient helper.
+assert 'visual_gradient::trail(' not in n
+assert 'param(VisualParam::Trail2Red)' in n and 'param(VisualParam::Trail2Green)' in n
 assert 'sampleOutputMerger(depthWorld)' in n and 'sampleOutputMerger(depthBefore)' in n and 'sampleOutputMerger(depthAfter)' in n
 assert 'OMGetDepthStencilState' in n and 'OMGetBlendState' in n
 assert 'OMSetDepthStencilState' not in n and 'OMSetBlendState' not in n
@@ -8828,7 +9061,7 @@ assert 'OMSetDepthStencilState' not in n  # scoped guard owns and restores GPU s
 assert 'trailGeneration' in n and 'trail.clear()' in n
 assert 'tessBegin(t,4,segments*2)' in n
 hat=n[n.index('void renderHat(const PlayerFrame& player) {'):n.index('void renderTrail(const PlayerFrame& player) {')]
-assert 'visual_color::animated(materialTint.load' in hat and 'hatRainbow.load' in hat
+assert 'visual_color::gradient(' in hat and 'Hat2Red' in hat and 'visual_color::animated' not in hat
 assert 'Enable colors' in u and 'materialTint{true}' in n
 assert 'Filled hat (test)' in u and 'Filled trail (test)' in u
 assert 'hatFill{true}, trailFill{true}' in n
@@ -8843,7 +9076,7 @@ for symbol in ('_ZN5ImGui11BeginTabBarEPKci','_ZN5ImGui9EndTabBarEv',
     assert symbol in u and symbol.encode() in (r.parent/'GAYClientInternal.dll').read_bytes(), symbol
 assert 'drawVisualEditor(); return;' in u and 'drawEffectPreview(current)' in u
 trail=n[n.index('void renderTrail(const PlayerFrame& player) {'):n.index('void screenHook(')]
-assert 'visual_color::animated(materialTint.load' in trail and 'trailRainbow.load' in trail
+assert 'visual_color::gradient(' in trail and 'Trail2Red' in trail and 'visual_color::animated' not in trail
 assert 'saved,sizeof(saved)' in hat and 'saved,sizeof(saved)' in trail
 assert 'constexpr int segments=48, spokes=12' in hat
 assert 'tessBegin(t,4,2*(segments+spokes))' in hat and 'china_hat::emitWireframe' in hat
@@ -18140,11 +18373,17 @@ assert 'hitFxEnabled.load(std::memory_order_acquire) || hitFxEnabled' in n or \
        'katanaEnabled.load(std::memory_order_acquire) || hitFxEnabled.load(std::memory_order_acquire)) && !local.valid' in n
 assert 'bool anyVisual()' in n and 'hitFxEnabled.load(std::memory_order_acquire); }' in n
 
-# 3. The trigger: rising edge of the left button, suppressed while UI is open.
-assert 'GetAsyncKeyState(VK_LBUTTON)&0x8000' in n
-assert 'clicked=down&&!hitPrevDown' in n
-assert 'hitFxUiActive.load(std::memory_order_acquire)' in n
+# 3. The v11 trigger: the click is detected on the UI thread (compat draw())
+# through the verified UWP key bridge and forwarded as an atomic burst
+# request; the render thread only drains it. GetAsyncKeyState never fired
+# on the render thread in this UWP game, so v10 showed no effect.
+assert 'GetAsyncKeyState' not in n and 'VK_LBUTTON' not in n
+assert 'hitFxUiActive' not in n and 'hitPrevDown' not in n
+assert 'hitBurstRequests.exchange(0' in n
+assert 'hitBurstTotal.fetch_add(1' in n
 assert 'now-hitLastBurst>=120' in n
+assert 'if (hitDown && !hitPrevDown && !menuOpen) RequestHitBurst();' in u
+assert 'keyDown(VK_LBUTTON)' in u
 # aimed along the verified look rotation at the configured reach
 assert 'katana_rotation::readRotation' in n
 assert 'eye.x+dir.x*config.reach' in n
@@ -18160,24 +18399,32 @@ assert 'hit_fx::glowQuad(rel,right,up,size' in n and 'hit_fx::star(rel,right,up,
 assert 'hit_fx::annulus(rel,r.right,r.up,radius,width' in n
 assert 'hit_fx::basisFromLook' in n
 
-# 5. Public API + UI suppression flag.
-assert 'bool HitFxEnabled();' in (r/'src/china_hat_native.h').read_text(encoding='utf-8')
-assert 'void SetHitFxUiActive(bool active);' in (r/'src/china_hat_native.h').read_text(encoding='utf-8')
-assert 'SetHitFxUiActive(menuOpen)' in u
+# 5. Public API: burst request + diagnostics counters.
+_hh = (r/'src/china_hat_native.h').read_text(encoding='utf-8')
+assert 'bool HitFxEnabled();' in _hh
+assert 'void RequestHitBurst();' in _hh
+assert 'unsigned HitFxBursts();' in _hh and 'unsigned HitFxLive();' in _hh
+assert 'SetHitFxUiActive' not in _hh and 'SetHitFxUiActive' not in u
 
-# 6. Menu wiring: master switch + 16 sliders + two color chips.
+# 6. Menu wiring: master switch + 10 sliders + two gradient wells + the
+# diagnostics line.
 assert '{"sw-gfx-hit", SwKind::HitFx, 0}' in m
 assert 'case SwKind::HitFx: return HitFxEnabled();' in m
 assert 'case SwKind::HitFx: SetHitFxEnabled(on); break;' in m
-assert m.count('{"sl-hit-') == 16
-assert '{"chip-hita", VisualParam::HitARed' in m and '{"chip-hitb", VisualParam::HitBRed' in m
+assert m.count('{"sl-hit-') == 10
+assert '{"cw-hit-a", VisualParam::HitARed' in m and '{"cw-hit-b", VisualParam::HitBRed' in m
+assert 'HitFxBursts(), HitFxLive()' in m
+assert 'id="tt-hitdiag"' in (r/'src/menu_rml_data.h').read_text(encoding='utf-8')
 assert 'id="sec-hit"' in d and '<span class="sec-title">УДАРЫ</span>' in d
-assert d.count('id="sl-hit-') == 16
+assert d.count('id="sl-hit-') == 10
 
-# 7. Parameters: 16 new ones with specs, appended after the katana block.
+# 7. Parameters: 16 hit ones plus the v11 second gradient colors, appended
+# after the katana block.
 for name in ('HitCount, HitSize, HitSpeed, HitLife, HitGravity, HitReach,',
              'HitRingCount, HitRingSize, HitRingLife, HitCycleSpeed,',
-             'HitARed, HitAGreen, HitABlue, HitBRed, HitBGreen, HitBBlue, Count'):
+             'HitARed, HitAGreen, HitABlue, HitBRed, HitBGreen, HitBBlue,',
+             ' Hat2Red, Hat2Green, Hat2Blue, Trail2Red, Trail2Green, Trail2Blue,',
+             ' Jump2Red, Jump2Green, Jump2Blue, Count'):
     assert name in vs, name
 
 # 8. The pure module has a compiled unit test.

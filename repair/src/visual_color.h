@@ -12,6 +12,13 @@ inline std::array<float,4> material(bool enabled,Effect effect) {
 }
 // Animate the whole material color; 1.1.5's active material did not honor our
 // per-vertex gradient in the user's test. Never imply per-vertex rainbow.
+// Two-color gradient: the effect breathes between baseA and baseB; phase is
+// in cycles (0 -> A, 0.5 -> B, 1 -> A again).
+inline std::array<float,4> gradient(std::array<float,3> baseA,std::array<float,3> baseB,float phase) {
+ float w=0.5f-0.5f*std::cos(6.28318530718f*phase);
+ return {{baseA[0]+(baseB[0]-baseA[0])*w,baseA[1]+(baseB[1]-baseA[1])*w,
+          baseA[2]+(baseB[2]-baseA[2])*w,1.f}};
+}
 inline std::array<float,4> animated(bool enabled,bool rainbow,std::array<float,3> base,float cyclesPerSecond,std::uint64_t ms) {
  if (!enabled) return {{1.f,1.f,1.f,1.f}};
  if (!rainbow) return {{base[0],base[1],base[2],1.f}};
