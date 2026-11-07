@@ -27,7 +27,7 @@ constexpr VisualParamSpec visualParamSpecs[] = {
  {1.f,.5f,2.f},{0.f,-.20f,.50f},{1.f,0.f,1.f},
  {1.f,0.f,1.f},{.76f,0.f,1.f},{.14f,0.f,1.f},
  {.052f,.020f,.100f},{1.0f,.20f,1.55f},{.32f,0.f,.80f},
- {1.30f,.60f,1.80f},{.10f,-.50f,1.00f},{1.f,.30f,1.f},
+ {1.30f,.60f,1.80f},{.10f,-.50f,1.00f},{1.f,0.f,1.f},
  {.34f,0.f,.80f},{.30f,-.30f,1.00f}
 };
 static_assert(sizeof(visualParamSpecs)/sizeof(visualParamSpecs[0])==static_cast<std::size_t>(VisualParam::Count),"visual parameters mismatch");

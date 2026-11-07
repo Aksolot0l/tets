@@ -362,74 +362,63 @@ void applySwitch(const SwitchDef& def, bool on) {
 // Slider registry: every <input type="range"> in both documents.
 // ---------------------------------------------------------------------------
 
-enum class SlScale {
-    Direct,          // DOM value == parameter value
-    Percent,         // DOM 0..100 -> parameter 0..1
-    RainbowPercent   // DOM 0..100 -> parameter 0.03..0.8
-};
-
 struct SliderDef {
     const char* id;       // DOM id of the <input type="range">
     VisualParam param;    // adapter visual parameter
-    SlScale scale;
     const char* fmt;      // readout printf format
 };
 
 const SliderDef kSliders[] = {
     // China hat (graphics tab).
-    {"sl-ch-rainbow", VisualParam::HatRainbowSpeed, SlScale::RainbowPercent, "%.0f%%"},
-    {"sl-ch-opacity", VisualParam::HatOpacity, SlScale::Percent, "%.0f%%"},
-    {"sl-ch-radius", VisualParam::HatRadius, SlScale::Direct, "%.2f"},
-    {"sl-ch-height", VisualParam::HatConeHeight, SlScale::Direct, "%.2f"},
-    {"sl-ch-offset", VisualParam::HatOffset, SlScale::Direct, "%.2f"},
-    {"sl-ch-amp", VisualParam::HatBobAmplitude, SlScale::Direct, "%.2f"},
-    {"sl-ch-floatspeed", VisualParam::HatBobSpeed, SlScale::Direct, "%.2f"},
-    {"sl-ch-r", VisualParam::HatRed, SlScale::Direct, "%.2f"},
-    {"sl-ch-g", VisualParam::HatGreen, SlScale::Direct, "%.2f"},
-    {"sl-ch-b", VisualParam::HatBlue, SlScale::Direct, "%.2f"},
+    {"sl-ch-rainbow", VisualParam::HatRainbowSpeed, "%.0f%%"},
+    {"sl-ch-opacity", VisualParam::HatOpacity, "%.0f%%"},
+    {"sl-ch-radius", VisualParam::HatRadius, "%.0f%%"},
+    {"sl-ch-height", VisualParam::HatConeHeight, "%.0f%%"},
+    {"sl-ch-offset", VisualParam::HatOffset, "%.0f%%"},
+    {"sl-ch-amp", VisualParam::HatBobAmplitude, "%.0f%%"},
+    {"sl-ch-floatspeed", VisualParam::HatBobSpeed, "%.0f%%"},
+    {"sl-ch-r", VisualParam::HatRed, "%.0f%%"},
+    {"sl-ch-g", VisualParam::HatGreen, "%.0f%%"},
+    {"sl-ch-b", VisualParam::HatBlue, "%.0f%%"},
     // Trail.
-    {"sl-tr-rainbow", VisualParam::TrailRainbowSpeed, SlScale::RainbowPercent, "%.0f%%"},
-    {"sl-tr-opacity", VisualParam::TrailOpacity, SlScale::Percent, "%.0f%%"},
-    {"sl-tr-height", VisualParam::TrailHeight, SlScale::Direct, "%.2f"},
-    {"sl-tr-life", VisualParam::TrailSeconds, SlScale::Direct, "%.2f"},
-    {"sl-tr-r", VisualParam::TrailRed, SlScale::Direct, "%.2f"},
-    {"sl-tr-g", VisualParam::TrailGreen, SlScale::Direct, "%.2f"},
-    {"sl-tr-b", VisualParam::TrailBlue, SlScale::Direct, "%.2f"},
+    {"sl-tr-rainbow", VisualParam::TrailRainbowSpeed, "%.0f%%"},
+    {"sl-tr-opacity", VisualParam::TrailOpacity, "%.0f%%"},
+    {"sl-tr-height", VisualParam::TrailHeight, "%.0f%%"},
+    {"sl-tr-life", VisualParam::TrailSeconds, "%.0f%%"},
+    {"sl-tr-r", VisualParam::TrailRed, "%.0f%%"},
+    {"sl-tr-g", VisualParam::TrailGreen, "%.0f%%"},
+    {"sl-tr-b", VisualParam::TrailBlue, "%.0f%%"},
     // Jump rings.
-    {"sl-jr-rainbow", VisualParam::JumpRainbowSpeed, SlScale::RainbowPercent, "%.0f%%"},
-    {"sl-jr-opacity", VisualParam::JumpOpacity, SlScale::Percent, "%.0f%%"},
-    {"sl-jr-radius", VisualParam::JumpRadius, SlScale::Direct, "%.2f"},
-    {"sl-jr-duration", VisualParam::JumpSeconds, SlScale::Direct, "%.2f"},
-    {"sl-jr-r", VisualParam::JumpRed, SlScale::Direct, "%.2f"},
-    {"sl-jr-g", VisualParam::JumpGreen, SlScale::Direct, "%.2f"},
-    {"sl-jr-b", VisualParam::JumpBlue, SlScale::Direct, "%.2f"},
+    {"sl-jr-rainbow", VisualParam::JumpRainbowSpeed, "%.0f%%"},
+    {"sl-jr-opacity", VisualParam::JumpOpacity, "%.0f%%"},
+    {"sl-jr-radius", VisualParam::JumpRadius, "%.0f%%"},
+    {"sl-jr-duration", VisualParam::JumpSeconds, "%.0f%%"},
+    {"sl-jr-r", VisualParam::JumpRed, "%.0f%%"},
+    {"sl-jr-g", VisualParam::JumpGreen, "%.0f%%"},
+    {"sl-jr-b", VisualParam::JumpBlue, "%.0f%%"},
     // Katana (graphics tab).
-    {"sl-kt-scale", VisualParam::KatanaScale, SlScale::Direct, "%.2f"},
-    {"sl-kt-tilt", VisualParam::KatanaTilt, SlScale::Direct, "%.2f"},
-    {"sl-kt-side", VisualParam::KatanaSide, SlScale::Direct, "%.2f"},
-    {"sl-kt-height", VisualParam::KatanaHeight, SlScale::Direct, "%.2f"},
-    {"sl-kt-forward", VisualParam::KatanaForward, SlScale::Direct, "%.2f"},
-    {"sl-kt-opacity", VisualParam::KatanaOpacity, SlScale::Percent, "%.0f%%"},
-    {"sl-kt-fpside", VisualParam::KatanaFirstSide, SlScale::Direct, "%.2f"},
-    {"sl-kt-fpforward", VisualParam::KatanaFirstForward, SlScale::Direct, "%.2f"},
+    {"sl-kt-scale", VisualParam::KatanaScale, "%.0f%%"},
+    {"sl-kt-tilt", VisualParam::KatanaTilt, "%.0f%%"},
+    {"sl-kt-side", VisualParam::KatanaSide, "%.0f%%"},
+    {"sl-kt-height", VisualParam::KatanaHeight, "%.0f%%"},
+    {"sl-kt-forward", VisualParam::KatanaForward, "%.0f%%"},
+    {"sl-kt-opacity", VisualParam::KatanaOpacity, "%.0f%%"},
+    {"sl-kt-fpside", VisualParam::KatanaFirstSide, "%.0f%%"},
+    {"sl-kt-fpforward", VisualParam::KatanaFirstForward, "%.0f%%"},
 };
 
+// One uniform percent scale for every slider: the DOM value is 0..100 and
+// maps linearly onto the parameter's spec range, so 0% is always the spec
+// minimum and 100% always the spec maximum. The user sees percentages
+// everywhere and both track ends are always reachable.
 float domFromParam(const SliderDef& def, float param) {
-    switch (def.scale) {
-        case SlScale::Direct: return param;
-        case SlScale::Percent: return clamp01(param) * 100.0f;
-        case SlScale::RainbowPercent: return rangeToPercent(param, 0.03f, 0.80f);
-    }
-    return param;
+    const auto& spec = visualParamSpecs[static_cast<std::size_t>(def.param)];
+    return rangeToPercent(param, spec.low, spec.high);
 }
 
 float paramFromDom(const SliderDef& def, float dom) {
-    switch (def.scale) {
-        case SlScale::Direct: return dom;
-        case SlScale::Percent: return clamp01(dom / 100.0f);
-        case SlScale::RainbowPercent: return percentToRange(dom, 0.03f, 0.80f);
-    }
-    return dom;
+    const auto& spec = visualParamSpecs[static_cast<std::size_t>(def.param)];
+    return percentToRange(dom, spec.low, spec.high);
 }
 
 const SliderDef* findSlider(const Rml::String& id) {
@@ -469,12 +458,24 @@ public:
     explicit SliderChangeListener(const SliderDef* def) : m_def(def) {}
 
     void ProcessEvent(Rml::Event& event) override {
+        if (!m_def) return;
+        // The widget dispatches "change" BEFORE it stores the new value into
+        // the "value" attribute, so the attribute is still the previous step
+        // when this runs. Reading it made syncSliders write the stale value
+        // back every frame: the knob rubber-banded during drags and released
+        // one step short of the track end (100% was unreachable). The event
+        // parameter carries the actual new value.
+        const Rml::Dictionary& parameters = event.GetParameters();
+        const auto it = parameters.find("value");
+        if (it != parameters.end()) {
+            SetVisualParam(m_def->param, paramFromDom(*m_def, it->second.Get<float>()));
+            return;
+        }
         Rml::Element* element = event.GetCurrentElement();
-        if (!element || !m_def) return;
+        if (!element) return;
         const Rml::Variant* value = element->GetAttribute("value");
         if (!value) return;
-        const float dom = value->Get<float>();
-        SetVisualParam(m_def->param, paramFromDom(*m_def, dom));
+        SetVisualParam(m_def->param, paramFromDom(*m_def, value->Get<float>()));
     }
 
 private:
@@ -822,30 +823,16 @@ bool buildRegistry() {
         g_switchElems.push_back(item);
     }
 
-    // Slider ranges must mirror the adapter's parameter specs exactly. The
-    // DOM value is written back every frame (syncSliders), so any mismatch
-    // between the slider range and the sanitized parameter range makes the
-    // knob snap back mid-drag: the "dead sliders" bug. The markup carries
-    // the same numbers; this enforces them from the single source of truth.
+    // Every slider is a plain 0..100 percent track (step 1); the mapping to
+    // the parameter's spec range lives in domFromParam/paramFromDom. The
+    // markup carries the same numbers; this enforces them from the single
+    // source of truth so a stale markup range can never fight the mapping.
     for (const SliderDef& def : kSliders) {
         Rml::Element* input = g_menuDoc->GetElementById(def.id);
         if (!input) continue;
-        const auto& spec = visualParamSpecs[static_cast<std::size_t>(def.param)];
-        if (def.scale == SlScale::Direct) {
-            input->SetAttribute("min", spec.low);
-            input->SetAttribute("max", spec.high);
-            input->SetAttribute("step", (spec.high - spec.low) / 100.0f);
-        } else if (def.scale == SlScale::Percent) {
-            // Percent params live on the spec's 0..1 range; the katana
-            // opacity for example cannot go below 0.30.
-            input->SetAttribute("min", spec.low * 100.0f);
-            input->SetAttribute("max", spec.high * 100.0f);
-            input->SetAttribute("step", 1.0f);
-        } else {
-            input->SetAttribute("min", 0.0f);
-            input->SetAttribute("max", 100.0f);
-            input->SetAttribute("step", 1.0f);
-        }
+        input->SetAttribute("min", 0.0f);
+        input->SetAttribute("max", 100.0f);
+        input->SetAttribute("step", 1.0f);
     }
 
     for (const SliderDef& def : kSliders) {

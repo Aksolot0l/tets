@@ -77,15 +77,18 @@ assert 'SetAccessoryEnabled' not in m
 assert 'SetHatFillEnabled(on)' in m and 'SetHatRainbowEnabled(on)' in m
 assert 'SetTrailFillEnabled(on)' in m and 'SetTrailRainbowEnabled(on)' in m
 assert 'SetJumpRainbowEnabled(on)' in m
-assert 'SetVisualParam(m_def->param, paramFromDom(*m_def, dom));' in m
-assert 'percentToRange(dom, 0.03f, 0.80f)' in m
-# v8: slider ranges are enforced from the parameter specs, otherwise the
-# per-frame write-back snaps the knob back mid-drag (dead sliders).
-assert 'const auto& spec = visualParamSpecs[static_cast<std::size_t>(def.param)];' in m
-assert 'input->SetAttribute("min", spec.low);' in m
-assert 'input->SetAttribute("max", spec.high);' in m
-assert 'input->SetAttribute("min", spec.low * 100.0f);' in m
-assert 'input->SetAttribute("step", (spec.high - spec.low) / 100.0f);' in m
+# v9: the change listener must read the event parameter - the widget updates
+# the "value" attribute only after dispatching "change", so the attribute is
+# one step stale inside the listener (the rubber-band bug).
+assert 'const Rml::Dictionary& parameters = event.GetParameters();' in m
+assert 'parameters.find("value")' in m
+assert 'SetVisualParam(m_def->param, paramFromDom(*m_def, it->second.Get<float>()));' in m
+assert 'percentToRange(dom, spec.low, spec.high)' in m
+assert 'rangeToPercent(param, spec.low, spec.high)' in m
+# v9: every slider is a plain 0..100 percent track in the DOM.
+assert 'input->SetAttribute("min", 0.0f);' in m
+assert 'input->SetAttribute("max", 100.0f);' in m
+assert 'input->SetAttribute("step", 1.0f);' in m
 
 # 7. The DOM registry covers every interactive element.
 for switch_id in ('sw-fps', 'sw-cps', 'sw-clock', 'sw-keys', 'sw-watermark',
@@ -239,10 +242,10 @@ assert 'Включить' not in d  # the duplicate enable rows are gone from bo
 # v8 markup ranges mirror the adapter parameter specs (the enforcement in
 # menu_rml.cpp keeps them honest at runtime; these are the previously
 # broken ones)
-assert 'id="sl-ch-radius" min="0.3" max="1"' in d
-assert 'id="sl-kt-scale" min="0.02" max="0.1"' in d
-assert 'id="sl-kt-opacity" min="30" max="100"' in d
-assert 'id="sl-ch-offset" min="-0.2" max="0.4"' in d
+assert 'id="sl-ch-radius" min="0" max="100" step="1"' in d
+assert 'id="sl-kt-scale" min="0" max="100" step="1"' in d
+assert 'id="sl-kt-opacity" min="0" max="100" step="1"' in d
+assert 'id="sl-ch-offset" min="0" max="100" step="1"' in d
 # no icon machinery, no section count captions
 for gone in ('.m-ico', '.ip ', 'class="ip', '.sec-count', 'body.anim'):
     assert gone not in d, gone
@@ -323,11 +326,12 @@ assert '*(reinterpret_cast<unsigned char*>(runtime)+0x551)=0;' in u
 # plain ASCII punctuation in the compat captions too
 assert 'перетаскивай элементы мышкой - Esc - выход' in u
 
-# v8.1: the slider registry, the parameter specs and the markup must agree
-# on every slider's range. The katana opacity registry entry shipped as
-# Direct while the markup and the harness said Percent (30..100): the knob
-# worked, but the readout showed a raw "0.65" instead of "65%". This sweep
-# cross-checks all three tables so the class of bug cannot come back.
+# v9: one uniform percent scale (0..100) for every slider, and the change
+# listener must read the event parameter. The widget stores the new value
+# into the "value" attribute only AFTER dispatching "change"; reading the
+# attribute in the listener made the per-frame sync write the stale value
+# back, so the knob rubber-banded during drags and released one step short
+# of the track end (100% was unreachable, drags felt torn and laggy).
 import re as _re
 vs = (r/'src/visual_settings.h').read_text(encoding='utf-8')
 _names = [n.strip() for n in _re.search(
@@ -338,25 +342,33 @@ _trips = _re.findall(
     _re.search(r'visualParamSpecs\[\]\s*=\s*\{(.*?)\};', vs, _re.S).group(1))
 assert len(_names) == len(_trips) == 38, (len(_names), len(_trips))
 _specs = {n: (float(lo), float(hi)) for n, (v, lo, hi) in zip(_names, _trips)}
+# the katana opacity floor is gone: 0% is a real zero
+assert _specs['KatanaOpacity'][0] == 0.0, _specs['KatanaOpacity']
 _reg = {}
 for _m in _re.finditer(
-        r'\{"(sl-[\w-]+)",\s*VisualParam::(\w+),\s*SlScale::(\w+)(?:,\s*"([^"]*)")?\}', m):
-    _reg[_m.group(1)] = (_m.group(2), _m.group(3), _m.group(4) or '')
+        r'\{"(sl-[\w-]+)",\s*VisualParam::(\w+),\s*"([^"]*)"\}', m):
+    _reg[_m.group(1)] = (_m.group(2), _m.group(3))
 assert len(_reg) == 32, len(_reg)
-_markup = {mid: (float(lo), float(hi)) for mid, lo, hi in _re.findall(
-    r'id="(sl-[\w-]+)" min="([\d.\-]+)" max="([\d.\-]+)"', d)}
-assert set(_markup) == set(_reg), set(_markup) ^ set(_reg)
-for _id, (_param, _scale, _fmt) in _reg.items():
-    _lo, _hi = _specs[_param]
-    if _scale == 'Percent':
-        _lo, _hi = _lo * 100.0, _hi * 100.0
-        assert _fmt == '%.0f%%', (_id, _fmt)
-    elif _scale == 'RainbowPercent':
-        _lo, _hi = 0.0, 100.0
-    _mlo, _mhi = _markup[_id]
-    # 0.30f*100 = 30.000001: compare with a tolerance, never for equality
-    assert abs(_mlo - _lo) <= 0.011 and abs(_mhi - _hi) <= 0.011, \
-        f'{_id}: markup {_mlo}..{_mhi} vs {_scale} {_lo:.2f}..{_hi:.2f}'
-assert _reg['sl-kt-opacity'] == ('KatanaOpacity', 'Percent', '%.0f%%')
+for _id, (_param, _fmt) in _reg.items():
+    assert _param in _specs, _id
+    assert _fmt == '%.0f%%', (_id, _fmt)
+_rows = {mid: (float(mn), float(mx), float(st), float(va)) for mid, mn, mx, st, va in _re.findall(
+    r'id="(sl-[\w-]+)" min="([\d.\-]+)" max="([\d.\-]+)" step="([\d.\-]+)" value="([\d.\-]+)"', d)}
+assert set(_rows) == set(_reg), set(_rows) ^ set(_reg)
+for _id, (_mn, _mx, _st, _va) in _rows.items():
+    assert _mn == 0.0 and _mx == 100.0 and _st == 1.0, (_id, _mn, _mx, _st)
+    assert 0.0 <= _va <= 100.0, (_id, _va)
+    # the markup default must map back to the spec's default value
+    _param = _reg[_id][0]
+    _v, _lo, _hi = [float(x) for x in
+                    _re.findall(r'\{\s*([\d.\-]+)f?\s*,\s*([\d.\-]+)f?\s*,\s*([\d.\-]+)f?\s*\}',
+                                _re.search(r'visualParamSpecs\[\]\s*=\s*\{(.*?)\};', vs, _re.S).group(1))[_names.index(_param)]]
+    # an integer-percent default can sit half a param step from the spec default
+    assert abs(_lo + (_va / 100.0) * (_hi - _lo) - _v) < max(0.011, (_hi - _lo) / 200.0 + 1e-6), (_id, _va, _v)
+# the listener reads the event parameter, never the stale attribute
+assert 'event.GetParameters()' in m and 'parameters.find("value")' in m
+# uniform normalization in buildRegistry
+assert 'input->SetAttribute("min", 0.0f)' in m
+assert 'input->SetAttribute("step", 1.0f)' in m
 
 print('check_menu_rml: ok')
