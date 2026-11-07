@@ -17,6 +17,7 @@ expected = {
     'repair/GAYClientInternal.dll': 'GAYClientInternal.dll',
     'repair/ENABLE_ACCESS.cmd': 'ENABLE_ACCESS.cmd',
     'repair/RESTORE_ACCESS.cmd': 'RESTORE_ACCESS.cmd',
+    'index.html': 'web-menu.html',
 }
 files = manifest['files']
 assert len(files) == len(expected)
