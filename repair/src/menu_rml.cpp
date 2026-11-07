@@ -1,15 +1,11 @@
 #include "menu_rml.h"
 
-#include <winsock2.h>
-#include <ws2tcpip.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
-#include <deque>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -99,10 +95,61 @@ unsigned g_width = 0, g_height = 0;
 bool g_menuShown = false;
 
 // ---------------------------------------------------------------------------
-// Window manager state: the seven menu windows with their natural sizes and
+// Window manager state: the two menu windows with their natural sizes and
 // live geometry. Positions are owned here (never read back from the DOM), so
 // dragging and re-tiling cannot desync from what is rendered.
 // ---------------------------------------------------------------------------
+
+// UI zoom: the menu ships at a 1080p reference size; on small windows the
+// fonts and shapes read as pixel mush. Every px in the RCSS and every layout
+// constant below is multiplied by this factor at load time.
+float g_uiScale = 1.0f;
+// Screen-pixel strip reserved on the right for the compat layer's 3D preview
+// window (drawn by the game's ImGui pass, so it is NOT multiplied by
+// g_uiScale; it matches the ImGui window's pixel size).
+constexpr float kPreviewInsetPx = 356.0f;
+constexpr unsigned kAnimPeriod = 24;  // frames between icon animation states
+
+float computeUiScale(unsigned width, unsigned height) {
+    const float ref = std::fmax(static_cast<float>(height) / 1080.0f,
+                                 static_cast<float>(width) / 1920.0f);
+    const float scale = ref * 1.25f;
+    if (scale < 1.15f) return 1.15f;
+    if (scale > 2.0f) return 2.0f;
+    return scale;
+}
+
+// Multiply every `<number>px` in the RCSS by the UI scale. 0px stays 0px;
+// deg/percent values have no px unit and are left alone.
+std::string scaleRcssPx(const char* rcss, float scale) {
+    if (scale == 1.0f) return std::string(rcss);
+    std::string out;
+    out.reserve(std::strlen(rcss) + 1024);
+    const char* p = rcss;
+    const char* end = p + std::strlen(rcss);
+    while (p < end) {
+        // Match -?digits(.digits)? followed by 'px'.
+        const char* numberStart = p;
+        if (*p == '-' && p + 1 < end && *(p + 1) >= '0' && *(p + 1) <= '9') ++p;
+        while (p < end && *p >= '0' && *p <= '9') ++p;
+        if (p < end && *p == '.' && p + 1 < end && *(p + 1) >= '0' && *(p + 1) <= '9') {
+            ++p;
+            while (p < end && *p >= '0' && *p <= '9') ++p;
+        }
+        if (p + 1 < end && p[0] == 'p' && p[1] == 'x' && p > numberStart) {
+            const double value = std::atof(std::string(numberStart, p - numberStart).c_str());
+            char scaled[48];
+            std::snprintf(scaled, sizeof(scaled), "%.2fpx", value * static_cast<double>(scale));
+            out += scaled;
+            p += 2;
+        } else {
+            p = numberStart;
+            out += *p;
+            ++p;
+        }
+    }
+    return out;
+}
 
 struct WinDef {
     const char* id;
@@ -111,17 +158,14 @@ struct WinDef {
     float h;
 };
 
+// Natural (reference 1080p) sizes; multiplied by g_uiScale at init.
 const WinDef kWindows[] = {
     {"win-home",    "head-home",    300.0f, 750.0f},
-    {"win-visuals", "head-visuals", 300.0f, 390.0f},
-    {"win-ch",      "head-ch",      420.0f, 545.0f},
-    {"win-tr",      "head-tr",      420.0f, 435.0f},
-    {"win-jr",      "head-jr",      420.0f, 395.0f},
-    {"win-kt",      "head-kt",      420.0f, 430.0f},
-    {"win-cr",      "head-cr",      420.0f, 322.0f},
+    {"win-visuals", "head-visuals", 460.0f, 2100.0f},
 };
 constexpr int kWindowCount = static_cast<int>(sizeof(kWindows) / sizeof(kWindows[0]));
-constexpr float kFoldedHeight = 46.0f;  // title bar + borders
+constexpr float kFoldedHeightRef = 46.0f;  // title bar + borders (reference)
+float kFoldedHeight = kFoldedHeightRef;    // scaled at init
 
 struct WinState {
     Rml::Element* el = nullptr;
@@ -137,6 +181,12 @@ WinState g_win[kWindowCount];
 int g_zTop = 20;
 std::string g_ttStatusCache;
 std::string g_ttDiagCache;
+
+// 3D preview toggle (Visuals window) and the icon animation phase.
+std::atomic<bool> g_previewOn{true};
+Rml::Element* g_previewSwitch = nullptr;
+bool g_animOn = false;
+unsigned g_animFrame = 0;
 
 std::vector<char> g_fontNormal;
 std::vector<char> g_fontBold;
@@ -225,7 +275,7 @@ bool shadowModule(int moduleId) {
 // ---------------------------------------------------------------------------
 
 enum class SwKind {
-    AgModule, ChinaHat, Trail, Jump, Katana, Crown,
+    AgModule, ChinaHat, Trail, Jump, Katana,
     ChFill, ChRainbow, TrFill, TrRainbow, JrRainbow
 };
 
@@ -251,7 +301,6 @@ const SwitchDef kSwitches[] = {
     {"sw-trail", SwKind::Trail, 0},
     {"sw-jump", SwKind::Jump, 0},
     {"sw-katana", SwKind::Katana, 0},
-    {"sw-crown", SwKind::Crown, 0},
     // Graphics tab.
     {"sw-gfx-chinahat", SwKind::ChinaHat, 0},
     {"sw-gfx-trail", SwKind::Trail, 0},
@@ -261,10 +310,9 @@ const SwitchDef kSwitches[] = {
     {"sw-tr-fill", SwKind::TrFill, 0},
     {"sw-tr-rainbow", SwKind::TrRainbow, 0},
     {"sw-jr-rainbow", SwKind::JrRainbow, 0},
-    // Per-window master switches (the Visuals window has its own copies of
-    // the katana/crown toggles under different ids: ids must be unique).
+    // The Visuals window has its own copy of the katana toggle under a
+    // different id: ids must be unique.
     {"sw-kt-master", SwKind::Katana, 0},
-    {"sw-cr-master", SwKind::Crown, 0},
 };
 
 const SwitchDef* findSwitch(const Rml::String& id) {
@@ -280,7 +328,6 @@ bool readSwitch(const SwitchDef& def) {
         case SwKind::Trail: return TrailEnabled();
         case SwKind::Jump: return JumpEnabled();
         case SwKind::Katana: return KatanaEnabled();
-        case SwKind::Crown: return AccessoryEnabled();
         case SwKind::ChFill: return HatFillEnabled();
         case SwKind::ChRainbow: return HatRainbowEnabled();
         case SwKind::TrFill: return TrailFillEnabled();
@@ -297,7 +344,6 @@ void applySwitch(const SwitchDef& def, bool on) {
         case SwKind::Trail: SetTrailEnabled(on); break;
         case SwKind::Jump: SetJumpEnabled(on); break;
         case SwKind::Katana: SetKatanaEnabled(on); break;
-        case SwKind::Crown: SetAccessoryEnabled(on); break;
         case SwKind::ChFill: SetHatFillEnabled(on); break;
         case SwKind::ChRainbow: SetHatRainbowEnabled(on); break;
         case SwKind::TrFill: SetTrailFillEnabled(on); break;
@@ -360,13 +406,6 @@ const SliderDef kSliders[] = {
     {"sl-kt-opacity", VisualParam::KatanaOpacity, SlScale::Direct, "%.2f"},
     {"sl-kt-fpside", VisualParam::KatanaFirstSide, SlScale::Direct, "%.2f"},
     {"sl-kt-fpforward", VisualParam::KatanaFirstForward, SlScale::Direct, "%.2f"},
-    // Crown (graphics tab).
-    {"sl-cr-scale", VisualParam::AccessoryScale, SlScale::Direct, "%.2f"},
-    {"sl-cr-offset", VisualParam::AccessoryOffset, SlScale::Direct, "%.2f"},
-    {"sl-cr-opacity", VisualParam::AccessoryOpacity, SlScale::Direct, "%.2f"},
-    {"sl-cr-r", VisualParam::AccessoryRed, SlScale::Direct, "%.2f"},
-    {"sl-cr-g", VisualParam::AccessoryGreen, SlScale::Direct, "%.2f"},
-    {"sl-cr-b", VisualParam::AccessoryBlue, SlScale::Direct, "%.2f"},
 };
 
 float domFromParam(const SliderDef& def, float param) {
@@ -463,7 +502,8 @@ void focusWin(WinState& win) {
 // Tile the windows from the shared, harness-verified layout math. force
 // re-tilts everything (initial layout, "reset layout" button); otherwise
 // windows the user dragged keep their position and are only clamped back
-// into the viewport.
+// into the viewport. While the 3D preview is on, a strip on the right is
+// reserved for the compat layer's preview window.
 void layoutWindows(float viewW, float viewH, bool force) {
     // The document body carries the dim backdrop; it only paints over the
     // area its box covers, and with nothing but absolutely-positioned
@@ -472,6 +512,8 @@ void layoutWindows(float viewW, float viewH, bool force) {
         body->SetProperty("width", Rml::CreateString("%dpx", static_cast<int>(viewW + 0.5f)));
         body->SetProperty("height", Rml::CreateString("%dpx", static_cast<int>(viewH + 0.5f)));
     }
+    const float inset = g_previewOn.load(std::memory_order_relaxed) &&
+        viewW > kPreviewInsetPx * 2.0f ? kPreviewInsetPx : 0.0f;
     float natW[kWindowCount];
     float natH[kWindowCount];
     menu_layout::WindowRect rects[kWindowCount];
@@ -479,7 +521,7 @@ void layoutWindows(float viewW, float viewH, bool force) {
         natW[i] = g_win[i].w;
         natH[i] = g_win[i].h;
     }
-    menu_layout::computeMenuWindows(natW, natH, kWindowCount, viewW, viewH, rects);
+    menu_layout::computeMenuWindows(natW, natH, kWindowCount, viewW, viewH, rects, inset);
     for (int i = 0; i < kWindowCount; ++i) {
         WinState& win = g_win[i];
         if (!win.el) continue;
@@ -553,6 +595,20 @@ void MenuClickListener::ProcessEvent(Rml::Event& event) {
         g_hiddenByClose.store(true, std::memory_order_relaxed);
         return;
     }
+    if (id == "sw-preview") {
+        const bool on = !g_previewOn.load(std::memory_order_relaxed);
+        g_previewOn.store(on, std::memory_order_relaxed);
+        if (g_previewSwitch) g_previewSwitch->SetClass("on", on);
+        layoutWindows(static_cast<float>(g_width), static_cast<float>(g_height), false);
+        return;
+    }
+    if (id.size() >= 4 && id.compare(0, 4, "sec-") == 0) {
+        if (Rml::Element* section = g_menuDoc->GetElementById(id)) {
+            const bool folded = !section->IsClassSet("folded");
+            section->SetClass("folded", folded);
+        }
+        return;
+    }
     if (id.size() == 6 && id.compare(0, 5, "fold-") == 0 && id[5] >= '0' && id[5] <= '9') {
         const int index = id[5] - '0';
         if (index < kWindowCount && g_win[index].el) {
@@ -620,20 +676,24 @@ bool buildRegistry() {
     if (!g_menuDoc) return false;
     g_ttStatus = g_menuDoc->GetElementById("tt-status");
     g_ttDiag = g_menuDoc->GetElementById("tt-diag");
-    if (!g_ttStatus || !g_ttDiag) return false;
+    g_previewSwitch = g_menuDoc->GetElementById("sw-preview");
+    if (!g_ttStatus || !g_ttDiag || !g_previewSwitch) return false;
+    g_previewSwitch->SetClass("on", g_previewOn.load(std::memory_order_relaxed));
 
     g_menuDoc->AddEventListener("click", &g_clickListener);
 
     // Windows: geometry is applied by layoutWindows() right after init; the
-    // listeners carry focus, z-order and title-bar dragging.
+    // listeners carry focus, z-order and title-bar dragging. Natural sizes
+    // carry the UI scale so the RCSS zoom and the layout math agree.
+    kFoldedHeight = kFoldedHeightRef * g_uiScale;
     for (int i = 0; i < kWindowCount; ++i) {
         WinState& win = g_win[i];
         win.el = g_menuDoc->GetElementById(kWindows[i].id);
         win.head = g_menuDoc->GetElementById(kWindows[i].headId);
         if (!win.el || !win.head) return false;
-        win.w = kWindows[i].w;
-        win.h = kWindows[i].h;
-        win.shownH = kWindows[i].h;
+        win.w = kWindows[i].w * g_uiScale;
+        win.h = kWindows[i].h * g_uiScale;
+        win.shownH = win.h;
         win.el->SetProperty("z-index", Rml::CreateString("%d", 10 + i));
         g_winListeners.push_back(std::make_unique<WindowListener>(&win));
         WindowListener* listener = g_winListeners.back().get();
@@ -668,6 +728,8 @@ bool buildRegistry() {
 
 bool initBackend(ID3D11Device* device, unsigned width, unsigned height) {
     menuLog("init: begin, viewport %ux%u", width, height);
+    g_uiScale = computeUiScale(width, height);
+    menuLog("init: ui scale %.3f", g_uiScale);
     // Segoe UI covers Cyrillic and is present on every Windows install; the
     // buffers must outlive Rml::Shutdown, so they are file-scope vectors.
     if (!loadFontBuffer("C:/Windows/Fonts/segoeui.ttf", g_fontNormal)) {
@@ -716,7 +778,8 @@ bool initBackend(ID3D11Device* device, unsigned width, unsigned height) {
     }
     menuLog("init: font faces loaded");
 
-    g_menuDoc = loadDocumentWithStyle(g_rmlContext, kMenuRml, kMenuRcss, "gayclient-menu.rml");
+    const std::string scaledRcss = scaleRcssPx(kMenuRcss, g_uiScale);
+    g_menuDoc = loadDocumentWithStyle(g_rmlContext, kMenuRml, scaledRcss.c_str(), "gayclient-menu.rml");
     if (!g_menuDoc) {
         menuLog("init: FAILED, menu document did not parse");
         return false;
@@ -734,355 +797,6 @@ bool initBackend(ID3D11Device* device, unsigned width, unsigned height) {
     return true;
 }
 
-// ---------------------------------------------------------------------------
-// Web bridge: a minimal localhost WebSocket server (127.0.0.1:39731) that
-// lets the web replica of this menu (repair/menu-web, root index.html) drive
-// exactly the same verified setters the in-game menu uses. The socket thread
-// only parses frames and queues line commands; commands are applied on the
-// Present thread (the same thread the RmlUi menu runs on) and snapshots for
-// the client are built there too. Any failure to start the bridge is
-// non-fatal: the in-game menu keeps working exactly as before.
-//
-// Line protocol (UTF-8 text frames, '\n' terminated):
-//   client -> game:  "set <id> <value>"   (switch 0/1, slider DOM-scale value)
-//                    "state"              (request an immediate snapshot)
-//   game -> client:  "sw <id> <0|1>" and "sl <id> <value>" lines, one frame
-//                    per snapshot (frame boundary == snapshot boundary)
-// ---------------------------------------------------------------------------
-namespace bridge {
-
-constexpr unsigned short kPort = 39731;
-
-std::atomic<bool> g_started{false};
-std::atomic<bool> g_client{false};
-std::atomic<bool> g_forceSnapshot{false};
-std::mutex g_mutex;                                    // guards both queues
-std::deque<std::pair<Rml::String, float>> g_commands;  // web -> game
-std::deque<Rml::String> g_outbox;                      // game -> web
-int g_snapshotTimer = 0;
-
-void queueCommand(const Rml::String& id, float value) {
-    std::lock_guard<std::mutex> lock(g_mutex);
-    if (g_commands.size() < 256) g_commands.emplace_back(id, value);
-}
-
-void pushOutbox(const Rml::String& frame) {
-    std::lock_guard<std::mutex> lock(g_mutex);
-    if (g_outbox.size() < 16) g_outbox.push_back(frame);
-}
-
-bool sendAll(SOCKET s, const char* data, int len) {
-    int off = 0;
-    while (off < len) {
-        const int n = send(s, data + off, len - off, 0);
-        if (n <= 0) return false;
-        off += n;
-    }
-    return true;
-}
-
-bool sendTextFrame(SOCKET s, const Rml::String& text) {
-    const size_t len = text.size();
-    unsigned char header[10];
-    if (len < 126) {
-        header[0] = 0x81; header[1] = (unsigned char)len;
-        if (!sendAll(s, (const char*)header, 2)) return false;
-    } else if (len < 65536) {
-        header[0] = 0x81; header[1] = 126;
-        header[2] = (unsigned char)(len >> 8); header[3] = (unsigned char)len;
-        if (!sendAll(s, (const char*)header, 4)) return false;
-    } else {
-        header[0] = 0x81; header[1] = 127;
-        for (int i = 0; i < 8; ++i) header[2 + i] = (unsigned char)((unsigned long long)len >> (56 - 8 * i));
-        if (!sendAll(s, (const char*)header, 10)) return false;
-    }
-    return sendAll(s, text.data(), (int)len);
-}
-
-bool recvExact(SOCKET s, void* buf, int len) {
-    char* p = (char*)buf;
-    int left = len;
-    while (left > 0) {
-        const int n = recv(s, p, left, MSG_WAITALL);
-        if (n <= 0) return false;
-        p += n; left -= n;
-    }
-    return true;
-}
-
-void base64Encode(const unsigned char* data, int len, char out[32]) {
-    static const char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    int o = 0;
-    for (int i = 0; i < len; i += 3) {
-        const unsigned v = (unsigned)data[i] << 16 |
-                            (i + 1 < len ? (unsigned)data[i + 1] << 8 : 0) |
-                            (i + 2 < len ? (unsigned)data[i + 2] : 0);
-        out[o++] = kAlphabet[(v >> 18) & 63];
-        out[o++] = kAlphabet[(v >> 12) & 63];
-        out[o++] = i + 1 < len ? kAlphabet[(v >> 6) & 63] : '=';
-        out[o++] = i + 2 < len ? kAlphabet[v & 63] : '=';
-    }
-    out[o] = '\0';
-}
-
-// Self-contained SHA-1 (RFC 3174) for the WebSocket handshake: no CNG header
-// quirks, works in every environment the adapter is built for.
-struct Sha1State {
-    unsigned h[5] = {0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u, 0xC3D2E1F0u};
-
-    void process(const unsigned char block[64]) {
-        unsigned w[80];
-        for (int i = 0; i < 16; ++i)
-            w[i] = (unsigned)block[i * 4] << 24 | (unsigned)block[i * 4 + 1] << 16 |
-                   (unsigned)block[i * 4 + 2] << 8 | (unsigned)block[i * 4 + 3];
-        for (int i = 16; i < 80; ++i) {
-            const unsigned v = w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16];
-            w[i] = (v << 1) | (v >> 31);
-        }
-        unsigned a = h[0], b = h[1], c = h[2], d = h[3], e = h[4];
-        for (int i = 0; i < 80; ++i) {
-            unsigned f, k;
-            if (i < 20) { f = (b & c) | (~b & d); k = 0x5A827999u; }
-            else if (i < 40) { f = b ^ c ^ d; k = 0x6ED9EBA1u; }
-            else if (i < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8F1BBCDCu; }
-            else { f = b ^ c ^ d; k = 0xCA62C1D6u; }
-            const unsigned temp = ((a << 5) | (a >> 27)) + f + e + k + w[i];
-            e = d; d = c; c = (b << 30) | (b >> 2); b = a; a = temp;
-        }
-        h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e;
-    }
-};
-
-void sha1(const unsigned char* data, size_t len, unsigned char out[20]) {
-    Sha1State state;
-    size_t offset = 0;
-    while (len - offset >= 64) {
-        state.process(data + offset);
-        offset += 64;
-    }
-    unsigned char tail[128]{};
-    const size_t rest = len - offset;
-    memcpy(tail, data + offset, rest);
-    tail[rest] = 0x80;
-    unsigned char* lengthBlock = rest + 1 <= 56 ? tail : tail + 64;
-    const unsigned long long bits = (unsigned long long)len * 8;
-    for (int i = 0; i < 8; ++i)
-        lengthBlock[63 - i] = (unsigned char)(bits >> (8 * i));
-    state.process(tail);
-    if (lengthBlock == tail + 64) state.process(tail + 64);
-    for (int i = 0; i < 5; ++i) {
-        out[i * 4] = (unsigned char)(state.h[i] >> 24);
-        out[i * 4 + 1] = (unsigned char)(state.h[i] >> 16);
-        out[i * 4 + 2] = (unsigned char)(state.h[i] >> 8);
-        out[i * 4 + 3] = (unsigned char)state.h[i];
-    }
-}
-
-// RFC 6455 accept key: base64(SHA1(client-key + magic GUID)).
-bool computeAccept(const char* key, char out[64]) {
-    char cat[128]{};
-    _snprintf(cat, sizeof(cat), "%s258EAFA5-E914-47DA-95CA-C5AB0DC85B11", key);
-    unsigned char hash[20];
-    sha1((const unsigned char*)cat, strlen(cat), hash);
-    base64Encode(hash, sizeof(hash), out);
-    return true;
-}
-
-void serveClient(SOCKET s) {
-    // 1) Read the HTTP upgrade request (until the blank line).
-    char buf[2048];
-    Rml::String request;
-    while (request.find("\r\n\r\n") == Rml::String::npos && request.size() < 8192) {
-        const int n = recv(s, buf, sizeof(buf), 0);
-        if (n <= 0) return;
-        request.append(buf, (size_t)n);
-    }
-    Rml::String key;
-    size_t pos = 0;
-    while ((pos = request.find("\r\n", pos)) != Rml::String::npos) {
-        size_t lineStart = request.rfind('\n', pos) + 1;
-        Rml::String line = request.substr(lineStart, pos - lineStart);
-        if (line.size() > 19 && (line.compare(0, 19, "Sec-WebSocket-Key: ") == 0 ||
-                                 line.compare(0, 19, "sec-websocket-key: ") == 0)) {
-            key = line.substr(19);
-            break;
-        }
-        pos += 2;
-    }
-    if (key.empty()) return;
-    char accept[64]{};
-    if (!computeAccept(key.c_str(), accept)) return;
-    const Rml::String response =
-        "HTTP/1.1 101 Switching Protocols\r\n"
-        "Upgrade: websocket\r\n"
-        "Connection: Upgrade\r\n"
-        "Sec-WebSocket-Accept: " + Rml::String(accept) + "\r\n\r\n";
-    if (!sendAll(s, response.data(), (int)response.size())) return;
-    g_client.store(true, std::memory_order_relaxed);
-    menuLog("bridge: web client connected");
-
-    // 2) Frame loop: select() with a timeout so the outbox is flushed too.
-    std::string pending;
-    for (;;) {
-        fd_set readSet;
-        FD_ZERO(&readSet);
-        FD_SET(s, &readSet);
-        timeval timeout{0, 200000};
-        if (select(0, &readSet, nullptr, nullptr, &timeout) > 0) {
-            unsigned char header[2];
-            if (!recvExact(s, header, 2)) break;
-            const unsigned opcode = header[0] & 0x0f;
-            const bool masked = (header[1] & 0x80) != 0;
-            size_t len = header[1] & 0x7f;
-            if (len == 126) {
-                unsigned char ext[2];
-                if (!recvExact(s, ext, 2)) break;
-                len = (size_t)ext[0] << 8 | ext[1];
-            } else if (len == 127) {
-                unsigned char ext[8];
-                if (!recvExact(s, ext, 8)) break;
-                len = 0;
-                for (int i = 0; i < 8; ++i) len = len << 8 | ext[i];
-            }
-            if (len > 65536) break;
-            unsigned char mask[4]{};
-            if (masked && !recvExact(s, mask, 4)) break;
-            std::string payload(len, '\0');
-            if (len && !recvExact(s, &payload[0], (int)len)) break;
-            if (masked)
-                for (size_t i = 0; i < payload.size(); ++i) payload[i] = (char)((unsigned char)payload[i] ^ mask[i & 3]);
-            if (opcode == 8) {  // close
-                const unsigned char closeFrame[2] = {0x88, 0x00};
-                sendAll(s, (const char*)closeFrame, 2);
-                break;
-            }
-            if (opcode == 9) {  // ping -> pong
-                unsigned char pong[2 + 125];
-                pong[0] = 0x8a; pong[1] = (unsigned char)payload.size();
-                if (!payload.empty()) memcpy(pong + 2, payload.data(), payload.size());
-                if (!sendAll(s, (const char*)pong, 2 + (int)payload.size())) break;
-                continue;
-            }
-            if (opcode != 1) continue;  // text frames only
-            pending += payload;
-            size_t nl;
-            while ((nl = pending.find('\n')) != std::string::npos) {
-                std::string line = pending.substr(0, nl);
-                pending.erase(0, nl + 1);
-                if (!line.empty() && line.back() == '\r') line.pop_back();
-                if (line.compare(0, 4, "set ") == 0) {
-                    const size_t space = line.find(' ', 4);
-                    if (space != std::string::npos && space > 4)
-                        queueCommand(line.substr(4, space - 4), (float)atof(line.c_str() + space + 1));
-                } else if (line == "state") {
-                    g_forceSnapshot.store(true, std::memory_order_relaxed);
-                }
-            }
-        }
-        // Flush the outbox (snapshots) to the client.
-        for (;;) {
-            Rml::String frame;
-            {
-                std::lock_guard<std::mutex> lock(g_mutex);
-                if (g_outbox.empty()) break;
-                frame = g_outbox.front();
-                g_outbox.pop_front();
-            }
-            if (!sendTextFrame(s, frame)) goto disconnect;
-        }
-    }
-disconnect:
-    g_client.store(false, std::memory_order_relaxed);
-    menuLog("bridge: web client disconnected");
-}
-
-DWORD WINAPI threadMain(LPVOID) {
-    WSADATA wsa{};
-    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-        menuLog("bridge: disabled, WSAStartup failed");
-        return 0;
-    }
-    SOCKET listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (listener == INVALID_SOCKET) return 0;
-    sockaddr_in address{};
-    address.sin_family = AF_INET;
-    address.sin_port = htons(kPort);
-    address.sin_addr.s_addr = htonl(0x7f000001);  // localhost only
-    if (bind(listener, (sockaddr*)&address, sizeof(address)) != 0 || listen(listener, 1) != 0) {
-        closesocket(listener);
-        menuLog("bridge: disabled, port %u unavailable", (unsigned)kPort);
-        return 0;
-    }
-    menuLog("bridge: listening on 127.0.0.1:%u", (unsigned)kPort);
-    for (;;) {
-        const SOCKET client = accept(listener, nullptr, nullptr);
-        if (client == INVALID_SOCKET) break;
-        int noDelay = 1;
-        setsockopt(client, IPPROTO_TCP, TCP_NODELAY, (const char*)&noDelay, sizeof(noDelay));
-        serveClient(client);
-        closesocket(client);
-    }
-    return 0;
-}
-
-void start() {
-    bool expected = false;
-    if (!g_started.compare_exchange_strong(expected, true)) return;
-    HANDLE thread = CreateThread(nullptr, 0, threadMain, nullptr, 0, nullptr);
-    if (thread) {
-        CloseHandle(thread);
-    } else {
-        g_started.store(false, std::memory_order_relaxed);
-    }
-}
-
-// Runs on the Present thread every frame: applies queued web commands through
-// the exact same code paths the RmlUi menu uses, then (while a web client is
-// connected) publishes a full state snapshot about twice per second.
-void tick() {
-    std::deque<std::pair<Rml::String, float>> local;
-    {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        local.swap(g_commands);
-    }
-    for (const auto& command : local) {
-        if (const SwitchDef* def = findSwitch(command.first))
-            applySwitch(*def, command.second >= 0.5f);
-        else if (const SliderDef* def = findSlider(command.first))
-            SetVisualParam(def->param, paramFromDom(*def, command.second));
-        else
-            menuLog("bridge: unknown id '%s'", command.first.c_str());
-    }
-    if (!g_client.load(std::memory_order_relaxed)) return;
-    if (g_snapshotTimer > 0 && !g_forceSnapshot.load(std::memory_order_relaxed)) {
-        --g_snapshotTimer;
-        return;
-    }
-    g_snapshotTimer = 30;
-    g_forceSnapshot.store(false, std::memory_order_relaxed);
-    syncModuleShadow();
-    Rml::String snapshot;
-    char line[160];
-    const char* emitted[64];
-    size_t emittedCount = 0;
-    for (const SwitchDef& def : kSwitches) {
-        bool seen = false;
-        for (size_t i = 0; i < emittedCount; ++i)
-            if (strcmp(emitted[i], def.id) == 0) { seen = true; break; }
-        if (seen) continue;
-        if (emittedCount < 64) emitted[emittedCount++] = def.id;
-        std::snprintf(line, sizeof(line), "sw %s %d\n", def.id, readSwitch(def) ? 1 : 0);
-        snapshot += line;
-    }
-    for (const SliderDef& def : kSliders) {
-        std::snprintf(line, sizeof(line), "sl %s %.6g\n", def.id,
-                      domFromParam(def, GetVisualParam(def.param)));
-        snapshot += line;
-    }
-    pushOutbox(snapshot);
-}
-
-} // namespace bridge
 
 // ---------------------------------------------------------------------------
 // Per-frame synchronization and input.
@@ -1209,9 +923,11 @@ void feedInput(unsigned width, unsigned height) {
     }
     const float wheelX = g_wheelX.exchange(0.0f, std::memory_order_relaxed);
     const float wheelY = g_wheelY.exchange(0.0f, std::memory_order_relaxed);
-    // compat sends one unit per wheel notch; RmlUi scrolls 80dp per unit.
+    // compat sends one unit per wheel notch (positive = wheel rolled
+    // forward/up, the Windows convention); RmlUi expects positive deltas to
+    // scroll toward the content bottom, so the sign is flipped here.
     if (wheelX != 0.0f || wheelY != 0.0f)
-        g_rmlContext->ProcessMouseWheel(Rml::Vector2f(wheelX, wheelY), 0);
+        g_rmlContext->ProcessMouseWheel(Rml::Vector2f(-wheelX, -wheelY), 0);
 
     const bool escape = keyIsDown(VK_ESCAPE);
     if (escape != g_escState) {
@@ -1227,6 +943,17 @@ void updateDocVisibility(bool menuVisible) {
         if (menuVisible) g_menuDoc->Show();
         else g_menuDoc->Hide();
     }
+}
+
+// Icon animation driver: toggle the "anim" class on <body> every
+// kAnimPeriod frames. The icons' CSS transitions animate between the two
+// states (RmlUi has no keyframes; the C++ side only flips the class).
+void driveIconAnimation() {
+    if (++g_animFrame < kAnimPeriod) return;
+    g_animFrame = 0;
+    g_animOn = !g_animOn;
+    if (Rml::Element* body = g_menuDoc->GetElementById("doc-body"))
+        body->SetClass("anim", g_animOn);
 }
 
 } // namespace
@@ -1267,6 +994,16 @@ void SetGameMenuOpen(bool open) {
 
 bool ReplacesLegacyMenu() { return g_renderOk.load(std::memory_order_relaxed); }
 bool ConsumeHudEditorRequest() { return g_hudEditorRequest.exchange(false, std::memory_order_relaxed); }
+bool VisualPreviewActive() { return g_previewOn.load(std::memory_order_relaxed); }
+
+bool ReadPointer(float& x, float& y, float& w, float& h) {
+    if (!g_pointerValid.load(std::memory_order_relaxed)) return false;
+    x = g_pointerX.load(std::memory_order_relaxed);
+    y = g_pointerY.load(std::memory_order_relaxed);
+    w = g_pointerW.load(std::memory_order_relaxed);
+    h = g_pointerH.load(std::memory_order_relaxed);
+    return w > 1.0f && h > 1.0f;
+}
 
 void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
                    unsigned width, unsigned height) {
@@ -1278,7 +1015,6 @@ void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
         }
         g_ready = true;
         layoutWindows(static_cast<float>(width), static_cast<float>(height), true);
-        bridge::start();
     }
     if (width != g_width || height != g_height) {
         g_width = width;
@@ -1292,10 +1028,10 @@ void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
     const bool menuVisible = g_gameMenuOpen.load(std::memory_order_relaxed) &&
         !g_hiddenByClose.load(std::memory_order_relaxed);
     updateDocVisibility(menuVisible);
-    bridge::tick();
     if (!menuVisible) return;
 
     feedInput(width, height);
+    driveIconAnimation();
     syncSwitches();
     syncSliders();
     syncTtStatus();

@@ -71,8 +71,12 @@ inline void rebalanceLastRow(const float* natural_w, int count, float avail_w,
 }
 
 inline void computeMenuWindows(const float* natural_w, const float* natural_h, int count,
-                               float view_w, float view_h, WindowRect* out) {
-    const float avail_w = view_w - 2.0f * kMargin;
+                               float view_w, float view_h, WindowRect* out,
+                               float right_inset = 0.0f) {
+    // right_inset reserves a strip along the right edge (the 3D preview
+    // window lives there); the tiled block centers inside the remaining
+    // width so it stays visually centered on the whole screen.
+    const float avail_w = view_w - 2.0f * kMargin - (right_inset > 0.0f ? right_inset : 0.0f);
     const float avail_h = view_h - 2.0f * kMargin;
 
     int row_of[kMaxWindows] = {};
@@ -128,7 +132,11 @@ inline void computeMenuWindows(const float* natural_w, const float* natural_h, i
             row_w = (in_row == 0) ? natural_w[i] : row_w + kGap + natural_w[i];
             in_row++;
         }
-        float x = kMargin + (avail_w - row_w) * 0.5f;
+        // Center inside the strip-free area [0, view_w - right_inset] so no
+        // row can ever reach into the reserved strip. With no inset this is
+        // identical to the previous centering inside the margined viewport.
+        float x = (view_w - right_inset - row_w) * 0.5f;
+        if (x < kMargin) x = kMargin;
         for (int i = 0; i < count; ++i) {
             if (row_of[i] != r) continue;
             out[i].x = x;

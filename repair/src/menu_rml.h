@@ -40,4 +40,13 @@ bool ReplacesLegacyMenu();
 // One-shot request from the menu's HUD-editor buttons.
 bool ConsumeHudEditorRequest();
 
+// True while the 3D preview toggle in the Visuals window is on. The compat
+// layer draws the actual 3D portrait window (game ImGui pass) and the menu
+// reserves layout space for it on the right when this holds.
+bool VisualPreviewActive();
+
+// Last pointer sample received from the adapter's pointer hook, in client
+// DIPs. Used by the compat layer's HUD-drag editor to hit-test widgets.
+bool ReadPointer(float& x, float& y, float& w, float& h);
+
 } // namespace menu_rml

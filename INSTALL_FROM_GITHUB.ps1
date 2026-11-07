@@ -15,7 +15,6 @@ $expectedFiles = @{
     'repair/GAYClientInternal.dll' = 'GAYClientInternal.dll'
     'repair/ENABLE_ACCESS.cmd' = 'ENABLE_ACCESS.cmd'
     'repair/RESTORE_ACCESS.cmd' = 'RESTORE_ACCESS.cmd'
-    'index.html' = 'web-menu.html'
 }
 
 Write-Host 'GAYClient installer / updater'

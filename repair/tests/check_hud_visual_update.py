@@ -9,14 +9,15 @@ for symbol in ('_ZN2ag7DrawHudERNS_7RuntimeE','_ZN2ag17NotificationQueue4DrawERK
     assert symbol in u and symbol.encode() in exports, symbol
 assert 'module_hud::editing(menu,hudEditorOpen || visualEditor!=VisualEditor::None)' in u
 assert 'realDrawHud(runtime)' in u and 'drawModuleHud(runtime,false)' in u
-assert 'drawModuleHud(runtime,true)' in u and 'hudEditorActive.load' in u
+assert 'drawModuleHud(runtime,false)' in u and 'hudEditorActive.load' in u
+assert 'drawModuleHud(runtime,true)' not in u  # old editor preview removed in v5
 assert 'if (!menuOpen) { hudEditorOpen=false; visualEditor=VisualEditor::None; }' in u
 assert 'if (!menuOpen || (!hudEditorOpen && !editingVisual)) {' in u
 assert 'if (menuOpen && !replaced) { VisualStyleScope style; realDrawGui(runtime); }' in u
 assert 'else if (!menuOpen) realDrawGui(runtime);' in u
 # The embedded new menu replaces the legacy GUI only while it is alive; the
 # old panels stay hidden then and reappear automatically if the embed fails.
-assert 'menu_rml::SetGameMenuOpen(menuOpen)' in u and 'if (replaced) return;' in u
+assert 'menu_rml::SetGameMenuOpen(menuOpen)' in u and 'if (replaced) {' in u
 assert 'menu_rml::RenderOverlay(device, overlayTarget, desc.Width, desc.Height)' in u
 assert u.index('if (hudHookCreated) {') > u.index('mhApply())')
 for name in ('HatOpacity','TrailOpacity'):
@@ -65,8 +66,12 @@ assert 'insideLegacyHud=true; realDrawHud(runtime)' in u
 assert 'realNotificationDraw(queue,s)' in u and 'insideLegacyHud=previous; legacyOpacity=oldOpacity' in u
 assert 'mhRemove(reinterpret_cast<void*>(guiBegin))' in u
 assert u.index('mhCreate(reinterpret_cast<void*>(guiBegin)') > u.index('mhApply())')
-assert 'Widget background opacity' in u and 'for (const auto& entry:module_hud::entries)' in u
-assert 'setModule(runtime,entry.id,enabled)' in u
+# v5: widget toggles moved to the RmlUi menu and reach SetModule through the
+# queued drain; the module list itself is drawn by drawModuleHud.
+assert 'for (const auto& entry:module_hud::entries)' not in u  # old editor column gone
+assert 'toggleGameModule(int moduleId, bool enable)' in u
+assert 'setModule(menuEmbedRuntime, static_cast<ag::ModuleId>(static_cast<std::size_t>(moduleId)), enable)' in u
+assert 'module_hud::labels(s->enabled' in u
 for name in ('fps','cps','clock','cpu','ram','resolution','watermark','info','active','hotkeys','coordinates','keystrokes'):
     assert '##hud_'+name in theme
 for symbol in ('_ZN5ImGui5BeginEPKcPbi','_ZN5ImGui8SameLineEff','_ZN5ImGui12PushStyleVarEif','_ZN5ImGui11PopStyleVarEi'):
@@ -80,7 +85,8 @@ for symbol in ('_ZN10ImDrawList8AddImageEyRK6ImVec2S2_S2_S2_j','_ZN10ImDrawList1
     assert symbol in u and symbol.encode() in exports
 assert 'visual_player_skin::acquire(frameDevice)' in u and 'previewFrameView=skin.view' in u
 assert u.index('release(previewFrameView);',u.index('legacyPresent(chain'))>u.index('legacyPresent(chain')
-assert 'SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory && visualEditor!=VisualEditor::Katana)' in u
+assert 'SetPlayerSkinPreviewActive((editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory && visualEditor!=VisualEditor::Katana) || rmlPreview)' in u
+assert 'menu_rml::VisualPreviewActive()' in u and 'drawRmlVisualPreview' in u
 assert 'visual_player_skin::begin(local,captureContext)' in n and 'visual_gpu_depth::inPlayerCapture=capture' in n
 assert n.index('visual_player_skin::begin(local,captureContext)')<n.index('originalPlayer(self,entity,pos,renderValue,partial)')
 assert 'scopeGeneration==generation' in skin and 'ctx!=scopeContext' in skin
@@ -108,7 +114,7 @@ print('Opt-in replay wiring: static OK; D3D11/Minecraft test required')
 # No perspective interception: it hid the first-person hand and interfered
 # with F5 in the reported game build. Keep camera input under game control.
 assert 'perspectiveHook' not in n and 'originalPerspective' not in n
-assert 'Use F5 for third person.' in u and 'PlayerPreviewCameraStatus' not in u
+assert 'PlayerPreviewCameraStatus' not in u  # crown settings UI removed in v5
 assert 'SetPlayerPreviewHatActive(editingVisual && visualEditor==VisualEditor::Hat && previewGameModelTest)' in u
 assert 'inHatCapture && replayable' in gpu and 'submitted.fetch_add(1,std::memory_order_relaxed); call();' in gpu
 assert 'struct EntityScope { ~EntityScope() { visual_player_replay::end();' in n

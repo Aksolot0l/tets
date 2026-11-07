@@ -86,6 +86,7 @@ using DrawRectFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,ImU32,float,
 using DrawGradientRectFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,ImU32,ImU32,ImU32,ImU32);
 using DrawImageFn = void (*)(ImDrawList*,ImTextureID,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,ImU32);
 using DrawImageQuadFn = void (*)(ImDrawList*,ImTextureID,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,ImU32);
+using GetVec2Fn = ImVec2 (*)();
 using PushVarFloatFn = void (*)(int,float);
 using PopVarFn = void (*)(int);
 using SameLineFn = void (*)(float,float);
@@ -145,6 +146,7 @@ static DrawRectFn drawRect = nullptr;
 static DrawGradientRectFn drawGradientRect = nullptr;
 static DrawImageFn drawImage = nullptr;
 static DrawImageQuadFn drawImageQuad = nullptr;
+static GetVec2Fn guiGetWindowPos = nullptr, guiGetWindowSize = nullptr;
 static PushVarFloatFn guiPushVarFloat = nullptr;
 static PopVarFn guiPopVar = nullptr;
 static SameLineFn guiSameLine = nullptr;
@@ -387,20 +389,6 @@ static void drawJumpSettings() {
         const int status=JumpStatus();
         realText(status==1 ? "Jump ring: submitted" : status==2 ? "Jump ring: renderer not ready" : "Jump ring: waiting for movement",nullptr);
         realText("Movement estimate; not a ground flag.",nullptr);
-    }
-}
-static void drawAccessorySettings() {
-    bool enabled=AccessoryEnabled();
-    if (guiCheckbox("3D crown (test)",&enabled)) SetAccessoryEnabled(enabled);
-    visualColor("Crown color",VisualParam::AccessoryRed,VisualParam::AccessoryGreen,VisualParam::AccessoryBlue);
-    visualSlider("Crown scale",VisualParam::AccessoryScale,"%.2f");
-    visualSlider("Crown height offset",VisualParam::AccessoryOffset,"%.2f");
-    visualSlider("Crown opacity",VisualParam::AccessoryOpacity,"%.2f");
-    realText("Built-in test mesh; no model import yet.",nullptr);
-    realText("Use F5 for third person.",nullptr);
-    if (AccessoryEnabled()) {
-        const int status=AccessoryStatus();
-        realText(status==1 ? "Crown: submitted" : status==2 ? "Crown: renderer not ready" : "Crown: waiting for player",nullptr);
     }
 }
 // Read-only diagnostics for the katana test: which rotation source works, the
@@ -658,12 +646,12 @@ static void drawVisualPanel() {
                     ks==7?"Katana: model invalid":"Katana: hook install failed",nullptr);
             }
             sectionTitle("3D ACCESSORY");
-            bool accessory=AccessoryEnabled(); if (guiCheckbox("3D crown (test)",&accessory)) SetAccessoryEnabled(accessory);
-            if (canVisualPreview() && guiButton("Settings##open_accessory",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Accessory;
+            // v5: the crown is removed from the interface everywhere; its
+            // render hook stays dormant unless something else enables it.
             if (canVisualPreview() && guiButton("Options",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Options;
             if (!canVisualPreview()) {
                 realText("Preview unavailable; inline settings:",nullptr);
-                drawHatSettings(); drawTrailSettings(); drawJumpSettings(); drawAccessorySettings(); drawKatanaSettings(); drawVisualOptions();
+                drawHatSettings(); drawTrailSettings(); drawJumpSettings(); drawKatanaSettings(); drawVisualOptions();
             }
             visualHint("Прозрачность и depth-test не изменяются этим оформлением.");
         }
@@ -839,13 +827,12 @@ static void drawVisualEditor() {
     guiSetNextPos(ImVec2(350.f,90.f),ImGuiCond_Always,ImVec2(0,0));
     if (guiSetNextSize) guiSetNextSize(ImVec2(310.f,430.f),ImGuiCond_FirstUseEver);
     VisualStyleScope style;
-    const char* title=current==VisualEditor::Hat?"China Hat settings":current==VisualEditor::Trail?"Trail settings":current==VisualEditor::Jump?"Jump ring settings":current==VisualEditor::Accessory?"3D crown settings":current==VisualEditor::Katana?"Katana settings":"Visual options";
+    const char* title=current==VisualEditor::Hat?"China Hat settings":current==VisualEditor::Trail?"Trail settings":current==VisualEditor::Jump?"Jump ring settings":current==VisualEditor::Katana?"Katana settings":"Visual options";
     if (guiBegin(title,nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
         if (guiButton && guiButton("Back to menu",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::None;
         if (current==VisualEditor::Hat) drawHatSettings();
         else if (current==VisualEditor::Trail) drawTrailSettings();
         else if (current==VisualEditor::Jump) drawJumpSettings();
-        else if (current==VisualEditor::Accessory) drawAccessorySettings();
         else if (current==VisualEditor::Katana) drawKatanaSettings();
         else drawVisualOptions();
     }
@@ -853,9 +840,158 @@ static void drawVisualEditor() {
     if (visualEditor==current && current!=VisualEditor::Options && current!=VisualEditor::Jump && current!=VisualEditor::Accessory && current!=VisualEditor::Katana) drawEffectPreview(current);
 }
 
+// v5: the 3D portrait for the RmlUi Visuals window. A borderless preview
+// card pinned to the right edge of the screen, drawn in the game's ImGui
+// pass — the RmlUi menu renders later (Present), so its windows always sit
+// on top and the layout reserves this strip (menu_rml::kPreviewInsetPx).
+// Reuses the verified avatar/skin machinery of drawEffectPreview; shows the
+// China Hat cone, or the trail when only the trail is enabled.
+static void drawRmlVisualPreview() {
+    if (!guiBegin || !guiEnd || !guiSetNextPos) return;
+    const float w = frameWidth ? static_cast<float>(frameWidth) : 1280.f;
+    const float h = frameHeight ? static_cast<float>(frameHeight) : 720.f;
+    const float winW = 330.f;
+    const float x = w > winW+40.f ? w-winW-16.f : 16.f;
+    const float y = h > 440.f ? 96.f : 16.f;
+    guiSetNextPos(ImVec2(x,y),ImGuiCond_Always,ImVec2(0,0));
+    if (guiSetNextSize) guiSetNextSize(ImVec2(winW,0.f),ImGuiCond_Always);
+    VisualStyleScope style;
+    const int flags=ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|
+        ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoInputs|
+        ImGuiWindowFlags_NoFocusOnAppearing|ImGuiWindowFlags_NoBringToFrontOnFocus;
+    if (guiBegin("##rml_visual_preview",nullptr,flags)) {
+        auto* d=guiDrawList();
+        const auto now=GetTickCount64()*0.001;
+        auto skin=visual_player_skin::acquire(frameDevice);
+        previewFrameView=skin.view;
+        const ImVec2 p=guiCursor();
+        if (d) {
+            drawGradientRect(d,p,ImVec2(p.x+298.f,p.y+215.f),IM_COL32(19,33,37,255),IM_COL32(17,26,33,255),IM_COL32(8,14,20,255),IM_COL32(9,18,20,255));
+            drawLine(d,ImVec2(p.x+15,p.y+205),ImVec2(p.x+283,p.y+205),IM_COL32(42,85,68,150),1.f);
+            if (!ChinaHatEnabled() && TrailEnabled()) drawTrailPreview(d,p,now,skin);
+            else drawHatPreview(d,p,now,skin);
+        }
+        guiDummy(ImVec2(298.f,215.f));
+        const auto t=visualTokens();
+        tintedText(ChinaHatEnabled()?"China Hat · живые параметры":TrailEnabled()?"След · живые параметры":"превью: включи China Hat или След",t.accent);
+        visualHint(skin.view?"текстура игрока из игры":"ожидание скина (выйди в 3-е лицо)");
+    }
+    guiEnd();
+}
+
+// --------------------------------------------------------------------------
+// v5 HUD editor drag machinery. While the editor is open the game's HUD
+// windows stay visible (patchedDrawHud no longer skips them) and become
+// draggable: this hook overrides the game's pinned SetNextWindowPos with the
+// user-moved position (our call runs last, right before Begin), captures the
+// window rect through the exported ImGui::GetWindowPos/GetWindowSize, and
+// moves the window with the UWP pointer sample + the watched left button.
+// Positions live for the session; nothing is written to the game profile.
+// --------------------------------------------------------------------------
+static const char* const kHudDragNames[] = {
+    "##hud_fps","##hud_cps","##hud_clock","##hud_cpu","##hud_ram",
+    "##hud_resolution","##hud_watermark","##hud_info","##hud_active","##hud_hotkeys",
+    "##hud_coordinates","##hud_keystrokes","##module_hud"};
+constexpr int kHudDragCount = static_cast<int>(sizeof(kHudDragNames) / sizeof(kHudDragNames[0]));
+struct HudDragEntry { float x=0,y=0,w=0,h=0; bool hasPos=false; };
+static HudDragEntry g_hudDrag[kHudDragCount];
+static int g_hudDragSlot = -1;
+static float g_hudDragOffX=0, g_hudDragOffY=0;
+static float g_hudMouseX=0, g_hudMouseY=0;
+static bool g_hudMouseValid=false, g_hudLmbDown=false, g_hudLmbPressed=false, g_hudLmbReleased=false;
+
+static int hudDragSlot(const char* name) {
+    for (int i=0;i<kHudDragCount;++i)
+        if (std::strcmp(name,kHudDragNames[i])==0) return i;
+    return -1;
+}
+
+// One pointer/button sample per frame, before the HUD draws; themedBegin then
+// consumes the cached values for every window Begin.
+static void updateHudEditInput() {
+    float px=0,py=0,pw=0,ph=0;
+    g_hudMouseValid = menu_rml::ReadPointer(px,py,pw,ph) && frameWidth && frameHeight;
+    if (g_hudMouseValid) {
+        g_hudMouseX = px*static_cast<float>(frameWidth)/pw;
+        g_hudMouseY = py*static_cast<float>(frameHeight)/ph;
+    }
+    const bool down = (pageKeysReady && keyDown) ? keyDown(VK_LBUTTON)
+        : (GetAsyncKeyState(VK_LBUTTON)&0x8000)!=0;
+    g_hudLmbPressed = down && !g_hudLmbDown;
+    g_hudLmbReleased = !down && g_hudLmbDown;
+    g_hudLmbDown = down;
+}
+
+// Accent outline marking the draggable widgets in editor mode.
+static void drawHudDragOutline(const ImVec2& p, const ImVec2& s) {
+    if (!guiDrawList || !drawLine) return;
+    auto* d = guiDrawList();
+    const ImU32 c = IM_COL32(110,245,140,150);
+    drawLine(d,p,ImVec2(p.x+s.x,p.y),c,2.f);
+    drawLine(d,ImVec2(p.x+s.x,p.y),ImVec2(p.x+s.x,p.y+s.y),c,2.f);
+    drawLine(d,ImVec2(p.x+s.x,p.y+s.y),ImVec2(p.x,p.y+s.y),c,2.f);
+    drawLine(d,ImVec2(p.x,p.y+s.y),p,c,2.f);
+}
+
+static bool hudEditBegin(int slot, const char* name, bool* open, int flags) {
+    HudDragEntry& e = g_hudDrag[slot];
+    // The user-moved position wins over the game's pinned layout: this
+    // SetNextWindowPos runs after the game's own call, immediately before
+    // Begin, so ImGui applies ours.
+    if (e.hasPos && guiSetNextPos)
+        guiSetNextPos(ImVec2(e.x,e.y),ImGuiCond_Always,ImVec2(0,0));
+    const bool themed = hudThemeReady.load(std::memory_order_acquire) && guiPushColor && guiPopColor && guiPushVarFloat && guiPopVar;
+    if (themed) {
+        const auto bg=hud_theme::background(widgetOpacity*legacyOpacity,hudPalette), border=hud_theme::border(widgetOpacity*legacyOpacity,hudPalette);
+        guiPushColor(ImGuiCol_WindowBg,ImVec4(bg.r,bg.g,bg.b,bg.a));
+        guiPushColor(ImGuiCol_Border,ImVec4(border.r,border.g,border.b,border.a));
+        guiPushVarFloat(ImGuiStyleVar_WindowRounding,hud_theme::rounding(hudRounding));
+        guiPushVarFloat(ImGuiStyleVar_WindowBorderSize,1.f);
+    }
+    if (std::strcmp(name,"##hud_keystrokes")==0) flags &= ~ImGuiWindowFlags_NoBackground;
+    const bool result=realGuiBegin(name,open,flags);
+    if (themed) { guiPopVar(2); guiPopColor(2); }
+    if (result) {
+        if (guiGetWindowPos && guiGetWindowSize) {
+            const ImVec2 wp=guiGetWindowPos(), ws=guiGetWindowSize();
+            if (!e.hasPos) { e.x=wp.x; e.y=wp.y; e.hasPos=true; }
+            e.w=ws.x; e.h=ws.y;
+            drawHudDragOutline(wp,ws);
+        }
+        if (g_hudMouseValid) {
+            const bool inside = g_hudMouseX>=e.x-3.f && g_hudMouseX<=e.x+e.w+3.f &&
+                                g_hudMouseY>=e.y-3.f && g_hudMouseY<=e.y+e.h+3.f;
+            if (g_hudLmbPressed && g_hudDragSlot<0 && inside) {
+                g_hudDragSlot=slot;
+                g_hudDragOffX=g_hudMouseX-e.x;
+                g_hudDragOffY=g_hudMouseY-e.y;
+            }
+            if (g_hudDragSlot==slot && g_hudLmbDown) {
+                e.x=g_hudMouseX-g_hudDragOffX;
+                e.y=g_hudMouseY-g_hudDragOffY;
+                // Keep a grabbable piece of the widget on screen.
+                if (frameWidth) {
+                    if (e.x>static_cast<float>(frameWidth)-24.f) e.x=static_cast<float>(frameWidth)-24.f;
+                    if (e.x<24.f-e.w) e.x=24.f-e.w;
+                }
+                if (frameHeight) {
+                    if (e.y>static_cast<float>(frameHeight)-24.f) e.y=static_cast<float>(frameHeight)-24.f;
+                    if (e.y<0.f) e.y=0.f;
+                }
+            }
+            if (g_hudLmbReleased && g_hudDragSlot==slot) g_hudDragSlot=-1;
+        }
+    }
+    return result;
+}
+
 // Restyle only actual legacy HUD/notification windows, preserving their real
 // metrics, positions, interaction and layout. Never target the game's UI.
 static bool themedBegin(const char* name,bool* open,int flags) {
+    if (hudEditorActive.load(std::memory_order_acquire)) {
+        const int slot = hudDragSlot(name);
+        if (slot >= 0) return hudEditBegin(slot,name,open,flags);
+    }
     if (!insideLegacyHud || !hud_theme::card(name) || !guiPushColor || !guiPopColor || !guiPushVarFloat || !guiPopVar)
         return realGuiBegin(name,open,flags);
     const auto bg=hud_theme::background(widgetOpacity*legacyOpacity,hudPalette), border=hud_theme::border(widgetOpacity*legacyOpacity,hudPalette);
@@ -898,23 +1034,45 @@ static void drawModuleHud(void* runtime, bool preview) {
     }
     guiEnd(); if (vars) guiPopVar(2); guiPopColor(3);
 }
+// Bottom hint strip while the HUD editor is open: how to interact and how
+// to leave. Drawn last so it never hides a widget (it only overlaps the very
+// bottom edge) and is itself not interactive.
+static void drawHudEditCaption() {
+    if (!guiBegin || !guiSetNextPos || !realText) return;
+    const float w = frameWidth ? static_cast<float>(frameWidth) : 1280.f;
+    const float h = frameHeight ? static_cast<float>(frameHeight) : 720.f;
+    guiSetNextPos(ImVec2(w*0.5f-230.f, h-52.f),ImGuiCond_Always,ImVec2(0,0));
+    VisualStyleScope style;
+    const int flags=ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|
+        ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoInputs|
+        ImGuiWindowFlags_NoFocusOnAppearing|ImGuiWindowFlags_NoBringToFrontOnFocus;
+    if (guiBegin("##hud_edit_caption",nullptr,flags)) {
+        const auto t=visualTokens();
+        tintedText("HUD EDIT",t.accent);
+        if (guiSameLine) guiSameLine(0.f,10.f);
+        tintedText("перетаскивай элементы мышкой · Esc — выход",t.textMuted);
+    }
+    guiEnd();
+}
 static void patchedDrawHud(void* runtime) {
     const bool menu=runtime && *(reinterpret_cast<unsigned char*>(runtime)+0x551);
     const bool editing=module_hud::editing(menu,hudEditorOpen || visualEditor!=VisualEditor::None);
     hudEditorActive.store(editing,std::memory_order_release);
-    if (!editing) {
-        if (hudThemeReady.load(std::memory_order_acquire) && guiPushColor && guiPopColor) {
-            const auto* settings=runtime ? reinterpret_cast<const ag::Settings*>(reinterpret_cast<const unsigned char*>(runtime)+0x48) : nullptr;
-            const bool previous=insideLegacyHud; const float oldOpacity=legacyOpacity;
-            legacyOpacity=settings ? hud_theme::alpha(settings->opacity) : 1.f;
-            guiPushColor(ImGuiCol_Text,ImVec4(hudColor[0]*(settings ? hud_theme::alpha(settings->text[0]) : 1.f),
-              hudColor[1]*(settings ? hud_theme::alpha(settings->text[1]) : 1.f),
-              hudColor[2]*(settings ? hud_theme::alpha(settings->text[2]) : 1.f),1.f));
-            insideLegacyHud=true; realDrawHud(runtime); insideLegacyHud=previous; legacyOpacity=oldOpacity;
-            guiPopColor(1);
-        } else realDrawHud(runtime);
-        if (moduleHudEnabled) drawModuleHud(runtime,false);
-    }
+    if (editing) updateHudEditInput();
+    // v5: while the HUD editor is open the HUD itself stays on screen — the
+    // widgets ARE the interface and are dragged directly (hudEditBegin).
+    if (hudThemeReady.load(std::memory_order_acquire) && guiPushColor && guiPopColor) {
+        const auto* settings=runtime ? reinterpret_cast<const ag::Settings*>(reinterpret_cast<const unsigned char*>(runtime)+0x48) : nullptr;
+        const bool previous=insideLegacyHud; const float oldOpacity=legacyOpacity;
+        legacyOpacity=settings ? hud_theme::alpha(settings->opacity) : 1.f;
+        guiPushColor(ImGuiCol_Text,ImVec4(hudColor[0]*(settings ? hud_theme::alpha(settings->text[0]) : 1.f),
+          hudColor[1]*(settings ? hud_theme::alpha(settings->text[1]) : 1.f),
+          hudColor[2]*(settings ? hud_theme::alpha(settings->text[2]) : 1.f),1.f));
+        insideLegacyHud=true; realDrawHud(runtime); insideLegacyHud=previous; legacyOpacity=oldOpacity;
+        guiPopColor(1);
+    } else realDrawHud(runtime);
+    if (moduleHudEnabled) drawModuleHud(runtime,false);
+    if (editing) drawHudEditCaption();
 }
 static void patchedNotificationDraw(void* queue, const ag::Settings& s) {
     if (hudEditorActive.load(std::memory_order_acquire)) return;
@@ -925,173 +1083,6 @@ static void patchedNotificationDraw(void* queue, const ag::Settings& s) {
         realNotificationDraw(queue,s);
         insideLegacyHud=previous; legacyOpacity=oldOpacity; guiPopColor(1);
     } else realNotificationDraw(queue,s);
-}
-static bool editorVisible[5] = {true,true,true,true,true};
-static int editorSelected = 0;
-static float editorWidth() { return frameWidth ? float(frameWidth) : 1280.f; }
-static float editorHeight() { return frameHeight ? float(frameHeight) : 720.f; }
-static const char* editorPanelName(int index) {
-    constexpr const char* names[5] = {"Home","HUD","Modules","Appearance","Settings"};
-    return index>=0 && index<5 ? names[index] : "Panel";
-}
-static void editorColumn(int index) {
-    const float width=editorWidth(), height=editorHeight();
-    const bool wide=hud_theme::columnsFit(width);
-    const float x=wide ? hud_theme::panelX(index,width) : hud_theme::editorMetrics.panelLeft;
-    guiSetNextPos(ImVec2(x,hud_theme::panelTop(width)),ImGuiCond_Always,ImVec2(0,0));
-    if (guiSetNextSize) guiSetNextSize(ImVec2(wide ? hud_theme::panelWidthFor(width) : hud_theme::compactPanelWidth(width),
-                                               hud_theme::panelHeight(index,width,height)),ImGuiCond_Always);
-}
-static void editorToolbar() {
-    const float width=editorWidth();
-    const bool wide=hud_theme::columnsFit(width);
-    guiSetNextPos(ImVec2(hud_theme::editorMetrics.panelLeft,18.f),ImGuiCond_Always,ImVec2(0,0));
-    VisualStyleScope style;
-    if (guiBegin("##gc_editor_toolbar",nullptr,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|
-                 ImGuiWindowFlags_NoMove|ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|
-                 ImGuiWindowFlags_NoFocusOnAppearing)) {
-        const auto t=visualTokens();
-        tintedText("AOGIRI GREEN",t.accent);
-        if (guiSameLine) guiSameLine(0.f,8.f);
-        if (guiButton && guiButton("Panels",ImVec2(58.f,0.f))) {
-            const bool any=editorVisible[0]||editorVisible[1]||editorVisible[2]||editorVisible[3]||editorVisible[4];
-            for (bool& visible:editorVisible) visible=!any;
-        }
-        if (guiSameLine) guiSameLine(0.f,4.f);
-        if (guiButton && guiButton("Back to menu",ImVec2(100.f,0.f))) hudEditorOpen=false;
-        if (!wide && guiButton) {
-            // One panel at a time fits on narrow screens; buttons remain
-            // available even if a user hid every panel via Settings.
-            for (int i=0;i<5;++i) {
-                if (i>0 && guiSameLine && (width>=480.f || (i%2)!=0)) guiSameLine(0.f,4.f);
-                if (guiButton(editorPanelName(i),ImVec2(0,0))) { editorSelected=i; editorVisible[i]=true; }
-            }
-        }
-    }
-    guiEnd();
-}
-static void editorHome() {
-    editorColumn(0);
-    VisualStyleScope style;
-    if (guiBegin("Home##gc",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
-        const auto t=visualTokens();
-        tintedText("AOGIRI",t.accent); tintedText("GREEN",t.accent);
-        visualHint("GAYClient · HUD redesign");
-        sectionTitle("СЕССИЯ");
-        tintedText(ag::kVersion,t.textMuted);
-        visualHint("Только визуальный слой");
-        tintedText(ChinaHatAvailable()?"Human Visuals доступны":"Visuals unavailable",t.textDim);
-        if (!notificationHookReady) visualHint("Notifications may remain visible.");
-    }
-    guiEnd();
-}
-static void editorHud(void* runtime) {
-    editorColumn(1);
-    VisualStyleScope style;
-    if (guiBegin("HUD##gc",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
-        sectionTitle("ВИДЖЕТЫ");
-        if (runtime && setModule) {
-            auto* settings=reinterpret_cast<ag::Settings*>(reinterpret_cast<unsigned char*>(runtime)+0x48);
-            for (const auto& entry:module_hud::entries) {
-                bool enabled=settings->IsEnabled(entry.id);
-                if (guiCheckbox(entry.name,&enabled)) setModule(runtime,entry.id,enabled);
-            }
-        }
-        visualHint("Module List: Modules");
-    }
-    guiEnd();
-}
-static void editorModules(void* runtime) {
-    editorColumn(2);
-    VisualStyleScope style;
-    if (guiBegin("Modules##gc",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
-        sectionTitle("MODULE LIST HUD");
-        guiCheckbox("Module List HUD",&moduleHudEnabled);
-        visualHint("Preview on the right");
-        fullWidthSlider("Module list scale",&hudScale,.7f,1.6f);
-        fullWidthSlider("Module list opacity",&hudOpacity,0.f,1.f);
-        fullWidthSlider("Module list X",&hudX,0.f,.9f);
-        fullWidthSlider("Module list Y",&hudY,0.f,.9f);
-    }
-    guiEnd();
-}
-static void editorAppearance() {
-    editorColumn(3);
-    VisualStyleScope style;
-    if (guiBegin("Appearance##gc",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
-        sectionTitle("ТЕМА","Выберите цветовую схему");
-        for (int i=0;i<3;i++) {
-            if (guiButton && guiButton(hud_theme::palette(i).name,ImVec2(-1.f,0.f))) {
-                hudPalette=i; const auto c=hud_theme::palette(i).accent;
-                hudColor[0]=c.r; hudColor[1]=c.g; hudColor[2]=c.b;
-            }
-        }
-        sectionTitle("ОФОРМЛЕНИЕ");
-        fullWidthSlider("Card rounding",&hudRounding,0.f,20.f);
-        if (hudThemeReady.load(std::memory_order_acquire)) fullWidthSlider("Widget background opacity",&widgetOpacity,0.f,1.f);
-        else realText("Widget theme unavailable; original widgets retained.",nullptr);
-        if (guiColorEdit3) { realText("HUD text color",nullptr); if (guiPushWidth && guiPopWidth) guiPushWidth(-1.f);
-            guiColorEdit3("##hud_color",hudColor,0); if (guiPushWidth && guiPopWidth) guiPopWidth(); }
-    }
-    guiEnd();
-}
-static void editorSettings() {
-    editorColumn(4);
-    VisualStyleScope style;
-    if (guiBegin("Settings##gc",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
-        sectionTitle("ПАНЕЛИ");
-        for (int i=0;i<5;++i) guiCheckbox(editorPanelName(i),&editorVisible[i]);
-        sectionTitle("СЕССИЯ");
-        visualHint("Style resets after game exit.");
-        if (!notificationHookReady) realText("Notifications may remain visible.",nullptr);
-        visualHint("Профиль ядра визуальный слой не перезаписывает.");
-    }
-    guiEnd();
-}
-static void editorPreviewCaption() {
-    const float x=hud_theme::previewX(editorWidth());
-    guiSetNextPos(ImVec2(x,hud_theme::panelTop(editorWidth())),ImGuiCond_Always,ImVec2(0,0));
-    if (guiSetNextSize) guiSetNextSize(ImVec2(hud_theme::editorMetrics.previewWidth,0.f),ImGuiCond_FirstUseEver);
-    VisualStyleScope style;
-    if (guiBegin("Preview##gc_caption",nullptr,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|
-                 ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_AlwaysAutoResize)) {
-        const auto t=visualTokens();
-        tintedText("ПРЕДПРОСМОТР",t.accent);
-        visualHint("Module List · реальные модули");
-    }
-    guiEnd();
-}
-static void drawHudEditor(void* runtime) {
-    editorToolbar();
-    const bool wide=hud_theme::columnsFit(editorWidth());
-    if (editorVisible[0] && (wide || editorSelected==0)) editorHome();
-    if (editorVisible[1] && (wide || editorSelected==1)) editorHud(runtime);
-    if (editorVisible[2] && (wide || editorSelected==2)) editorModules(runtime);
-    if (editorVisible[3] && (wide || editorSelected==3)) editorAppearance();
-    if (editorVisible[4] && (wide || editorSelected==4)) editorSettings();
-    if (editorWidth()>=600.f && editorHeight()>=350.f) {
-        editorPreviewCaption();
-        if (hudEditorOpen) drawModuleHud(runtime,true);
-    }
-}
-/*
- * VISUAL-ONLY NOTE
- * The editor above is a reskin of the existing controls: the same widget
- * checkboxes, the same three palettes, the same rounding/opacity/colour
- * sliders and the same Module List settings, now grouped into five columns.
- * No setting, hook or render path was added.
- */
-static void drawHudEntry() {
-    if (!hudHooksReady) return;
-    guiSetNextPos(ImVec2(18.f,130.f),ImGuiCond_FirstUseEver,ImVec2(0,0));
-    if (guiSetNextSize) guiSetNextSize(ImVec2(166.f,0.f),ImGuiCond_FirstUseEver);
-    VisualStyleScope style;
-    if (guiBegin("HUD",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoCollapse)) {
-        sectionTitle("GAYCLIENT","HUD editor");
-        guiCheckbox("Open HUD editor",&hudEditorOpen);
-        guiCheckbox("Module List HUD",&moduleHudEnabled);
-    }
-    guiEnd();
 }
 
 // The embedded menu forwards HUD-module toggles through this drain target;
@@ -1143,7 +1134,10 @@ static void patchedDrawGui(void* runtime) {
     if (menuOpen && menu_rml::ConsumeHudEditorRequest()) hudEditorOpen=true;
     menu_rml::DrainModuleToggles(&toggleGameModule);
     const bool editingVisual=menuOpen && visualEditor!=VisualEditor::None && canVisualPreview();
-    SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory && visualEditor!=VisualEditor::Katana);
+    // v5: the RmlUi Visuals window asks for the 3D portrait preview; it is
+    // drawn by this (game ImGui) pass, so it stays under the RmlUi windows.
+    const bool rmlPreview=menuOpen && replaced && menu_rml::VisualPreviewActive() && canVisualPreview();
+    SetPlayerSkinPreviewActive((editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory && visualEditor!=VisualEditor::Katana) || rmlPreview);
     SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory && visualEditor!=VisualEditor::Katana && previewGameModelTest);
     SetPlayerPreviewHatActive(editingVisual && visualEditor==VisualEditor::Hat && previewGameModelTest);
     if (!menuOpen || (!hudEditorOpen && !editingVisual)) {
@@ -1151,8 +1145,16 @@ static void patchedDrawGui(void* runtime) {
         else if (!menuOpen) realDrawGui(runtime);
     }
     if (editingVisual) { drawVisualEditor(); return; }
-    if (menuOpen && hudEditorOpen && hudHooksReady) { drawHudEditor(runtime); return; }
-    if (replaced) return;  // the embedded menu owns the screen
+    // v5 HUD editor: nothing but the HUD itself; the widgets are dragged
+    // directly (patchedDrawHud + hudEditBegin), Esc closes the game menu and
+    // thereby the editor.
+    if (menuOpen && hudEditorOpen) return;
+    if (replaced) {
+        // v5: the crown is gone from the interface; make sure it stays off.
+        if (AccessoryEnabled()) SetAccessoryEnabled(false);
+        if (rmlPreview) drawRmlVisualPreview();
+        return;  // the embedded menu owns the screen
+    }
     // Exact legacy build layout, verified against the original binary.
     if (!runtime || !*(reinterpret_cast<unsigned char*>(runtime) + 0x551)) return;
     auto* settings = reinterpret_cast<ag::Settings*>(reinterpret_cast<unsigned char*>(runtime) + 0x48);
@@ -1166,7 +1168,6 @@ static void patchedDrawGui(void* runtime) {
     }
     guiEnd();
     drawVisualPanel();
-    drawHudEntry();
 }
 
 // Called from legacy drawMarker, while its own render lock is held. The ImGui
@@ -1410,6 +1411,9 @@ static DWORD WINAPI bootstrap(void*) {
     guiPushTextWrap = symbol<PushTextWrapFn>("_ZN5ImGui15PushTextWrapPosEf");
     guiPopTextWrap = symbol<PopTextWrapFn>("_ZN5ImGui14PopTextWrapPosEv");
     guiSetNextPos = symbol<SetNextPosFn>("_ZN5ImGui16SetNextWindowPosERK6ImVec2iS2_");
+    // v5 HUD editor: exact widget rects for the drag hit-testing.
+    guiGetWindowPos = symbol<GetVec2Fn>("_ZN5ImGui12GetWindowPosEv");
+    guiGetWindowSize = symbol<GetVec2Fn>("_ZN5ImGui13GetWindowSizeEv");
     findGameWindow = symbol<FindWindowFn>("_ZN2ag19FindMinecraftWindowEb");
     addFont = symbol<AddFontFn>("_ZN2ag15AddEmbeddedFontEfb");
     addWheel = symbol<AddWheelFn>("_ZN7ImGuiIO18AddMouseWheelEventEff");
@@ -1468,6 +1472,8 @@ static DWORD WINAPI bootstrap(void*) {
         log("hook enable failed; attempted to disable hooks"); return 1;
     }
     log("hooks enabled");
+    if (!guiGetWindowPos || !guiGetWindowSize)
+        log("HUD drag unavailable: ImGui window metrics not exported");
     if (hudHookCreated) {
         if (mhEnable(hudTarget)==0) hudHooksReady.store(true,std::memory_order_release);
         else { mhRemove(hudTarget); log("HUD editor unavailable"); }

@@ -16,7 +16,7 @@ kit = (r / 'src/hud_visual_kit.h').read_text(encoding='utf-8')
 assert '#include "hud_theme.h"' in u and '#include "hud_visual_kit.h"' in u
 assert 'namespace hud_visual' in kit and 'namespace hud_theme' in theme
 for helper in ('VisualStyleScope', 'sectionTitle', 'visualHint', 'fullWidthSlider',
-               'visualTokens', 'editorVisible', 'editorColumn'):
+               'visualTokens'):
     assert helper in u, helper
 assert 'Tokens tokens(' in theme and 'EditorMetrics' in theme
 assert 'ButtonSpec button(' in kit and 'ToggleSpec toggle(' in kit
@@ -24,30 +24,27 @@ assert 'SliderSpec slider(' in kit and 'CardSpec card(' in kit
 assert 'LayoutSpec layout(' in kit and 'readableOn(' in kit
 assert 'readableOpacity' in theme and 'editorOpacity' in theme
 
-# 2. Five editor columns and the neighbouring preview, from the mockup.
-for panel in ('Home##gc', 'HUD##gc', 'Modules##gc', 'Appearance##gc', 'Settings##gc'):
-    assert panel in u, panel
-assert 'Preview##gc_caption' in u
-assert 'drawModuleHud(runtime,true)' in u
-assert 'editorVisible[5]' in u
-assert 'hud_theme::panelX' in u and 'hud_theme::previewX' in u
+# 2. v5: the five-column editor is gone; the HUD editor is the HUD itself,
+# dragged directly through the ImGui::Begin hook, with one caption strip.
+for gone in ('Home##gc', 'HUD##gc', 'Modules##gc', 'Appearance##gc', 'Settings##gc',
+             'Preview##gc_caption', 'drawModuleHud(runtime,true)', 'editorVisible',
+             'editorColumn', 'editorToolbar', 'drawHudEditor'):
+    assert gone not in u, gone
+assert 'hudEditBegin' in u and 'drawHudEditCaption' in u
+assert 'if (menuOpen && hudEditorOpen) return;' in u
+assert 'updateHudEditInput' in u and 'kHudDragNames' in u
 
 # 3. Every pre-existing control/behaviour is still present.
 for preserved in (
-        'hud_theme::palette(i).name', 'hudPalette=i', 'hudColor[0]=c.r',
-        'Card rounding', 'Widget background opacity', 'HUD text color',
-        'Module List HUD', 'Module list scale', 'Module list opacity',
-        'Module list X', 'Module list Y', 'Style resets after game exit.',
-        'Notifications may remain visible.',
         'China Hat', 'Trail', 'Settings##open_hat', 'Settings##open_trail',
         'Options', 'Preview unavailable; inline settings:',
         'Game model replay (test)', 'Old overlay (see-through)',
         'Vertex gradient (test)', 'Hat at player pass (test)',
         'Waiting for player; sample avatar', 'Sample model; game shader may differ.'):
     assert preserved in u, preserved
-for entry in ('ag::ModuleId::Coordinates', 'setModule(runtime,entry.id,enabled)',
-              'settings->IsEnabled(entry.id)'):
-    assert entry in u, entry
+# v5: module toggles flow through the RmlUi queue (see check_menu_rml.py);
+# the legacy fallback still has the coordinates switch.
+assert 'ag::ModuleId::Coordinates' in u
 
 # 4. No behavioural additions: no new writes to game settings, no addresses.
 for forbidden in (
@@ -70,10 +67,12 @@ assert '~VisualStyleScope()' in u and 'guiPopColor(pushedColors)' in u and 'guiP
 assert 'insideLegacyHud || !hud_theme::card(name)' in u
 assert 'hud_theme::background(widgetOpacity*legacyOpacity,hudPalette)' in u
 assert 'SetMenuMouseOpen(menuOpen)' in u and 'SetMenuMouseOpen(false)' in u
-assert 'hud_theme::columnsFit(editorWidth())' in u
-assert '(wide || editorSelected==0)' in u and 'editorSelected=i; editorVisible[i]=true' in u
-assert 'hud_theme::panelX(index,width)' in u and 'hud_theme::panelHeight(index,width,height)' in u
 assert 'ImGuiCond_Always' in u and 'guiPushTextWrap(0.f)' in u
+# v5: the user-dragged HUD position overrides the game's pinned layout right
+# before Begin, and the exact widget rect comes from the exported ImGui calls.
+assert 'guiSetNextPos(ImVec2(e.x,e.y),ImGuiCond_Always,ImVec2(0,0))' in u
+assert '"_ZN5ImGui12GetWindowPosEv"' in u and '"_ZN5ImGui13GetWindowSizeEv"' in u
+assert 'drawHudDragOutline' in u
 for sym in ('_ZN5ImGui15PushTextWrapPosEf','_ZN5ImGui14PopTextWrapPosEv'):
     assert sym in u and sym.encode() in (r.parent/'GAYClientInternal.dll').read_bytes()
 

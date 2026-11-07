@@ -99,7 +99,7 @@ ADAPTER_SRCS = [
 ]
 
 LINK_LIBS = [
-    "-ld3d11", "-ldxgi", "-ld3dcompiler_47", "-luser32", "-lole32", "-lws2_32",
+    "-ld3d11", "-ldxgi", "-ld3dcompiler_47", "-luser32", "-lole32",
     "-lapi-ms-win-core-winrt-l1-1-0", "-lapi-ms-win-core-winrt-string-l1-1-0",
     "-luuid", "-lbcrypt",
 ]

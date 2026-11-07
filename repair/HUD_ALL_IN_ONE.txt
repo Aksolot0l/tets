@@ -12,11 +12,13 @@ SDK, RmlUi и Dear ImGui сюда не включены. Исходников з
 подтверждены пользователем. Автоматическое переключение с первого лица не
 сработало, его перехват удалён. Ошибка перекрытия шляпы дальними блоками
 остаётся. Right Shift и мышь подтверждены пользователем; текущий HUD в игре
-выглядит как отдельные окна и не соответствует желаемому референсу.
+выглядит как отдельные окна и не соответствует желаемому референсу. (v5: окон два — Home и Visuals с секциями.)
 Предыдущие Jump Rings работали в игре; новый многослойный вид ещё не проверен.
-UPDATE: внутриигровое меню полностью переделано на RmlUi (HTML/CSS, стиль
-лаунчера): мост src/menu_rml.cpp, дизайн src/menu_rml_data.h, сборка
-tools/build_adapter.py. Прежнее ImGui-меню (menu_embed + GAYClientMenu)
+UPDATE (v5): внутриигровое меню — два окна RmlUi (Home + Visuals с секциями),
+зум UI, векторные RCSS-иконки с анимацией через класс body.anim, знак колеса
+инвертирован, HUD-редактор = только HUD + перетаскивание виджетов мышью
+(hudEditBegin в хуке ImGui::Begin), 3D-превью игрока справа; веб-мост и корона
+удалены из интерфейса. Прежнее ImGui-меню (menu_embed + GAYClientMenu)
 удалено из сборки; легаси-интерфейс остаётся фолбэком. Первый запуск у
 пользователя показал вид «только ползунки»; причины найдены в софт-
 растеризаторе на Linux (rgba-альфа парсится как atoi -> 0; дефолтный
@@ -362,6 +364,7 @@ using DrawRectFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,ImU32,float,
 using DrawGradientRectFn = void (*)(ImDrawList*,const ImVec2&,const ImVec2&,ImU32,ImU32,ImU32,ImU32);
 using DrawImageFn = void (*)(ImDrawList*,ImTextureID,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,ImU32);
 using DrawImageQuadFn = void (*)(ImDrawList*,ImTextureID,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,const ImVec2&,ImU32);
+using GetVec2Fn = ImVec2 (*)();
 using PushVarFloatFn = void (*)(int,float);
 using PopVarFn = void (*)(int);
 using SameLineFn = void (*)(float,float);
@@ -421,6 +424,7 @@ static DrawRectFn drawRect = nullptr;
 static DrawGradientRectFn drawGradientRect = nullptr;
 static DrawImageFn drawImage = nullptr;
 static DrawImageQuadFn drawImageQuad = nullptr;
+static GetVec2Fn guiGetWindowPos = nullptr, guiGetWindowSize = nullptr;
 static PushVarFloatFn guiPushVarFloat = nullptr;
 static PopVarFn guiPopVar = nullptr;
 static SameLineFn guiSameLine = nullptr;
@@ -663,20 +667,6 @@ static void drawJumpSettings() {
         const int status=JumpStatus();
         realText(status==1 ? "Jump ring: submitted" : status==2 ? "Jump ring: renderer not ready" : "Jump ring: waiting for movement",nullptr);
         realText("Movement estimate; not a ground flag.",nullptr);
-    }
-}
-static void drawAccessorySettings() {
-    bool enabled=AccessoryEnabled();
-    if (guiCheckbox("3D crown (test)",&enabled)) SetAccessoryEnabled(enabled);
-    visualColor("Crown color",VisualParam::AccessoryRed,VisualParam::AccessoryGreen,VisualParam::AccessoryBlue);
-    visualSlider("Crown scale",VisualParam::AccessoryScale,"%.2f");
-    visualSlider("Crown height offset",VisualParam::AccessoryOffset,"%.2f");
-    visualSlider("Crown opacity",VisualParam::AccessoryOpacity,"%.2f");
-    realText("Built-in test mesh; no model import yet.",nullptr);
-    realText("Use F5 for third person.",nullptr);
-    if (AccessoryEnabled()) {
-        const int status=AccessoryStatus();
-        realText(status==1 ? "Crown: submitted" : status==2 ? "Crown: renderer not ready" : "Crown: waiting for player",nullptr);
     }
 }
 // Read-only diagnostics for the katana test: which rotation source works, the
@@ -934,12 +924,12 @@ static void drawVisualPanel() {
                     ks==7?"Katana: model invalid":"Katana: hook install failed",nullptr);
             }
             sectionTitle("3D ACCESSORY");
-            bool accessory=AccessoryEnabled(); if (guiCheckbox("3D crown (test)",&accessory)) SetAccessoryEnabled(accessory);
-            if (canVisualPreview() && guiButton("Settings##open_accessory",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Accessory;
+            // v5: the crown is removed from the interface everywhere; its
+            // render hook stays dormant unless something else enables it.
             if (canVisualPreview() && guiButton("Options",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::Options;
             if (!canVisualPreview()) {
                 realText("Preview unavailable; inline settings:",nullptr);
-                drawHatSettings(); drawTrailSettings(); drawJumpSettings(); drawAccessorySettings(); drawKatanaSettings(); drawVisualOptions();
+                drawHatSettings(); drawTrailSettings(); drawJumpSettings(); drawKatanaSettings(); drawVisualOptions();
             }
             visualHint("Прозрачность и depth-test не изменяются этим оформлением.");
         }
@@ -1115,13 +1105,12 @@ static void drawVisualEditor() {
     guiSetNextPos(ImVec2(350.f,90.f),ImGuiCond_Always,ImVec2(0,0));
     if (guiSetNextSize) guiSetNextSize(ImVec2(310.f,430.f),ImGuiCond_FirstUseEver);
     VisualStyleScope style;
-    const char* title=current==VisualEditor::Hat?"China Hat settings":current==VisualEditor::Trail?"Trail settings":current==VisualEditor::Jump?"Jump ring settings":current==VisualEditor::Accessory?"3D crown settings":current==VisualEditor::Katana?"Katana settings":"Visual options";
+    const char* title=current==VisualEditor::Hat?"China Hat settings":current==VisualEditor::Trail?"Trail settings":current==VisualEditor::Jump?"Jump ring settings":current==VisualEditor::Katana?"Katana settings":"Visual options";
     if (guiBegin(title,nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
         if (guiButton && guiButton("Back to menu",ImVec2(-1.f,0.f))) visualEditor=VisualEditor::None;
         if (current==VisualEditor::Hat) drawHatSettings();
         else if (current==VisualEditor::Trail) drawTrailSettings();
         else if (current==VisualEditor::Jump) drawJumpSettings();
-        else if (current==VisualEditor::Accessory) drawAccessorySettings();
         else if (current==VisualEditor::Katana) drawKatanaSettings();
         else drawVisualOptions();
     }
@@ -1129,9 +1118,158 @@ static void drawVisualEditor() {
     if (visualEditor==current && current!=VisualEditor::Options && current!=VisualEditor::Jump && current!=VisualEditor::Accessory && current!=VisualEditor::Katana) drawEffectPreview(current);
 }
 
+// v5: the 3D portrait for the RmlUi Visuals window. A borderless preview
+// card pinned to the right edge of the screen, drawn in the game's ImGui
+// pass — the RmlUi menu renders later (Present), so its windows always sit
+// on top and the layout reserves this strip (menu_rml::kPreviewInsetPx).
+// Reuses the verified avatar/skin machinery of drawEffectPreview; shows the
+// China Hat cone, or the trail when only the trail is enabled.
+static void drawRmlVisualPreview() {
+    if (!guiBegin || !guiEnd || !guiSetNextPos) return;
+    const float w = frameWidth ? static_cast<float>(frameWidth) : 1280.f;
+    const float h = frameHeight ? static_cast<float>(frameHeight) : 720.f;
+    const float winW = 330.f;
+    const float x = w > winW+40.f ? w-winW-16.f : 16.f;
+    const float y = h > 440.f ? 96.f : 16.f;
+    guiSetNextPos(ImVec2(x,y),ImGuiCond_Always,ImVec2(0,0));
+    if (guiSetNextSize) guiSetNextSize(ImVec2(winW,0.f),ImGuiCond_Always);
+    VisualStyleScope style;
+    const int flags=ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|
+        ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoInputs|
+        ImGuiWindowFlags_NoFocusOnAppearing|ImGuiWindowFlags_NoBringToFrontOnFocus;
+    if (guiBegin("##rml_visual_preview",nullptr,flags)) {
+        auto* d=guiDrawList();
+        const auto now=GetTickCount64()*0.001;
+        auto skin=visual_player_skin::acquire(frameDevice);
+        previewFrameView=skin.view;
+        const ImVec2 p=guiCursor();
+        if (d) {
+            drawGradientRect(d,p,ImVec2(p.x+298.f,p.y+215.f),IM_COL32(19,33,37,255),IM_COL32(17,26,33,255),IM_COL32(8,14,20,255),IM_COL32(9,18,20,255));
+            drawLine(d,ImVec2(p.x+15,p.y+205),ImVec2(p.x+283,p.y+205),IM_COL32(42,85,68,150),1.f);
+            if (!ChinaHatEnabled() && TrailEnabled()) drawTrailPreview(d,p,now,skin);
+            else drawHatPreview(d,p,now,skin);
+        }
+        guiDummy(ImVec2(298.f,215.f));
+        const auto t=visualTokens();
+        tintedText(ChinaHatEnabled()?"China Hat · живые параметры":TrailEnabled()?"След · живые параметры":"превью: включи China Hat или След",t.accent);
+        visualHint(skin.view?"текстура игрока из игры":"ожидание скина (выйди в 3-е лицо)");
+    }
+    guiEnd();
+}
+
+// --------------------------------------------------------------------------
+// v5 HUD editor drag machinery. While the editor is open the game's HUD
+// windows stay visible (patchedDrawHud no longer skips them) and become
+// draggable: this hook overrides the game's pinned SetNextWindowPos with the
+// user-moved position (our call runs last, right before Begin), captures the
+// window rect through the exported ImGui::GetWindowPos/GetWindowSize, and
+// moves the window with the UWP pointer sample + the watched left button.
+// Positions live for the session; nothing is written to the game profile.
+// --------------------------------------------------------------------------
+static const char* const kHudDragNames[] = {
+    "##hud_fps","##hud_cps","##hud_clock","##hud_cpu","##hud_ram",
+    "##hud_resolution","##hud_watermark","##hud_info","##hud_active","##hud_hotkeys",
+    "##hud_coordinates","##hud_keystrokes","##module_hud"};
+constexpr int kHudDragCount = static_cast<int>(sizeof(kHudDragNames) / sizeof(kHudDragNames[0]));
+struct HudDragEntry { float x=0,y=0,w=0,h=0; bool hasPos=false; };
+static HudDragEntry g_hudDrag[kHudDragCount];
+static int g_hudDragSlot = -1;
+static float g_hudDragOffX=0, g_hudDragOffY=0;
+static float g_hudMouseX=0, g_hudMouseY=0;
+static bool g_hudMouseValid=false, g_hudLmbDown=false, g_hudLmbPressed=false, g_hudLmbReleased=false;
+
+static int hudDragSlot(const char* name) {
+    for (int i=0;i<kHudDragCount;++i)
+        if (std::strcmp(name,kHudDragNames[i])==0) return i;
+    return -1;
+}
+
+// One pointer/button sample per frame, before the HUD draws; themedBegin then
+// consumes the cached values for every window Begin.
+static void updateHudEditInput() {
+    float px=0,py=0,pw=0,ph=0;
+    g_hudMouseValid = menu_rml::ReadPointer(px,py,pw,ph) && frameWidth && frameHeight;
+    if (g_hudMouseValid) {
+        g_hudMouseX = px*static_cast<float>(frameWidth)/pw;
+        g_hudMouseY = py*static_cast<float>(frameHeight)/ph;
+    }
+    const bool down = (pageKeysReady && keyDown) ? keyDown(VK_LBUTTON)
+        : (GetAsyncKeyState(VK_LBUTTON)&0x8000)!=0;
+    g_hudLmbPressed = down && !g_hudLmbDown;
+    g_hudLmbReleased = !down && g_hudLmbDown;
+    g_hudLmbDown = down;
+}
+
+// Accent outline marking the draggable widgets in editor mode.
+static void drawHudDragOutline(const ImVec2& p, const ImVec2& s) {
+    if (!guiDrawList || !drawLine) return;
+    auto* d = guiDrawList();
+    const ImU32 c = IM_COL32(110,245,140,150);
+    drawLine(d,p,ImVec2(p.x+s.x,p.y),c,2.f);
+    drawLine(d,ImVec2(p.x+s.x,p.y),ImVec2(p.x+s.x,p.y+s.y),c,2.f);
+    drawLine(d,ImVec2(p.x+s.x,p.y+s.y),ImVec2(p.x,p.y+s.y),c,2.f);
+    drawLine(d,ImVec2(p.x,p.y+s.y),p,c,2.f);
+}
+
+static bool hudEditBegin(int slot, const char* name, bool* open, int flags) {
+    HudDragEntry& e = g_hudDrag[slot];
+    // The user-moved position wins over the game's pinned layout: this
+    // SetNextWindowPos runs after the game's own call, immediately before
+    // Begin, so ImGui applies ours.
+    if (e.hasPos && guiSetNextPos)
+        guiSetNextPos(ImVec2(e.x,e.y),ImGuiCond_Always,ImVec2(0,0));
+    const bool themed = hudThemeReady.load(std::memory_order_acquire) && guiPushColor && guiPopColor && guiPushVarFloat && guiPopVar;
+    if (themed) {
+        const auto bg=hud_theme::background(widgetOpacity*legacyOpacity,hudPalette), border=hud_theme::border(widgetOpacity*legacyOpacity,hudPalette);
+        guiPushColor(ImGuiCol_WindowBg,ImVec4(bg.r,bg.g,bg.b,bg.a));
+        guiPushColor(ImGuiCol_Border,ImVec4(border.r,border.g,border.b,border.a));
+        guiPushVarFloat(ImGuiStyleVar_WindowRounding,hud_theme::rounding(hudRounding));
+        guiPushVarFloat(ImGuiStyleVar_WindowBorderSize,1.f);
+    }
+    if (std::strcmp(name,"##hud_keystrokes")==0) flags &= ~ImGuiWindowFlags_NoBackground;
+    const bool result=realGuiBegin(name,open,flags);
+    if (themed) { guiPopVar(2); guiPopColor(2); }
+    if (result) {
+        if (guiGetWindowPos && guiGetWindowSize) {
+            const ImVec2 wp=guiGetWindowPos(), ws=guiGetWindowSize();
+            if (!e.hasPos) { e.x=wp.x; e.y=wp.y; e.hasPos=true; }
+            e.w=ws.x; e.h=ws.y;
+            drawHudDragOutline(wp,ws);
+        }
+        if (g_hudMouseValid) {
+            const bool inside = g_hudMouseX>=e.x-3.f && g_hudMouseX<=e.x+e.w+3.f &&
+                                g_hudMouseY>=e.y-3.f && g_hudMouseY<=e.y+e.h+3.f;
+            if (g_hudLmbPressed && g_hudDragSlot<0 && inside) {
+                g_hudDragSlot=slot;
+                g_hudDragOffX=g_hudMouseX-e.x;
+                g_hudDragOffY=g_hudMouseY-e.y;
+            }
+            if (g_hudDragSlot==slot && g_hudLmbDown) {
+                e.x=g_hudMouseX-g_hudDragOffX;
+                e.y=g_hudMouseY-g_hudDragOffY;
+                // Keep a grabbable piece of the widget on screen.
+                if (frameWidth) {
+                    if (e.x>static_cast<float>(frameWidth)-24.f) e.x=static_cast<float>(frameWidth)-24.f;
+                    if (e.x<24.f-e.w) e.x=24.f-e.w;
+                }
+                if (frameHeight) {
+                    if (e.y>static_cast<float>(frameHeight)-24.f) e.y=static_cast<float>(frameHeight)-24.f;
+                    if (e.y<0.f) e.y=0.f;
+                }
+            }
+            if (g_hudLmbReleased && g_hudDragSlot==slot) g_hudDragSlot=-1;
+        }
+    }
+    return result;
+}
+
 // Restyle only actual legacy HUD/notification windows, preserving their real
 // metrics, positions, interaction and layout. Never target the game's UI.
 static bool themedBegin(const char* name,bool* open,int flags) {
+    if (hudEditorActive.load(std::memory_order_acquire)) {
+        const int slot = hudDragSlot(name);
+        if (slot >= 0) return hudEditBegin(slot,name,open,flags);
+    }
     if (!insideLegacyHud || !hud_theme::card(name) || !guiPushColor || !guiPopColor || !guiPushVarFloat || !guiPopVar)
         return realGuiBegin(name,open,flags);
     const auto bg=hud_theme::background(widgetOpacity*legacyOpacity,hudPalette), border=hud_theme::border(widgetOpacity*legacyOpacity,hudPalette);
@@ -1174,23 +1312,45 @@ static void drawModuleHud(void* runtime, bool preview) {
     }
     guiEnd(); if (vars) guiPopVar(2); guiPopColor(3);
 }
+// Bottom hint strip while the HUD editor is open: how to interact and how
+// to leave. Drawn last so it never hides a widget (it only overlaps the very
+// bottom edge) and is itself not interactive.
+static void drawHudEditCaption() {
+    if (!guiBegin || !guiSetNextPos || !realText) return;
+    const float w = frameWidth ? static_cast<float>(frameWidth) : 1280.f;
+    const float h = frameHeight ? static_cast<float>(frameHeight) : 720.f;
+    guiSetNextPos(ImVec2(w*0.5f-230.f, h-52.f),ImGuiCond_Always,ImVec2(0,0));
+    VisualStyleScope style;
+    const int flags=ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|
+        ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoInputs|
+        ImGuiWindowFlags_NoFocusOnAppearing|ImGuiWindowFlags_NoBringToFrontOnFocus;
+    if (guiBegin("##hud_edit_caption",nullptr,flags)) {
+        const auto t=visualTokens();
+        tintedText("HUD EDIT",t.accent);
+        if (guiSameLine) guiSameLine(0.f,10.f);
+        tintedText("перетаскивай элементы мышкой · Esc — выход",t.textMuted);
+    }
+    guiEnd();
+}
 static void patchedDrawHud(void* runtime) {
     const bool menu=runtime && *(reinterpret_cast<unsigned char*>(runtime)+0x551);
     const bool editing=module_hud::editing(menu,hudEditorOpen || visualEditor!=VisualEditor::None);
     hudEditorActive.store(editing,std::memory_order_release);
-    if (!editing) {
-        if (hudThemeReady.load(std::memory_order_acquire) && guiPushColor && guiPopColor) {
-            const auto* settings=runtime ? reinterpret_cast<const ag::Settings*>(reinterpret_cast<const unsigned char*>(runtime)+0x48) : nullptr;
-            const bool previous=insideLegacyHud; const float oldOpacity=legacyOpacity;
-            legacyOpacity=settings ? hud_theme::alpha(settings->opacity) : 1.f;
-            guiPushColor(ImGuiCol_Text,ImVec4(hudColor[0]*(settings ? hud_theme::alpha(settings->text[0]) : 1.f),
-              hudColor[1]*(settings ? hud_theme::alpha(settings->text[1]) : 1.f),
-              hudColor[2]*(settings ? hud_theme::alpha(settings->text[2]) : 1.f),1.f));
-            insideLegacyHud=true; realDrawHud(runtime); insideLegacyHud=previous; legacyOpacity=oldOpacity;
-            guiPopColor(1);
-        } else realDrawHud(runtime);
-        if (moduleHudEnabled) drawModuleHud(runtime,false);
-    }
+    if (editing) updateHudEditInput();
+    // v5: while the HUD editor is open the HUD itself stays on screen — the
+    // widgets ARE the interface and are dragged directly (hudEditBegin).
+    if (hudThemeReady.load(std::memory_order_acquire) && guiPushColor && guiPopColor) {
+        const auto* settings=runtime ? reinterpret_cast<const ag::Settings*>(reinterpret_cast<const unsigned char*>(runtime)+0x48) : nullptr;
+        const bool previous=insideLegacyHud; const float oldOpacity=legacyOpacity;
+        legacyOpacity=settings ? hud_theme::alpha(settings->opacity) : 1.f;
+        guiPushColor(ImGuiCol_Text,ImVec4(hudColor[0]*(settings ? hud_theme::alpha(settings->text[0]) : 1.f),
+          hudColor[1]*(settings ? hud_theme::alpha(settings->text[1]) : 1.f),
+          hudColor[2]*(settings ? hud_theme::alpha(settings->text[2]) : 1.f),1.f));
+        insideLegacyHud=true; realDrawHud(runtime); insideLegacyHud=previous; legacyOpacity=oldOpacity;
+        guiPopColor(1);
+    } else realDrawHud(runtime);
+    if (moduleHudEnabled) drawModuleHud(runtime,false);
+    if (editing) drawHudEditCaption();
 }
 static void patchedNotificationDraw(void* queue, const ag::Settings& s) {
     if (hudEditorActive.load(std::memory_order_acquire)) return;
@@ -1201,173 +1361,6 @@ static void patchedNotificationDraw(void* queue, const ag::Settings& s) {
         realNotificationDraw(queue,s);
         insideLegacyHud=previous; legacyOpacity=oldOpacity; guiPopColor(1);
     } else realNotificationDraw(queue,s);
-}
-static bool editorVisible[5] = {true,true,true,true,true};
-static int editorSelected = 0;
-static float editorWidth() { return frameWidth ? float(frameWidth) : 1280.f; }
-static float editorHeight() { return frameHeight ? float(frameHeight) : 720.f; }
-static const char* editorPanelName(int index) {
-    constexpr const char* names[5] = {"Home","HUD","Modules","Appearance","Settings"};
-    return index>=0 && index<5 ? names[index] : "Panel";
-}
-static void editorColumn(int index) {
-    const float width=editorWidth(), height=editorHeight();
-    const bool wide=hud_theme::columnsFit(width);
-    const float x=wide ? hud_theme::panelX(index,width) : hud_theme::editorMetrics.panelLeft;
-    guiSetNextPos(ImVec2(x,hud_theme::panelTop(width)),ImGuiCond_Always,ImVec2(0,0));
-    if (guiSetNextSize) guiSetNextSize(ImVec2(wide ? hud_theme::panelWidthFor(width) : hud_theme::compactPanelWidth(width),
-                                               hud_theme::panelHeight(index,width,height)),ImGuiCond_Always);
-}
-static void editorToolbar() {
-    const float width=editorWidth();
-    const bool wide=hud_theme::columnsFit(width);
-    guiSetNextPos(ImVec2(hud_theme::editorMetrics.panelLeft,18.f),ImGuiCond_Always,ImVec2(0,0));
-    VisualStyleScope style;
-    if (guiBegin("##gc_editor_toolbar",nullptr,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|
-                 ImGuiWindowFlags_NoMove|ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|
-                 ImGuiWindowFlags_NoFocusOnAppearing)) {
-        const auto t=visualTokens();
-        tintedText("AOGIRI GREEN",t.accent);
-        if (guiSameLine) guiSameLine(0.f,8.f);
-        if (guiButton && guiButton("Panels",ImVec2(58.f,0.f))) {
-            const bool any=editorVisible[0]||editorVisible[1]||editorVisible[2]||editorVisible[3]||editorVisible[4];
-            for (bool& visible:editorVisible) visible=!any;
-        }
-        if (guiSameLine) guiSameLine(0.f,4.f);
-        if (guiButton && guiButton("Back to menu",ImVec2(100.f,0.f))) hudEditorOpen=false;
-        if (!wide && guiButton) {
-            // One panel at a time fits on narrow screens; buttons remain
-            // available even if a user hid every panel via Settings.
-            for (int i=0;i<5;++i) {
-                if (i>0 && guiSameLine && (width>=480.f || (i%2)!=0)) guiSameLine(0.f,4.f);
-                if (guiButton(editorPanelName(i),ImVec2(0,0))) { editorSelected=i; editorVisible[i]=true; }
-            }
-        }
-    }
-    guiEnd();
-}
-static void editorHome() {
-    editorColumn(0);
-    VisualStyleScope style;
-    if (guiBegin("Home##gc",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
-        const auto t=visualTokens();
-        tintedText("AOGIRI",t.accent); tintedText("GREEN",t.accent);
-        visualHint("GAYClient · HUD redesign");
-        sectionTitle("СЕССИЯ");
-        tintedText(ag::kVersion,t.textMuted);
-        visualHint("Только визуальный слой");
-        tintedText(ChinaHatAvailable()?"Human Visuals доступны":"Visuals unavailable",t.textDim);
-        if (!notificationHookReady) visualHint("Notifications may remain visible.");
-    }
-    guiEnd();
-}
-static void editorHud(void* runtime) {
-    editorColumn(1);
-    VisualStyleScope style;
-    if (guiBegin("HUD##gc",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
-        sectionTitle("ВИДЖЕТЫ");
-        if (runtime && setModule) {
-            auto* settings=reinterpret_cast<ag::Settings*>(reinterpret_cast<unsigned char*>(runtime)+0x48);
-            for (const auto& entry:module_hud::entries) {
-                bool enabled=settings->IsEnabled(entry.id);
-                if (guiCheckbox(entry.name,&enabled)) setModule(runtime,entry.id,enabled);
-            }
-        }
-        visualHint("Module List: Modules");
-    }
-    guiEnd();
-}
-static void editorModules(void* runtime) {
-    editorColumn(2);
-    VisualStyleScope style;
-    if (guiBegin("Modules##gc",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
-        sectionTitle("MODULE LIST HUD");
-        guiCheckbox("Module List HUD",&moduleHudEnabled);
-        visualHint("Preview on the right");
-        fullWidthSlider("Module list scale",&hudScale,.7f,1.6f);
-        fullWidthSlider("Module list opacity",&hudOpacity,0.f,1.f);
-        fullWidthSlider("Module list X",&hudX,0.f,.9f);
-        fullWidthSlider("Module list Y",&hudY,0.f,.9f);
-    }
-    guiEnd();
-}
-static void editorAppearance() {
-    editorColumn(3);
-    VisualStyleScope style;
-    if (guiBegin("Appearance##gc",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
-        sectionTitle("ТЕМА","Выберите цветовую схему");
-        for (int i=0;i<3;i++) {
-            if (guiButton && guiButton(hud_theme::palette(i).name,ImVec2(-1.f,0.f))) {
-                hudPalette=i; const auto c=hud_theme::palette(i).accent;
-                hudColor[0]=c.r; hudColor[1]=c.g; hudColor[2]=c.b;
-            }
-        }
-        sectionTitle("ОФОРМЛЕНИЕ");
-        fullWidthSlider("Card rounding",&hudRounding,0.f,20.f);
-        if (hudThemeReady.load(std::memory_order_acquire)) fullWidthSlider("Widget background opacity",&widgetOpacity,0.f,1.f);
-        else realText("Widget theme unavailable; original widgets retained.",nullptr);
-        if (guiColorEdit3) { realText("HUD text color",nullptr); if (guiPushWidth && guiPopWidth) guiPushWidth(-1.f);
-            guiColorEdit3("##hud_color",hudColor,0); if (guiPushWidth && guiPopWidth) guiPopWidth(); }
-    }
-    guiEnd();
-}
-static void editorSettings() {
-    editorColumn(4);
-    VisualStyleScope style;
-    if (guiBegin("Settings##gc",nullptr,ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse)) {
-        sectionTitle("ПАНЕЛИ");
-        for (int i=0;i<5;++i) guiCheckbox(editorPanelName(i),&editorVisible[i]);
-        sectionTitle("СЕССИЯ");
-        visualHint("Style resets after game exit.");
-        if (!notificationHookReady) realText("Notifications may remain visible.",nullptr);
-        visualHint("Профиль ядра визуальный слой не перезаписывает.");
-    }
-    guiEnd();
-}
-static void editorPreviewCaption() {
-    const float x=hud_theme::previewX(editorWidth());
-    guiSetNextPos(ImVec2(x,hud_theme::panelTop(editorWidth())),ImGuiCond_Always,ImVec2(0,0));
-    if (guiSetNextSize) guiSetNextSize(ImVec2(hud_theme::editorMetrics.previewWidth,0.f),ImGuiCond_FirstUseEver);
-    VisualStyleScope style;
-    if (guiBegin("Preview##gc_caption",nullptr,ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|
-                 ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_AlwaysAutoResize)) {
-        const auto t=visualTokens();
-        tintedText("ПРЕДПРОСМОТР",t.accent);
-        visualHint("Module List · реальные модули");
-    }
-    guiEnd();
-}
-static void drawHudEditor(void* runtime) {
-    editorToolbar();
-    const bool wide=hud_theme::columnsFit(editorWidth());
-    if (editorVisible[0] && (wide || editorSelected==0)) editorHome();
-    if (editorVisible[1] && (wide || editorSelected==1)) editorHud(runtime);
-    if (editorVisible[2] && (wide || editorSelected==2)) editorModules(runtime);
-    if (editorVisible[3] && (wide || editorSelected==3)) editorAppearance();
-    if (editorVisible[4] && (wide || editorSelected==4)) editorSettings();
-    if (editorWidth()>=600.f && editorHeight()>=350.f) {
-        editorPreviewCaption();
-        if (hudEditorOpen) drawModuleHud(runtime,true);
-    }
-}
-/*
- * VISUAL-ONLY NOTE
- * The editor above is a reskin of the existing controls: the same widget
- * checkboxes, the same three palettes, the same rounding/opacity/colour
- * sliders and the same Module List settings, now grouped into five columns.
- * No setting, hook or render path was added.
- */
-static void drawHudEntry() {
-    if (!hudHooksReady) return;
-    guiSetNextPos(ImVec2(18.f,130.f),ImGuiCond_FirstUseEver,ImVec2(0,0));
-    if (guiSetNextSize) guiSetNextSize(ImVec2(166.f,0.f),ImGuiCond_FirstUseEver);
-    VisualStyleScope style;
-    if (guiBegin("HUD",nullptr,ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoCollapse)) {
-        sectionTitle("GAYCLIENT","HUD editor");
-        guiCheckbox("Open HUD editor",&hudEditorOpen);
-        guiCheckbox("Module List HUD",&moduleHudEnabled);
-    }
-    guiEnd();
 }
 
 // The embedded menu forwards HUD-module toggles through this drain target;
@@ -1419,7 +1412,10 @@ static void patchedDrawGui(void* runtime) {
     if (menuOpen && menu_rml::ConsumeHudEditorRequest()) hudEditorOpen=true;
     menu_rml::DrainModuleToggles(&toggleGameModule);
     const bool editingVisual=menuOpen && visualEditor!=VisualEditor::None && canVisualPreview();
-    SetPlayerSkinPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory && visualEditor!=VisualEditor::Katana);
+    // v5: the RmlUi Visuals window asks for the 3D portrait preview; it is
+    // drawn by this (game ImGui) pass, so it stays under the RmlUi windows.
+    const bool rmlPreview=menuOpen && replaced && menu_rml::VisualPreviewActive() && canVisualPreview();
+    SetPlayerSkinPreviewActive((editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory && visualEditor!=VisualEditor::Katana) || rmlPreview);
     SetPlayerModelPreviewActive(editingVisual && visualEditor!=VisualEditor::Options && visualEditor!=VisualEditor::Jump && visualEditor!=VisualEditor::Accessory && visualEditor!=VisualEditor::Katana && previewGameModelTest);
     SetPlayerPreviewHatActive(editingVisual && visualEditor==VisualEditor::Hat && previewGameModelTest);
     if (!menuOpen || (!hudEditorOpen && !editingVisual)) {
@@ -1427,8 +1423,16 @@ static void patchedDrawGui(void* runtime) {
         else if (!menuOpen) realDrawGui(runtime);
     }
     if (editingVisual) { drawVisualEditor(); return; }
-    if (menuOpen && hudEditorOpen && hudHooksReady) { drawHudEditor(runtime); return; }
-    if (replaced) return;  // the embedded menu owns the screen
+    // v5 HUD editor: nothing but the HUD itself; the widgets are dragged
+    // directly (patchedDrawHud + hudEditBegin), Esc closes the game menu and
+    // thereby the editor.
+    if (menuOpen && hudEditorOpen) return;
+    if (replaced) {
+        // v5: the crown is gone from the interface; make sure it stays off.
+        if (AccessoryEnabled()) SetAccessoryEnabled(false);
+        if (rmlPreview) drawRmlVisualPreview();
+        return;  // the embedded menu owns the screen
+    }
     // Exact legacy build layout, verified against the original binary.
     if (!runtime || !*(reinterpret_cast<unsigned char*>(runtime) + 0x551)) return;
     auto* settings = reinterpret_cast<ag::Settings*>(reinterpret_cast<unsigned char*>(runtime) + 0x48);
@@ -1442,7 +1446,6 @@ static void patchedDrawGui(void* runtime) {
     }
     guiEnd();
     drawVisualPanel();
-    drawHudEntry();
 }
 
 // Called from legacy drawMarker, while its own render lock is held. The ImGui
@@ -1686,6 +1689,9 @@ static DWORD WINAPI bootstrap(void*) {
     guiPushTextWrap = symbol<PushTextWrapFn>("_ZN5ImGui15PushTextWrapPosEf");
     guiPopTextWrap = symbol<PopTextWrapFn>("_ZN5ImGui14PopTextWrapPosEv");
     guiSetNextPos = symbol<SetNextPosFn>("_ZN5ImGui16SetNextWindowPosERK6ImVec2iS2_");
+    // v5 HUD editor: exact widget rects for the drag hit-testing.
+    guiGetWindowPos = symbol<GetVec2Fn>("_ZN5ImGui12GetWindowPosEv");
+    guiGetWindowSize = symbol<GetVec2Fn>("_ZN5ImGui13GetWindowSizeEv");
     findGameWindow = symbol<FindWindowFn>("_ZN2ag19FindMinecraftWindowEb");
     addFont = symbol<AddFontFn>("_ZN2ag15AddEmbeddedFontEfb");
     addWheel = symbol<AddWheelFn>("_ZN7ImGuiIO18AddMouseWheelEventEff");
@@ -1744,6 +1750,8 @@ static DWORD WINAPI bootstrap(void*) {
         log("hook enable failed; attempted to disable hooks"); return 1;
     }
     log("hooks enabled");
+    if (!guiGetWindowPos || !guiGetWindowSize)
+        log("HUD drag unavailable: ImGui window metrics not exported");
     if (hudHookCreated) {
         if (mhEnable(hudTarget)==0) hudHooksReady.store(true,std::memory_order_release);
         else { mhRemove(hudTarget); log("HUD editor unavailable"); }
@@ -1778,9 +1786,9 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID) {
     }
     return TRUE;
 }
-
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/compat.cpp
+================================================================================
 ================================================================================================================================================================
 
 ================================================================================
@@ -2188,7 +2196,8 @@ print('HUD visual-only checks OK; Windows/Minecraft verification required')
 ================================================================================================================================================================
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/tests/check_menu_rml.py
-"""Static wiring checks for the RmlUi game menu; no Windows here."""
+================================================================================
+"""Static wiring checks for the v5 RmlUi game menu; no Windows here."""
 from pathlib import Path
 r = Path(__file__).resolve().parents[1]
 root = r.parent
@@ -2197,6 +2206,7 @@ m = (r/'src/menu_rml.cpp').read_text(encoding='utf-8')
 h = (r/'src/menu_rml.h').read_text(encoding='utf-8')
 d = (r/'src/menu_rml_data.h').read_text(encoding='utf-8')
 b = (r/'tools/build_adapter.py').read_text(encoding='utf-8')
+import re
 
 # 1. The old ImGui embed is gone everywhere: no menu_embed, no GAYClientMenu,
 #    no vendored ImGui sources in the internal DLL build.
@@ -2213,11 +2223,12 @@ assert 'imgui_impl_dx11.cpp' not in b and 'vendor/imgui/imgui.cpp' not in b
 assert not (r/'src/menu_embed.cpp').exists() and not (r/'src/menu_embed.h').exists()
 assert not (r/'tests/check_menu_embed.py').exists()
 
-# 2. Public contract: same surface as the old embed, except the render call
-#    takes the back-buffer render target view instead of the device context.
+# 2. Public contract: same surface as v4 plus the v5 preview toggle and the
+#    pointer reader used by the HUD drag editor.
 for name in ('RenderOverlay', 'SetPointer', 'AddWheel', 'SetKeyQuery',
              'SetGameMenuOpen', 'SetModuleStateReader', 'DrainModuleToggles',
-             'ReplacesLegacyMenu', 'ConsumeHudEditorRequest'):
+             'ReplacesLegacyMenu', 'ConsumeHudEditorRequest',
+             'VisualPreviewActive', 'ReadPointer'):
     assert name in h and name in m
 assert 'ID3D11RenderTargetView* rtv' in h and 'ID3D11DeviceContext' not in h
 assert 'void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,' in m
@@ -2233,7 +2244,6 @@ assert 'LoadFontFace' in m and 'Rml::Style::FontWeight::Bold' in m
 assert '"GAY"' in m
 assert 'LoadDocumentFromMemory' in m and 'text.find("<style>")' in m
 assert 'kMenuRml' in m and 'kMenuRcss' in m
-assert 'kTestToolsRml' not in m and 'kTestToolsRcss' not in m
 
 # 4. Render loop discipline: dimensions follow the viewport, the RTV is passed
 #    to EndFrame, and the legacy interface is replaced only after a complete
@@ -2245,35 +2255,36 @@ assert 'bool ReplacesLegacyMenu() { return g_renderOk.load' in m
 assert 'g_initFailed = true' in m
 assert 'if (!menuVisible) return;' in m
 
-# 5. Input is fed from the existing hooks only: cursor DIPs are scaled to
-#    pixels like the old embed, buttons/keys are forwarded on transitions only
-#    (RmlUi processes every call as a fresh event), the wheel keeps the
-#    one-unit-per-notch convention of the adapter.
+# 5. Input: cursor DIPs scaled to pixels, buttons/keys on transitions only,
+#    and the wheel sign is INVERTED for RmlUi (UWP positive = wheel up, RmlUi
+#    positive = scroll toward the bottom).
 assert 'static_cast<float>(width) / w' in m
 assert 'if (down == g_mouseStates[button]) continue;' in m
 assert 'ProcessMouseButtonDown(button, 0)' in m and 'ProcessMouseButtonUp(button, 0)' in m
-assert 'ProcessMouseWheel(Rml::Vector2f(wheelX, wheelY), 0)' in m
+assert 'ProcessMouseWheel(Rml::Vector2f(-wheelX, -wheelY), 0)' in m
 assert 'KI_ESCAPE' in m
 
 # 6. Verified setter surface only: the module toggles go through the queued
 #    ag::Runtime::SetModule bridge, the effect toggles through the direct
-#    setters, and every slider writes one VisualParam.
+#    setters, and every slider writes one VisualParam. The crown is gone:
+#    no Accessory switch from the menu.
 assert 'queueAgModule' in m and 'g_pendingToggles.size() < 32' in m
 assert 'SetChinaHatEnabled(on)' in m and 'SetTrailEnabled(on)' in m
-assert 'SetJumpEnabled(on)' in m and 'SetKatanaEnabled(on)' in m and 'SetAccessoryEnabled(on)' in m
+assert 'SetJumpEnabled(on)' in m and 'SetKatanaEnabled(on)' in m
+assert 'SetAccessoryEnabled' not in m
 assert 'SetHatFillEnabled(on)' in m and 'SetHatRainbowEnabled(on)' in m
 assert 'SetTrailFillEnabled(on)' in m and 'SetTrailRainbowEnabled(on)' in m
 assert 'SetJumpRainbowEnabled(on)' in m
 assert 'SetVisualParam(m_def->param, paramFromDom(*m_def, dom));' in m
 assert 'percentToRange(dom, 0.03f, 0.80f)' in m
 
-# 7. The DOM registry covers every interactive element of both documents.
+# 7. The DOM registry covers every interactive element.
 for switch_id in ('sw-fps', 'sw-cps', 'sw-clock', 'sw-keys', 'sw-watermark',
-                  'sw-coords', 'sw-res', 'sw-perf', 'sw-modlist',
-                  'sw-chinahat', 'sw-trail', 'sw-jump', 'sw-katana', 'sw-crown',
+                  'sw-coords', 'sw-res', 'sw-perf', 'sw-modlist', 'sw-preview',
+                  'sw-chinahat', 'sw-trail', 'sw-jump', 'sw-katana',
                   'sw-gfx-chinahat', 'sw-gfx-trail', 'sw-gfx-jump',
                   'sw-ch-fill', 'sw-ch-rainbow', 'sw-tr-fill', 'sw-tr-rainbow',
-                  'sw-jr-rainbow', 'sw-kt-master', 'sw-cr-master'):
+                  'sw-jr-rainbow', 'sw-kt-master'):
     assert f'"{switch_id}"' in m, switch_id
     assert f'id="{switch_id}"' in d, switch_id
 for slider_id in ('sl-ch-rainbow', 'sl-ch-opacity', 'sl-ch-radius', 'sl-ch-height',
@@ -2281,45 +2292,61 @@ for slider_id in ('sl-ch-rainbow', 'sl-ch-opacity', 'sl-ch-radius', 'sl-ch-heigh
                   'sl-tr-rainbow', 'sl-tr-opacity', 'sl-tr-height', 'sl-tr-life',
                   'sl-jr-rainbow', 'sl-jr-opacity', 'sl-jr-radius', 'sl-jr-duration',
                   'sl-kt-scale', 'sl-kt-tilt', 'sl-kt-side', 'sl-kt-height',
-                  'sl-kt-forward', 'sl-kt-opacity', 'sl-kt-fpside', 'sl-kt-fpforward',
-                  'sl-cr-scale', 'sl-cr-offset', 'sl-cr-opacity'):
+                  'sl-kt-forward', 'sl-kt-opacity', 'sl-kt-fpside', 'sl-kt-fpforward'):
     assert f'"{slider_id}"' in m, slider_id
     assert f'id="{slider_id}"' in d, slider_id
+# Crown ids are gone from both sides.
+for gone in ('sw-crown', 'sw-cr-master', 'sl-cr-scale', 'sl-cr-offset',
+             'sl-cr-opacity', 'sl-cr-r', 'sl-cr-g', 'sl-cr-b', 'win-cr',
+             'win-ch', 'win-tr', 'win-jr', 'win-kt'):
+    assert f'id="{gone}"' not in d, gone
+    assert f'"{gone}"' not in m, gone
 # Every slider id in the markup is registered and has a readout counterpart.
-slider_ids = set(re.findall(r'id="(sl-[a-z0-9-]+)"', d)) if (re := __import__('re')) else set()
+slider_ids = set(re.findall(r'id="(sl-[a-z0-9-]+)"', d))
 for slider_id in slider_ids:
     assert f'"{slider_id}"' in m, slider_id
     readout = 'ro' + slider_id[2:]
     assert f'id="{readout}"' in d, readout
-# Every switch id in the markup is registered.
+# Every switch id in the markup is referenced from the C++ side.
 for switch_id in set(re.findall(r'id="(sw-[a-z0-9-]+)"', d)):
     assert f'"{switch_id}"' in m, switch_id
 
-# 8. Window manager: fold buttons, layout reset, close and HUD editor
-#    buttons are wired; drag + focus go through the WindowListener.
+# 8. Window manager: exactly two windows, fold buttons, sections, preview
+#    toggle, layout reset, close and HUD editor buttons are wired.
 assert 'btn-close' in m and 'btn-hudeditor' in m and 'btn-hudeditor2' not in m
-assert 'activateTab' not in m and '"tab-modules"' not in m and '"panel-modules"' not in m
 assert 'class WindowListener' in m and 'EventId::Dragstart' in m and 'EventId::Drag' in m
 assert 'focusWin' in m and 'applyWin' in m and 'layoutWindows' in m
-assert 'kWindows[]' in m and '"win-home"' in m and '"win-visuals"' in m
+kwindows = re.search(r'const WinDef kWindows\[\] = \{(.*?)\};', m, re.S).group(1)
+assert re.findall(r'\{"(win-[a-z]+)"', kwindows) == ['win-home', 'win-visuals']
 assert 'menu_layout::computeMenuWindows' in m and 'menu_layout::clampDraggedWindow' in m
 assert 'id.compare(0, 5, "fold-")' in m and 'SetClass("folded"' in m
 assert 'id == "btn-layout"' in m
+assert 'id == "sw-preview"' in m and 'g_previewOn' in m
+assert 'id.compare(0, 4, "sec-")' in m
 assert 'SetClass("on"' in m and 'IsClassSet("on")' in m
 assert 'SetClass("focus"' in m
+assert 'SetClass("anim"' in m and 'driveIconAnimation' in m and 'kAnimPeriod' in m
 assert 'g_hudEditorRequest.store(true, std::memory_order_relaxed);' in m
 assert 'layoutWindows(static_cast<float>(width), static_cast<float>(height), true);' in m
 assert 'layoutWindows(static_cast<float>(width), static_cast<float>(height), false);' in m
-assert (r/'src/menu_layout.h').exists()
 ml = (r/'src/menu_layout.h').read_text(encoding='utf-8')
 assert 'rectsOverlap' in ml and 'kMinRowHeight' in ml
+assert 'float right_inset = 0.0f' in ml
 
-# 9. Katana diagnostics live at the bottom of the katana window; the text is
+# 8b. UI zoom: every px in the RCSS and the window constants carry the scale.
+assert 'computeUiScale' in m and 'scaleRcssPx' in m
+assert 'g_uiScale = computeUiScale(width, height);' in m
+assert 'const std::string scaledRcss = scaleRcssPx(kMenuRcss, g_uiScale);' in m
+assert 'kFoldedHeightRef * g_uiScale' in m
+assert 'kWindows[i].w * g_uiScale' in m
+# The 3D preview strip is reserved in screen pixels (ImGui side is not zoomed).
+assert 'kPreviewInsetPx' in m and 'viewW > kPreviewInsetPx * 2.0f' in m
+
+# 9. Katana diagnostics live at the bottom of the katana section; the text is
 #    updated only when it actually changed.
 assert 'katanaStatusText' in m and 'KatanaDebugSnapshot()' in m
-assert 'g_ttStatusCache != status' not in m and 'if (status != g_ttStatusCache)' in m
-assert 'tt-status' in d and 'tt-diag' in d and 'win-kt' in d
-assert 'id="tt"' not in d
+assert 'if (status != g_ttStatusCache)' in m
+assert 'tt-status' in d and 'tt-diag' in d and 'sec-kt' in d
 
 # 10. Build script discipline: static RmlUi without export leaks, the DX11
 #     renderer with non-multisampled targets, the FreeType font engine
@@ -2332,11 +2359,7 @@ assert 'ftmodule.h' in b and 'ftgzip.c' in b and 'ftmm.c' in b
 assert 'menu_rml.cpp' in b and 'menu_embed.cpp' not in b
 assert 'GAYClientInternal.dll' in b
 
-# 10b. Init bugs found on the first user run must stay fixed: the viewport is
-# set before the first BeginFrame (the renderer defaults to 0x0 targets), and
-# every early return in initBackend logs its reason to gayclient-menu.log
-# through the custom SystemInterface (which also captures RmlUi's own
-# messages, e.g. RCSS parse errors).
+# 10b. Init bugs found on the first user run must stay fixed.
 assert 'g_renderer->SetViewport(static_cast<int>(width), static_cast<int>(height));' in m
 assert m.index('g_renderer->SetViewport') < m.index('Rml::Initialise()')
 assert 'Rml::SetSystemInterface(&g_systemInterface);' in m
@@ -2350,61 +2373,88 @@ for step in ('segoeui.ttf unreadable', 'Rml::Initialise returned false',
     assert step in m, step
 assert 'first frame complete' in m
 
-# 11. The markup keeps the launcher palette in windowed form: draggable
-#     title bars, folding, scrolling bodies, dim backdrop, accent gradients.
+# 11. The markup keeps the launcher palette in windowed form, with RCSS vector
+#     icons and ASCII fold glyphs (U+25BE renders as tofu in Segoe UI).
 assert '.win-head' in d and 'drag: drag;' in d
 assert 'overflow-y: auto' in d and 'scrollbarvertical' in d
 assert 'border-radius: 13px 13px 0 0' in d
 assert 'id="doc-body"' in d and '#020805' in d
 assert '.win.folded .win-body { display: none; }' in d
-for win in ('win-home', 'win-visuals', 'win-ch', 'win-tr', 'win-jr', 'win-kt', 'win-cr'):
+for win in ('win-home', 'win-visuals'):
     assert f'id="{win}"' in d, win
 assert '#6ef58c' in d and 'transition:' in d
 assert 'decorator: linear-gradient(' in d
-assert '#3ae882' not in d
 assert 'font-size: 20px' in d
-assert '1140px' not in d and '716px' not in d
+# icons: parts exist for every module row + the preview/master rows
+for part in ('.g-needle', '.r-ring', '.c-min', '.k-a', '.w-badge', '.x-rot',
+             '.v-scr', '.p-die', '.e-bar', '.h-c1', '.t-b1', '.j-r1', '.kt-blade', '.b-top'):
+    assert part + ' {' in d, part
+assert 'body.anim .g-needle' in d and 'body.anim .r-ring' in d
+assert d.count('class="ip') >= 30
+# fold glyphs: only '+' and en-dash; no U+25BE anywhere
+assert '\u25be' not in d and '\u25b2' not in d and '\u25b6' not in d
+assert 'class="f-plus">+' in d
+assert 'class="f-minus">\u2013<' in d
+assert '.f-plus, .f-minus { display: none; }' in d
+# collapsible sections
+assert '.sec.folded .sec-body { display: none; }' in d and '.sec-head' in d
+for sec in ('sec-ch', 'sec-tr', 'sec-jr', 'sec-kt'):
+    assert f'id="{sec}"' in d, sec
 
-# 12. RmlUi 6.x rendering pitfalls found via the software-rasterizer repro
-#     must stay fixed:
-#     (a) default display is inline in RmlUi, so every block container needs
-#         an explicit display: block (or flex);
-#     (b) rgba(r,g,b,0.97) parses alpha with atoi -> 0 => invisible; all
-#         colors use #rrggbbaa hex instead;
-#     (c) a column flex child whose natural height exceeds the container
-#         collapses fixed siblings unless flex-basis: 0px is set;
-#     (d) element ids must be unique (GetElementById returns the first).
-import re as _re2
+# 12. RmlUi 6.x rendering pitfalls must stay fixed:
+#     (a) default display is inline: every block container needs display block;
+#     (b) rgba() parses alpha with atoi -> 0: all colors are #rrggbbaa hex;
+#     (c) flex-basis: 0px on the scrolling body;
+#     (d) unique ids.
 block_divs = ('.win-body', '.brand', '.brand-name', '.brand-sub', '.m-text',
-              '.m-name', '.m-desc', '.note', '.foot', '#tt-status', '#tt-diag')
+              '.m-name', '.m-desc', '.note', '.foot', '#tt-status', '#tt-diag',
+              '.sec-body')
 for sel in block_divs:
-    pat = _re2.escape(sel) + r'\s*\{[^}]*display:\s*block'
-    assert _re2.search(pat, d), sel
+    pat = re.escape(sel) + r'\s*\{[^}]*display:\s*block'
+    assert re.search(pat, d), sel
 assert '.win-body {\n    flex-basis: 0px;' in d
 assert '.win-head {\n    height: 44px;\n    flex-basis: 44px;' in d
 assert 'rgba(' not in d
-import re as _re
-assert len(_re.findall(r'id="doc-body"', d)) == 1
-assert len(_re.findall(r'class="win"', d)) == 7
-assert _re.findall(r'id="fold-\d"', d) == ['id="fold-0"', 'id="fold-1"', 'id="fold-2"',
-                                            'id="fold-3"', 'id="fold-4"', 'id="fold-5"',
-                                            'id="fold-6"']
+assert len(re.findall(r'id="doc-body"', d)) == 1
+assert len(re.findall(r'class="win"', d)) == 2
+assert re.findall(r'id="fold-\d"', d) == ['id="fold-0"', 'id="fold-1"']
 
-# 13. Web bridge: the web replica (repair/menu-web, root index.html) drives
-#     the same verified setters through a localhost-only WebSocket server.
-#     Commands are applied on the Present thread; bridge failure is non-fatal;
-#     the socket thread never touches the RmlUi DOM.
-assert 'namespace bridge {' in m
-assert '127.0.0.1' in m and '39731' in m
-assert 'Sec-WebSocket-Accept' in m and '258EAFA5-E914-47DA-95CA-C5AB0DC85B11' in m
-assert 'bridge::start();' in m and 'bridge::tick();' in m
-assert m.index('bridge::start();') > m.index('g_ready = true;')
-assert m.index('bridge::tick();') < m.index('if (!menuVisible) return;')
-assert 'queueCommand(' in m and 'pushOutbox(' in m
-assert '"-lws2_32"' in b
+# 13. The web bridge is gone completely: no WebSocket server, no ws2_32, no
+#     web-menu file pair, no manifest entry.
+assert 'namespace bridge' not in m and '39731' not in m and 'Sec-WebSocket' not in m
+assert 'ws2_32' not in b and 'winsock' not in m.lower()
+assert not (root/'index.html').exists() and not (r/'menu-web').exists()
+manifest = (r/'install-manifest.json').read_text(encoding='utf-8')
+assert 'web-menu' not in manifest and 'index.html' not in manifest
+
+# 14. compat.cpp v5: the HUD editor shows only the HUD, and its widgets are
+#     dragged through the already-installed ImGui::Begin hook.
+assert 'hudEditBegin' in u and 'kHudDragNames' in u and 'updateHudEditInput' in u
+assert 'menu_rml::ReadPointer(px,py,pw,ph)' in u
+assert '"_ZN5ImGui12GetWindowPosEv"' in u and '"_ZN5ImGui13GetWindowSizeEv"' in u
+assert 'guiSetNextPos(ImVec2(e.x,e.y),ImGuiCond_Always,ImVec2(0,0))' in u  # user position overrides the pin
+assert 'drawHudDragOutline' in u and 'drawHudEditCaption' in u
+# patchedDrawHud draws the HUD while the editor is open (no editing skip).
+assert 'if (!editing) {' not in u.split('static void patchedDrawHud')[1].split('static void patchedNotificationDraw')[0]
+# the old five-column editor and its entry button are gone
+for gone in ('drawHudEditor', 'editorColumn', 'editorToolbar', 'editorHome',
+             'editorHud', 'editorModules', 'editorAppearance', 'editorSettings',
+             'editorPreviewCaption', 'drawHudEntry', 'editorVisible', 'editorSelected'):
+    assert gone not in u, gone
+# HUD editor mode leaves nothing but the HUD on screen
+assert 'if (menuOpen && hudEditorOpen) return;' in u
+# the 3D preview window for the RmlUi Visuals tab
+assert 'drawRmlVisualPreview' in u and 'menu_rml::VisualPreviewActive()' in u
+assert '##rml_visual_preview' in u
+assert '|| rmlPreview' in u  # skin capture also runs for the RmlUi preview
+# the crown stays off while the new menu owns the screen
+assert 'if (AccessoryEnabled()) SetAccessoryEnabled(false);' in u
+assert 'drawAccessorySettings' not in u and '3D crown' not in u
 
 print('check_menu_rml: ok')
+================================================================================
 КОНЕЦ ФАЙЛА: repair/tests/check_menu_rml.py
+================================================================================
 ================================================================================================================================================================
 
 ================================================================================
@@ -5378,13 +5428,23 @@ bool ReplacesLegacyMenu();
 // One-shot request from the menu's HUD-editor buttons.
 bool ConsumeHudEditorRequest();
 
-} // namespace menu_rml
+// True while the 3D preview toggle in the Visuals window is on. The compat
+// layer draws the actual 3D portrait window (game ImGui pass) and the menu
+// reserves layout space for it on the right when this holds.
+bool VisualPreviewActive();
 
+// Last pointer sample received from the adapter's pointer hook, in client
+// DIPs. Used by the compat layer's HUD-drag editor to hit-test widgets.
+bool ReadPointer(float& x, float& y, float& w, float& h);
+
+} // namespace menu_rml
 ================================================================================
 КОНЕЦ ФАЙЛА: repair/src/menu_rml.h
+================================================================================
 ================================================================================================================================================================
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/menu_layout.h
+================================================================================
 // Pure window-layout math for the windowed in-game menu. No engine includes:
 // the adapter (menu_rml.cpp) and the Linux pixel harness both call this, so
 // the tiling that ships is exactly the tiling that was verified.
@@ -5458,8 +5518,12 @@ inline void rebalanceLastRow(const float* natural_w, int count, float avail_w,
 }
 
 inline void computeMenuWindows(const float* natural_w, const float* natural_h, int count,
-                               float view_w, float view_h, WindowRect* out) {
-    const float avail_w = view_w - 2.0f * kMargin;
+                               float view_w, float view_h, WindowRect* out,
+                               float right_inset = 0.0f) {
+    // right_inset reserves a strip along the right edge (the 3D preview
+    // window lives there); the tiled block centers inside the remaining
+    // width so it stays visually centered on the whole screen.
+    const float avail_w = view_w - 2.0f * kMargin - (right_inset > 0.0f ? right_inset : 0.0f);
     const float avail_h = view_h - 2.0f * kMargin;
 
     int row_of[kMaxWindows] = {};
@@ -5515,7 +5579,11 @@ inline void computeMenuWindows(const float* natural_w, const float* natural_h, i
             row_w = (in_row == 0) ? natural_w[i] : row_w + kGap + natural_w[i];
             in_row++;
         }
-        float x = kMargin + (avail_w - row_w) * 0.5f;
+        // Center inside the strip-free area [0, view_w - right_inset] so no
+        // row can ever reach into the reserved strip. With no inset this is
+        // identical to the previous centering inside the margined viewport.
+        float x = (view_w - right_inset - row_w) * 0.5f;
+        if (x < kMargin) x = kMargin;
         for (int i = 0; i < count; ++i) {
             if (row_of[i] != r) continue;
             out[i].x = x;
@@ -5553,13 +5621,14 @@ inline bool rectsOverlap(const WindowRect* rects, int count) {
 }
 
 }  // namespace menu_layout
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/menu_layout.h
+================================================================================
 
+================================================================================
 НАЧАЛО ФАЙЛА: repair/src/menu_rml.cpp
+================================================================================
 #include "menu_rml.h"
-
-#include <winsock2.h>
-#include <ws2tcpip.h>
 
 #include <algorithm>
 #include <atomic>
@@ -5567,9 +5636,9 @@ inline bool rectsOverlap(const WindowRect* rects, int count) {
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
-#include <deque>
 #include <memory>
 #include <mutex>
+#include <regex>
 #include <utility>
 #include <vector>
 
@@ -5657,10 +5726,61 @@ unsigned g_width = 0, g_height = 0;
 bool g_menuShown = false;
 
 // ---------------------------------------------------------------------------
-// Window manager state: the seven menu windows with their natural sizes and
+// Window manager state: the two menu windows with their natural sizes and
 // live geometry. Positions are owned here (never read back from the DOM), so
 // dragging and re-tiling cannot desync from what is rendered.
 // ---------------------------------------------------------------------------
+
+// UI zoom: the menu ships at a 1080p reference size; on small windows the
+// fonts and shapes read as pixel mush. Every px in the RCSS and every layout
+// constant below is multiplied by this factor at load time.
+float g_uiScale = 1.0f;
+// Screen-pixel strip reserved on the right for the compat layer's 3D preview
+// window (drawn by the game's ImGui pass, so it is NOT multiplied by
+// g_uiScale; it matches the ImGui window's pixel size).
+constexpr float kPreviewInsetPx = 356.0f;
+constexpr unsigned kAnimPeriod = 24;  // frames between icon animation states
+
+float computeUiScale(unsigned width, unsigned height) {
+    const float ref = std::fmax(static_cast<float>(height) / 1080.0f,
+                                 static_cast<float>(width) / 1920.0f);
+    const float scale = ref * 1.25f;
+    if (scale < 1.15f) return 1.15f;
+    if (scale > 2.0f) return 2.0f;
+    return scale;
+}
+
+// Multiply every `<number>px` in the RCSS by the UI scale. 0px stays 0px;
+// deg/percent values have no px unit and are left alone.
+std::string scaleRcssPx(const char* rcss, float scale) {
+    if (scale == 1.0f) return std::string(rcss);
+    std::string out;
+    out.reserve(std::strlen(rcss) + 1024);
+    const char* p = rcss;
+    const char* end = p + std::strlen(rcss);
+    while (p < end) {
+        // Match -?digits(.digits)? followed by 'px'.
+        const char* numberStart = p;
+        if (*p == '-' && p + 1 < end && *(p + 1) >= '0' && *(p + 1) <= '9') ++p;
+        while (p < end && *p >= '0' && *p <= '9') ++p;
+        if (p < end && *p == '.' && p + 1 < end && *(p + 1) >= '0' && *(p + 1) <= '9') {
+            ++p;
+            while (p < end && *p >= '0' && *p <= '9') ++p;
+        }
+        if (p + 1 < end && p[0] == 'p' && p[1] == 'x' && p > numberStart) {
+            const double value = std::atof(std::string(numberStart, p - numberStart).c_str());
+            char scaled[48];
+            std::snprintf(scaled, sizeof(scaled), "%.2fpx", value * static_cast<double>(scale));
+            out += scaled;
+            p += 2;
+        } else {
+            p = numberStart;
+            out += *p;
+            ++p;
+        }
+    }
+    return out;
+}
 
 struct WinDef {
     const char* id;
@@ -5669,17 +5789,14 @@ struct WinDef {
     float h;
 };
 
+// Natural (reference 1080p) sizes; multiplied by g_uiScale at init.
 const WinDef kWindows[] = {
     {"win-home",    "head-home",    300.0f, 750.0f},
-    {"win-visuals", "head-visuals", 300.0f, 390.0f},
-    {"win-ch",      "head-ch",      420.0f, 545.0f},
-    {"win-tr",      "head-tr",      420.0f, 435.0f},
-    {"win-jr",      "head-jr",      420.0f, 395.0f},
-    {"win-kt",      "head-kt",      420.0f, 430.0f},
-    {"win-cr",      "head-cr",      420.0f, 322.0f},
+    {"win-visuals", "head-visuals", 460.0f, 2100.0f},
 };
 constexpr int kWindowCount = static_cast<int>(sizeof(kWindows) / sizeof(kWindows[0]));
-constexpr float kFoldedHeight = 46.0f;  // title bar + borders
+constexpr float kFoldedHeightRef = 46.0f;  // title bar + borders (reference)
+float kFoldedHeight = kFoldedHeightRef;    // scaled at init
 
 struct WinState {
     Rml::Element* el = nullptr;
@@ -5695,6 +5812,12 @@ WinState g_win[kWindowCount];
 int g_zTop = 20;
 std::string g_ttStatusCache;
 std::string g_ttDiagCache;
+
+// 3D preview toggle (Visuals window) and the icon animation phase.
+std::atomic<bool> g_previewOn{true};
+Rml::Element* g_previewSwitch = nullptr;
+bool g_animOn = false;
+unsigned g_animFrame = 0;
 
 std::vector<char> g_fontNormal;
 std::vector<char> g_fontBold;
@@ -5783,7 +5906,7 @@ bool shadowModule(int moduleId) {
 // ---------------------------------------------------------------------------
 
 enum class SwKind {
-    AgModule, ChinaHat, Trail, Jump, Katana, Crown,
+    AgModule, ChinaHat, Trail, Jump, Katana,
     ChFill, ChRainbow, TrFill, TrRainbow, JrRainbow
 };
 
@@ -5809,7 +5932,6 @@ const SwitchDef kSwitches[] = {
     {"sw-trail", SwKind::Trail, 0},
     {"sw-jump", SwKind::Jump, 0},
     {"sw-katana", SwKind::Katana, 0},
-    {"sw-crown", SwKind::Crown, 0},
     // Graphics tab.
     {"sw-gfx-chinahat", SwKind::ChinaHat, 0},
     {"sw-gfx-trail", SwKind::Trail, 0},
@@ -5819,10 +5941,9 @@ const SwitchDef kSwitches[] = {
     {"sw-tr-fill", SwKind::TrFill, 0},
     {"sw-tr-rainbow", SwKind::TrRainbow, 0},
     {"sw-jr-rainbow", SwKind::JrRainbow, 0},
-    // Per-window master switches (the Visuals window has its own copies of
-    // the katana/crown toggles under different ids: ids must be unique).
+    // The Visuals window has its own copy of the katana toggle under a
+    // different id: ids must be unique.
     {"sw-kt-master", SwKind::Katana, 0},
-    {"sw-cr-master", SwKind::Crown, 0},
 };
 
 const SwitchDef* findSwitch(const Rml::String& id) {
@@ -5838,7 +5959,6 @@ bool readSwitch(const SwitchDef& def) {
         case SwKind::Trail: return TrailEnabled();
         case SwKind::Jump: return JumpEnabled();
         case SwKind::Katana: return KatanaEnabled();
-        case SwKind::Crown: return AccessoryEnabled();
         case SwKind::ChFill: return HatFillEnabled();
         case SwKind::ChRainbow: return HatRainbowEnabled();
         case SwKind::TrFill: return TrailFillEnabled();
@@ -5855,7 +5975,6 @@ void applySwitch(const SwitchDef& def, bool on) {
         case SwKind::Trail: SetTrailEnabled(on); break;
         case SwKind::Jump: SetJumpEnabled(on); break;
         case SwKind::Katana: SetKatanaEnabled(on); break;
-        case SwKind::Crown: SetAccessoryEnabled(on); break;
         case SwKind::ChFill: SetHatFillEnabled(on); break;
         case SwKind::ChRainbow: SetHatRainbowEnabled(on); break;
         case SwKind::TrFill: SetTrailFillEnabled(on); break;
@@ -5918,13 +6037,6 @@ const SliderDef kSliders[] = {
     {"sl-kt-opacity", VisualParam::KatanaOpacity, SlScale::Direct, "%.2f"},
     {"sl-kt-fpside", VisualParam::KatanaFirstSide, SlScale::Direct, "%.2f"},
     {"sl-kt-fpforward", VisualParam::KatanaFirstForward, SlScale::Direct, "%.2f"},
-    // Crown (graphics tab).
-    {"sl-cr-scale", VisualParam::AccessoryScale, SlScale::Direct, "%.2f"},
-    {"sl-cr-offset", VisualParam::AccessoryOffset, SlScale::Direct, "%.2f"},
-    {"sl-cr-opacity", VisualParam::AccessoryOpacity, SlScale::Direct, "%.2f"},
-    {"sl-cr-r", VisualParam::AccessoryRed, SlScale::Direct, "%.2f"},
-    {"sl-cr-g", VisualParam::AccessoryGreen, SlScale::Direct, "%.2f"},
-    {"sl-cr-b", VisualParam::AccessoryBlue, SlScale::Direct, "%.2f"},
 };
 
 float domFromParam(const SliderDef& def, float param) {
@@ -6021,7 +6133,8 @@ void focusWin(WinState& win) {
 // Tile the windows from the shared, harness-verified layout math. force
 // re-tilts everything (initial layout, "reset layout" button); otherwise
 // windows the user dragged keep their position and are only clamped back
-// into the viewport.
+// into the viewport. While the 3D preview is on, a strip on the right is
+// reserved for the compat layer's preview window.
 void layoutWindows(float viewW, float viewH, bool force) {
     // The document body carries the dim backdrop; it only paints over the
     // area its box covers, and with nothing but absolutely-positioned
@@ -6030,6 +6143,8 @@ void layoutWindows(float viewW, float viewH, bool force) {
         body->SetProperty("width", Rml::CreateString("%dpx", static_cast<int>(viewW + 0.5f)));
         body->SetProperty("height", Rml::CreateString("%dpx", static_cast<int>(viewH + 0.5f)));
     }
+    const float inset = g_previewOn.load(std::memory_order_relaxed) &&
+        viewW > kPreviewInsetPx * 2.0f ? kPreviewInsetPx : 0.0f;
     float natW[kWindowCount];
     float natH[kWindowCount];
     menu_layout::WindowRect rects[kWindowCount];
@@ -6037,7 +6152,7 @@ void layoutWindows(float viewW, float viewH, bool force) {
         natW[i] = g_win[i].w;
         natH[i] = g_win[i].h;
     }
-    menu_layout::computeMenuWindows(natW, natH, kWindowCount, viewW, viewH, rects);
+    menu_layout::computeMenuWindows(natW, natH, kWindowCount, viewW, viewH, rects, inset);
     for (int i = 0; i < kWindowCount; ++i) {
         WinState& win = g_win[i];
         if (!win.el) continue;
@@ -6111,6 +6226,20 @@ void MenuClickListener::ProcessEvent(Rml::Event& event) {
         g_hiddenByClose.store(true, std::memory_order_relaxed);
         return;
     }
+    if (id == "sw-preview") {
+        const bool on = !g_previewOn.load(std::memory_order_relaxed);
+        g_previewOn.store(on, std::memory_order_relaxed);
+        if (g_previewSwitch) g_previewSwitch->SetClass("on", on);
+        layoutWindows(static_cast<float>(g_width), static_cast<float>(g_height), false);
+        return;
+    }
+    if (id.size() >= 4 && id.compare(0, 4, "sec-") == 0) {
+        if (Rml::Element* section = g_menuDoc->GetElementById(id)) {
+            const bool folded = !section->IsClassSet("folded");
+            section->SetClass("folded", folded);
+        }
+        return;
+    }
     if (id.size() == 6 && id.compare(0, 5, "fold-") == 0 && id[5] >= '0' && id[5] <= '9') {
         const int index = id[5] - '0';
         if (index < kWindowCount && g_win[index].el) {
@@ -6178,20 +6307,24 @@ bool buildRegistry() {
     if (!g_menuDoc) return false;
     g_ttStatus = g_menuDoc->GetElementById("tt-status");
     g_ttDiag = g_menuDoc->GetElementById("tt-diag");
-    if (!g_ttStatus || !g_ttDiag) return false;
+    g_previewSwitch = g_menuDoc->GetElementById("sw-preview");
+    if (!g_ttStatus || !g_ttDiag || !g_previewSwitch) return false;
+    g_previewSwitch->SetClass("on", g_previewOn.load(std::memory_order_relaxed));
 
     g_menuDoc->AddEventListener("click", &g_clickListener);
 
     // Windows: geometry is applied by layoutWindows() right after init; the
-    // listeners carry focus, z-order and title-bar dragging.
+    // listeners carry focus, z-order and title-bar dragging. Natural sizes
+    // carry the UI scale so the RCSS zoom and the layout math agree.
+    kFoldedHeight = kFoldedHeightRef * g_uiScale;
     for (int i = 0; i < kWindowCount; ++i) {
         WinState& win = g_win[i];
         win.el = g_menuDoc->GetElementById(kWindows[i].id);
         win.head = g_menuDoc->GetElementById(kWindows[i].headId);
         if (!win.el || !win.head) return false;
-        win.w = kWindows[i].w;
-        win.h = kWindows[i].h;
-        win.shownH = kWindows[i].h;
+        win.w = kWindows[i].w * g_uiScale;
+        win.h = kWindows[i].h * g_uiScale;
+        win.shownH = win.h;
         win.el->SetProperty("z-index", Rml::CreateString("%d", 10 + i));
         g_winListeners.push_back(std::make_unique<WindowListener>(&win));
         WindowListener* listener = g_winListeners.back().get();
@@ -6226,6 +6359,8 @@ bool buildRegistry() {
 
 bool initBackend(ID3D11Device* device, unsigned width, unsigned height) {
     menuLog("init: begin, viewport %ux%u", width, height);
+    g_uiScale = computeUiScale(width, height);
+    menuLog("init: ui scale %.3f", g_uiScale);
     // Segoe UI covers Cyrillic and is present on every Windows install; the
     // buffers must outlive Rml::Shutdown, so they are file-scope vectors.
     if (!loadFontBuffer("C:/Windows/Fonts/segoeui.ttf", g_fontNormal)) {
@@ -6274,7 +6409,8 @@ bool initBackend(ID3D11Device* device, unsigned width, unsigned height) {
     }
     menuLog("init: font faces loaded");
 
-    g_menuDoc = loadDocumentWithStyle(g_rmlContext, kMenuRml, kMenuRcss, "gayclient-menu.rml");
+    const std::string scaledRcss = scaleRcssPx(kMenuRcss, g_uiScale);
+    g_menuDoc = loadDocumentWithStyle(g_rmlContext, kMenuRml, scaledRcss.c_str(), "gayclient-menu.rml");
     if (!g_menuDoc) {
         menuLog("init: FAILED, menu document did not parse");
         return false;
@@ -6292,355 +6428,6 @@ bool initBackend(ID3D11Device* device, unsigned width, unsigned height) {
     return true;
 }
 
-// ---------------------------------------------------------------------------
-// Web bridge: a minimal localhost WebSocket server (127.0.0.1:39731) that
-// lets the web replica of this menu (repair/menu-web, root index.html) drive
-// exactly the same verified setters the in-game menu uses. The socket thread
-// only parses frames and queues line commands; commands are applied on the
-// Present thread (the same thread the RmlUi menu runs on) and snapshots for
-// the client are built there too. Any failure to start the bridge is
-// non-fatal: the in-game menu keeps working exactly as before.
-//
-// Line protocol (UTF-8 text frames, '\n' terminated):
-//   client -> game:  "set <id> <value>"   (switch 0/1, slider DOM-scale value)
-//                    "state"              (request an immediate snapshot)
-//   game -> client:  "sw <id> <0|1>" and "sl <id> <value>" lines, one frame
-//                    per snapshot (frame boundary == snapshot boundary)
-// ---------------------------------------------------------------------------
-namespace bridge {
-
-constexpr unsigned short kPort = 39731;
-
-std::atomic<bool> g_started{false};
-std::atomic<bool> g_client{false};
-std::atomic<bool> g_forceSnapshot{false};
-std::mutex g_mutex;                                    // guards both queues
-std::deque<std::pair<Rml::String, float>> g_commands;  // web -> game
-std::deque<Rml::String> g_outbox;                      // game -> web
-int g_snapshotTimer = 0;
-
-void queueCommand(const Rml::String& id, float value) {
-    std::lock_guard<std::mutex> lock(g_mutex);
-    if (g_commands.size() < 256) g_commands.emplace_back(id, value);
-}
-
-void pushOutbox(const Rml::String& frame) {
-    std::lock_guard<std::mutex> lock(g_mutex);
-    if (g_outbox.size() < 16) g_outbox.push_back(frame);
-}
-
-bool sendAll(SOCKET s, const char* data, int len) {
-    int off = 0;
-    while (off < len) {
-        const int n = send(s, data + off, len - off, 0);
-        if (n <= 0) return false;
-        off += n;
-    }
-    return true;
-}
-
-bool sendTextFrame(SOCKET s, const Rml::String& text) {
-    const size_t len = text.size();
-    unsigned char header[10];
-    if (len < 126) {
-        header[0] = 0x81; header[1] = (unsigned char)len;
-        if (!sendAll(s, (const char*)header, 2)) return false;
-    } else if (len < 65536) {
-        header[0] = 0x81; header[1] = 126;
-        header[2] = (unsigned char)(len >> 8); header[3] = (unsigned char)len;
-        if (!sendAll(s, (const char*)header, 4)) return false;
-    } else {
-        header[0] = 0x81; header[1] = 127;
-        for (int i = 0; i < 8; ++i) header[2 + i] = (unsigned char)((unsigned long long)len >> (56 - 8 * i));
-        if (!sendAll(s, (const char*)header, 10)) return false;
-    }
-    return sendAll(s, text.data(), (int)len);
-}
-
-bool recvExact(SOCKET s, void* buf, int len) {
-    char* p = (char*)buf;
-    int left = len;
-    while (left > 0) {
-        const int n = recv(s, p, left, MSG_WAITALL);
-        if (n <= 0) return false;
-        p += n; left -= n;
-    }
-    return true;
-}
-
-void base64Encode(const unsigned char* data, int len, char out[32]) {
-    static const char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    int o = 0;
-    for (int i = 0; i < len; i += 3) {
-        const unsigned v = (unsigned)data[i] << 16 |
-                            (i + 1 < len ? (unsigned)data[i + 1] << 8 : 0) |
-                            (i + 2 < len ? (unsigned)data[i + 2] : 0);
-        out[o++] = kAlphabet[(v >> 18) & 63];
-        out[o++] = kAlphabet[(v >> 12) & 63];
-        out[o++] = i + 1 < len ? kAlphabet[(v >> 6) & 63] : '=';
-        out[o++] = i + 2 < len ? kAlphabet[v & 63] : '=';
-    }
-    out[o] = '\0';
-}
-
-// Self-contained SHA-1 (RFC 3174) for the WebSocket handshake: no CNG header
-// quirks, works in every environment the adapter is built for.
-struct Sha1State {
-    unsigned h[5] = {0x67452301u, 0xEFCDAB89u, 0x98BADCFEu, 0x10325476u, 0xC3D2E1F0u};
-
-    void process(const unsigned char block[64]) {
-        unsigned w[80];
-        for (int i = 0; i < 16; ++i)
-            w[i] = (unsigned)block[i * 4] << 24 | (unsigned)block[i * 4 + 1] << 16 |
-                   (unsigned)block[i * 4 + 2] << 8 | (unsigned)block[i * 4 + 3];
-        for (int i = 16; i < 80; ++i) {
-            const unsigned v = w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16];
-            w[i] = (v << 1) | (v >> 31);
-        }
-        unsigned a = h[0], b = h[1], c = h[2], d = h[3], e = h[4];
-        for (int i = 0; i < 80; ++i) {
-            unsigned f, k;
-            if (i < 20) { f = (b & c) | (~b & d); k = 0x5A827999u; }
-            else if (i < 40) { f = b ^ c ^ d; k = 0x6ED9EBA1u; }
-            else if (i < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8F1BBCDCu; }
-            else { f = b ^ c ^ d; k = 0xCA62C1D6u; }
-            const unsigned temp = ((a << 5) | (a >> 27)) + f + e + k + w[i];
-            e = d; d = c; c = (b << 30) | (b >> 2); b = a; a = temp;
-        }
-        h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e;
-    }
-};
-
-void sha1(const unsigned char* data, size_t len, unsigned char out[20]) {
-    Sha1State state;
-    size_t offset = 0;
-    while (len - offset >= 64) {
-        state.process(data + offset);
-        offset += 64;
-    }
-    unsigned char tail[128]{};
-    const size_t rest = len - offset;
-    memcpy(tail, data + offset, rest);
-    tail[rest] = 0x80;
-    unsigned char* lengthBlock = rest + 1 <= 56 ? tail : tail + 64;
-    const unsigned long long bits = (unsigned long long)len * 8;
-    for (int i = 0; i < 8; ++i)
-        lengthBlock[63 - i] = (unsigned char)(bits >> (8 * i));
-    state.process(tail);
-    if (lengthBlock == tail + 64) state.process(tail + 64);
-    for (int i = 0; i < 5; ++i) {
-        out[i * 4] = (unsigned char)(state.h[i] >> 24);
-        out[i * 4 + 1] = (unsigned char)(state.h[i] >> 16);
-        out[i * 4 + 2] = (unsigned char)(state.h[i] >> 8);
-        out[i * 4 + 3] = (unsigned char)state.h[i];
-    }
-}
-
-// RFC 6455 accept key: base64(SHA1(client-key + magic GUID)).
-bool computeAccept(const char* key, char out[64]) {
-    char cat[128]{};
-    _snprintf(cat, sizeof(cat), "%s258EAFA5-E914-47DA-95CA-C5AB0DC85B11", key);
-    unsigned char hash[20];
-    sha1((const unsigned char*)cat, strlen(cat), hash);
-    base64Encode(hash, sizeof(hash), out);
-    return true;
-}
-
-void serveClient(SOCKET s) {
-    // 1) Read the HTTP upgrade request (until the blank line).
-    char buf[2048];
-    Rml::String request;
-    while (request.find("\r\n\r\n") == Rml::String::npos && request.size() < 8192) {
-        const int n = recv(s, buf, sizeof(buf), 0);
-        if (n <= 0) return;
-        request.append(buf, (size_t)n);
-    }
-    Rml::String key;
-    size_t pos = 0;
-    while ((pos = request.find("\r\n", pos)) != Rml::String::npos) {
-        size_t lineStart = request.rfind('\n', pos) + 1;
-        Rml::String line = request.substr(lineStart, pos - lineStart);
-        if (line.size() > 19 && (line.compare(0, 19, "Sec-WebSocket-Key: ") == 0 ||
-                                 line.compare(0, 19, "sec-websocket-key: ") == 0)) {
-            key = line.substr(19);
-            break;
-        }
-        pos += 2;
-    }
-    if (key.empty()) return;
-    char accept[64]{};
-    if (!computeAccept(key.c_str(), accept)) return;
-    const Rml::String response =
-        "HTTP/1.1 101 Switching Protocols\r\n"
-        "Upgrade: websocket\r\n"
-        "Connection: Upgrade\r\n"
-        "Sec-WebSocket-Accept: " + Rml::String(accept) + "\r\n\r\n";
-    if (!sendAll(s, response.data(), (int)response.size())) return;
-    g_client.store(true, std::memory_order_relaxed);
-    menuLog("bridge: web client connected");
-
-    // 2) Frame loop: select() with a timeout so the outbox is flushed too.
-    std::string pending;
-    for (;;) {
-        fd_set readSet;
-        FD_ZERO(&readSet);
-        FD_SET(s, &readSet);
-        timeval timeout{0, 200000};
-        if (select(0, &readSet, nullptr, nullptr, &timeout) > 0) {
-            unsigned char header[2];
-            if (!recvExact(s, header, 2)) break;
-            const unsigned opcode = header[0] & 0x0f;
-            const bool masked = (header[1] & 0x80) != 0;
-            size_t len = header[1] & 0x7f;
-            if (len == 126) {
-                unsigned char ext[2];
-                if (!recvExact(s, ext, 2)) break;
-                len = (size_t)ext[0] << 8 | ext[1];
-            } else if (len == 127) {
-                unsigned char ext[8];
-                if (!recvExact(s, ext, 8)) break;
-                len = 0;
-                for (int i = 0; i < 8; ++i) len = len << 8 | ext[i];
-            }
-            if (len > 65536) break;
-            unsigned char mask[4]{};
-            if (masked && !recvExact(s, mask, 4)) break;
-            std::string payload(len, '\0');
-            if (len && !recvExact(s, &payload[0], (int)len)) break;
-            if (masked)
-                for (size_t i = 0; i < payload.size(); ++i) payload[i] = (char)((unsigned char)payload[i] ^ mask[i & 3]);
-            if (opcode == 8) {  // close
-                const unsigned char closeFrame[2] = {0x88, 0x00};
-                sendAll(s, (const char*)closeFrame, 2);
-                break;
-            }
-            if (opcode == 9) {  // ping -> pong
-                unsigned char pong[2 + 125];
-                pong[0] = 0x8a; pong[1] = (unsigned char)payload.size();
-                if (!payload.empty()) memcpy(pong + 2, payload.data(), payload.size());
-                if (!sendAll(s, (const char*)pong, 2 + (int)payload.size())) break;
-                continue;
-            }
-            if (opcode != 1) continue;  // text frames only
-            pending += payload;
-            size_t nl;
-            while ((nl = pending.find('\n')) != std::string::npos) {
-                std::string line = pending.substr(0, nl);
-                pending.erase(0, nl + 1);
-                if (!line.empty() && line.back() == '\r') line.pop_back();
-                if (line.compare(0, 4, "set ") == 0) {
-                    const size_t space = line.find(' ', 4);
-                    if (space != std::string::npos && space > 4)
-                        queueCommand(line.substr(4, space - 4), (float)atof(line.c_str() + space + 1));
-                } else if (line == "state") {
-                    g_forceSnapshot.store(true, std::memory_order_relaxed);
-                }
-            }
-        }
-        // Flush the outbox (snapshots) to the client.
-        for (;;) {
-            Rml::String frame;
-            {
-                std::lock_guard<std::mutex> lock(g_mutex);
-                if (g_outbox.empty()) break;
-                frame = g_outbox.front();
-                g_outbox.pop_front();
-            }
-            if (!sendTextFrame(s, frame)) goto disconnect;
-        }
-    }
-disconnect:
-    g_client.store(false, std::memory_order_relaxed);
-    menuLog("bridge: web client disconnected");
-}
-
-DWORD WINAPI threadMain(LPVOID) {
-    WSADATA wsa{};
-    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-        menuLog("bridge: disabled, WSAStartup failed");
-        return 0;
-    }
-    SOCKET listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (listener == INVALID_SOCKET) return 0;
-    sockaddr_in address{};
-    address.sin_family = AF_INET;
-    address.sin_port = htons(kPort);
-    address.sin_addr.s_addr = htonl(0x7f000001);  // localhost only
-    if (bind(listener, (sockaddr*)&address, sizeof(address)) != 0 || listen(listener, 1) != 0) {
-        closesocket(listener);
-        menuLog("bridge: disabled, port %u unavailable", (unsigned)kPort);
-        return 0;
-    }
-    menuLog("bridge: listening on 127.0.0.1:%u", (unsigned)kPort);
-    for (;;) {
-        const SOCKET client = accept(listener, nullptr, nullptr);
-        if (client == INVALID_SOCKET) break;
-        int noDelay = 1;
-        setsockopt(client, IPPROTO_TCP, TCP_NODELAY, (const char*)&noDelay, sizeof(noDelay));
-        serveClient(client);
-        closesocket(client);
-    }
-    return 0;
-}
-
-void start() {
-    bool expected = false;
-    if (!g_started.compare_exchange_strong(expected, true)) return;
-    HANDLE thread = CreateThread(nullptr, 0, threadMain, nullptr, 0, nullptr);
-    if (thread) {
-        CloseHandle(thread);
-    } else {
-        g_started.store(false, std::memory_order_relaxed);
-    }
-}
-
-// Runs on the Present thread every frame: applies queued web commands through
-// the exact same code paths the RmlUi menu uses, then (while a web client is
-// connected) publishes a full state snapshot about twice per second.
-void tick() {
-    std::deque<std::pair<Rml::String, float>> local;
-    {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        local.swap(g_commands);
-    }
-    for (const auto& command : local) {
-        if (const SwitchDef* def = findSwitch(command.first))
-            applySwitch(*def, command.second >= 0.5f);
-        else if (const SliderDef* def = findSlider(command.first))
-            SetVisualParam(def->param, paramFromDom(*def, command.second));
-        else
-            menuLog("bridge: unknown id '%s'", command.first.c_str());
-    }
-    if (!g_client.load(std::memory_order_relaxed)) return;
-    if (g_snapshotTimer > 0 && !g_forceSnapshot.load(std::memory_order_relaxed)) {
-        --g_snapshotTimer;
-        return;
-    }
-    g_snapshotTimer = 30;
-    g_forceSnapshot.store(false, std::memory_order_relaxed);
-    syncModuleShadow();
-    Rml::String snapshot;
-    char line[160];
-    const char* emitted[64];
-    size_t emittedCount = 0;
-    for (const SwitchDef& def : kSwitches) {
-        bool seen = false;
-        for (size_t i = 0; i < emittedCount; ++i)
-            if (strcmp(emitted[i], def.id) == 0) { seen = true; break; }
-        if (seen) continue;
-        if (emittedCount < 64) emitted[emittedCount++] = def.id;
-        std::snprintf(line, sizeof(line), "sw %s %d\n", def.id, readSwitch(def) ? 1 : 0);
-        snapshot += line;
-    }
-    for (const SliderDef& def : kSliders) {
-        std::snprintf(line, sizeof(line), "sl %s %.6g\n", def.id,
-                      domFromParam(def, GetVisualParam(def.param)));
-        snapshot += line;
-    }
-    pushOutbox(snapshot);
-}
-
-} // namespace bridge
 
 // ---------------------------------------------------------------------------
 // Per-frame synchronization and input.
@@ -6767,9 +6554,11 @@ void feedInput(unsigned width, unsigned height) {
     }
     const float wheelX = g_wheelX.exchange(0.0f, std::memory_order_relaxed);
     const float wheelY = g_wheelY.exchange(0.0f, std::memory_order_relaxed);
-    // compat sends one unit per wheel notch; RmlUi scrolls 80dp per unit.
+    // compat sends one unit per wheel notch (positive = wheel rolled
+    // forward/up, the Windows convention); RmlUi expects positive deltas to
+    // scroll toward the content bottom, so the sign is flipped here.
     if (wheelX != 0.0f || wheelY != 0.0f)
-        g_rmlContext->ProcessMouseWheel(Rml::Vector2f(wheelX, wheelY), 0);
+        g_rmlContext->ProcessMouseWheel(Rml::Vector2f(-wheelX, -wheelY), 0);
 
     const bool escape = keyIsDown(VK_ESCAPE);
     if (escape != g_escState) {
@@ -6785,6 +6574,17 @@ void updateDocVisibility(bool menuVisible) {
         if (menuVisible) g_menuDoc->Show();
         else g_menuDoc->Hide();
     }
+}
+
+// Icon animation driver: toggle the "anim" class on <body> every
+// kAnimPeriod frames. The icons' CSS transitions animate between the two
+// states (RmlUi has no keyframes; the C++ side only flips the class).
+void driveIconAnimation() {
+    if (++g_animFrame < kAnimPeriod) return;
+    g_animFrame = 0;
+    g_animOn = !g_animOn;
+    if (Rml::Element* body = g_menuDoc->GetElementById("doc-body"))
+        body->SetClass("anim", g_animOn);
 }
 
 } // namespace
@@ -6825,6 +6625,16 @@ void SetGameMenuOpen(bool open) {
 
 bool ReplacesLegacyMenu() { return g_renderOk.load(std::memory_order_relaxed); }
 bool ConsumeHudEditorRequest() { return g_hudEditorRequest.exchange(false, std::memory_order_relaxed); }
+bool VisualPreviewActive() { return g_previewOn.load(std::memory_order_relaxed); }
+
+bool ReadPointer(float& x, float& y, float& w, float& h) {
+    if (!g_pointerValid.load(std::memory_order_relaxed)) return false;
+    x = g_pointerX.load(std::memory_order_relaxed);
+    y = g_pointerY.load(std::memory_order_relaxed);
+    w = g_pointerW.load(std::memory_order_relaxed);
+    h = g_pointerH.load(std::memory_order_relaxed);
+    return w > 1.0f && h > 1.0f;
+}
 
 void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
                    unsigned width, unsigned height) {
@@ -6836,7 +6646,6 @@ void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
         }
         g_ready = true;
         layoutWindows(static_cast<float>(width), static_cast<float>(height), true);
-        bridge::start();
     }
     if (width != g_width || height != g_height) {
         g_width = width;
@@ -6850,10 +6659,10 @@ void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
     const bool menuVisible = g_gameMenuOpen.load(std::memory_order_relaxed) &&
         !g_hiddenByClose.load(std::memory_order_relaxed);
     updateDocVisibility(menuVisible);
-    bridge::tick();
     if (!menuVisible) return;
 
     feedInput(width, height);
+    driveIconAnimation();
     syncSwitches();
     syncSliders();
     syncTtStatus();
@@ -6869,15 +6678,21 @@ void RenderOverlay(ID3D11Device* device, ID3D11RenderTargetView* rtv,
 }
 
 } // namespace menu_rml
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/menu_rml.cpp
+================================================================================
 ================================================================================================================================================================
 ================================================================================
 НАЧАЛО ФАЙЛА: repair/src/menu_rml_data.h
+================================================================================
 // Design of the embedded menu: RmlUi documents (HTML + RCSS).
-// The menu is a set of independent windows ("okoshki") in the launcher
-// design system: dark glass cards with emerald accents, dragged by their
-// title bars, foldable, scrolling inside so a large number of functions
-// never makes windows grow into each other.
+// v5: two windows only — Home and Visuals. Visuals carries the 3D preview
+// toggle, the effect master switches and every effect setting as collapsible
+// sections. Module rows use vector icons built from RCSS shapes (boxes,
+// circles, borders) and animate through CSS transitions; the C++ side only
+// toggles an "anim" class on <body> a couple of times per second, so the
+// icons animate without SVG or keyframes (RmlUi supports neither).
+// The crown is gone from the interface on purpose.
 // Kept as raw strings so the DLL stays a single file with no disk access.
 #pragma once
 
@@ -6945,7 +6760,8 @@ body {
 .foldbtn {
     width: 30px;
     height: 30px;
-    font-size: 15px;
+    font-size: 16px;
+    font-weight: bold;
     color: #89a792;
     background-color: #ffffff08;
     border: 1px #ffffff12;
@@ -6959,11 +6775,11 @@ body {
     background-color: #6ef58c24;
     color: #c9ffd7;
 }
-.foldcaret {
-    font-size: 13px;
-    transition: transform 0.15s;
-}
-.win.folded .foldcaret { transform: rotate(-90deg); }
+/* Fold glyphs are plain ASCII: - and +. U+25BE renders as tofu in Segoe UI. */
+.f-plus, .f-minus { display: none; }
+.win .f-minus, .sec .f-minus { display: inline; }
+.win.folded .f-plus, .sec.folded .f-plus { display: inline; }
+.win.folded .f-minus, .sec.folded .f-minus { display: none; }
 .iconbtn {
     width: 30px;
     height: 30px;
@@ -7021,20 +6837,196 @@ body {
     transition: background-color 0.12s;
 }
 .module-row:hover { background-color: #ffffff08; }
-.m-chip {
-    width: 34px;
-    height: 34px;
-    border-radius: 9px;
-    font-size: 17px;
-    font-weight: bold;
-    color: #6ef58c;
-    background-color: #6ef58c1a;
-    text-align: center;
-    line-height: 34px;
-}
 .m-text { display: block; flex-grow: 1; padding-left: 12px; }
 .m-name { display: block; font-size: 18px; color: #e9f5ec; }
 .m-desc { display: block; font-size: 13px; color: #89a792; margin-top: 1px; }
+
+/* ------------------------------------------------------------------ */
+/* Vector icons: RCSS shapes inside a 34x34 chip. Every part is an     */
+/* absolutely positioned box; "body.anim ..." flips between two states */
+/* and the transition property animates the change.                   */
+/* ------------------------------------------------------------------ */
+.m-ico {
+    width: 34px;
+    height: 34px;
+    flex-basis: 34px;
+    position: relative;
+    border-radius: 9px;
+    background-color: #6ef58c1a;
+}
+.ip { position: absolute; display: block; }
+
+/* FPS: speedometer with a sweeping needle. */
+.g-arc {
+    left: 9px; top: 12px; width: 16px; height: 8px;
+    border-top: 2px #6ef58c; border-left: 2px #6ef58c; border-right: 2px #6ef58c;
+    border-radius: 8px 8px 0 0;
+}
+.g-needle {
+    left: 16px; top: 18px; width: 2px; height: 7px;
+    background-color: #c4ff62;
+    transform-origin: 1px 7px;
+    transform: rotate(-55deg);
+    transition: transform 0.45s;
+}
+body.anim .g-needle { transform: rotate(55deg); }
+.g-hub {
+    left: 15px; top: 17px; width: 4px; height: 4px;
+    border-radius: 2px;
+    background-color: #6ef58c;
+}
+/* CPS: pulsing ripple. */
+.r-dot {
+    left: 14px; top: 14px; width: 6px; height: 6px;
+    border-radius: 3px;
+    background-color: #6ef58c;
+}
+.r-ring {
+    left: 10px; top: 10px; width: 14px; height: 14px;
+    border-radius: 7px;
+    border: 2px #6ef58c;
+    transition: transform 0.45s, opacity 0.45s;
+}
+body.anim .r-ring { transform: scale(1.7); opacity: 0; }
+/* Clock: face with a rotating minute hand. */
+.c-face {
+    left: 9px; top: 9px; width: 16px; height: 16px;
+    border-radius: 8px;
+    border: 2px #a5c5ae;
+}
+.c-hour {
+    left: 16px; top: 12px; width: 2px; height: 5px;
+    background-color: #a5c5ae;
+}
+.c-min {
+    left: 16px; top: 11px; width: 2px; height: 6px;
+    background-color: #6ef58c;
+    transform-origin: 1px 6px;
+    transition: transform 0.45s;
+}
+body.anim .c-min { transform: rotate(180deg); }
+/* Keystrokes: two 3D keycaps, the left one presses. */
+.k-a {
+    left: 8px; top: 10px; width: 9px; height: 9px;
+    border: 1px #6ef58c8c; border-radius: 3px;
+    background-color: #6ef58c1f;
+    transition: transform 0.18s, background-color 0.18s;
+}
+body.anim .k-a { transform: translate(0px, 2px); background-color: #6ef58c55; }
+.k-b {
+    left: 18px; top: 14px; width: 10px; height: 9px;
+    border: 1px #6ef58c4d; border-radius: 3px;
+    background-color: #6ef58c14;
+}
+/* Watermark: shield badge with a pulse. */
+.w-badge {
+    left: 11px; top: 9px; width: 12px; height: 16px;
+    border: 1px #6ef58c8c;
+    border-radius: 6px 6px 6px 1px;
+    background-color: #6ef58c14;
+    transition: background-color 0.45s;
+}
+body.anim .w-badge { background-color: #6ef58c3d; }
+.w-bar1 { left: 14px; top: 14px; width: 6px; height: 2px; background-color: #6ef58c; }
+.w-bar2 { left: 16px; top: 18px; width: 4px; height: 2px; background-color: #6ef58c; }
+/* Coordinates: rotating crosshair. */
+.x-rot {
+    position: absolute; display: block;
+    left: 8px; top: 8px; width: 18px; height: 18px;
+    transition: transform 0.6s;
+}
+body.anim .x-rot { transform: rotate(45deg); }
+.x-ring {
+    left: 2px; top: 2px; width: 14px; height: 14px;
+    border-radius: 7px;
+    border: 2px #6ef58c;
+}
+.x-dot { left: 8px; top: 8px; width: 2px; height: 2px; background-color: #6ef58c; }
+.x-t1 { left: 8px; top: 0px; width: 2px; height: 4px; background-color: #6ef58c; }
+.x-t2 { left: 8px; top: 14px; width: 2px; height: 4px; background-color: #6ef58c; }
+.x-t3 { left: 0px; top: 8px; width: 4px; height: 2px; background-color: #6ef58c; }
+.x-t4 { left: 14px; top: 8px; width: 4px; height: 2px; background-color: #6ef58c; }
+/* Resolution: monitor with a lit screen. */
+.v-scr {
+    left: 8px; top: 9px; width: 18px; height: 12px;
+    border: 2px #a5c5ae; border-radius: 2px;
+    transition: background-color 0.45s;
+}
+body.anim .v-scr { background-color: #6ef58c33; }
+.v-stand { left: 15px; top: 21px; width: 4px; height: 3px; background-color: #a5c5ae; }
+.v-base { left: 12px; top: 24px; width: 10px; height: 2px; background-color: #a5c5ae; }
+/* Performance: CPU die with pulsing substrate. */
+.p-die {
+    left: 10px; top: 10px; width: 14px; height: 14px;
+    border: 1px #6ef58c8c; border-radius: 2px;
+    background-color: #6ef58c24;
+    transition: background-color 0.45s;
+}
+body.anim .p-die { background-color: #6ef58c4d; }
+.p-core { left: 14px; top: 14px; width: 6px; height: 6px; background-color: #6ef58c; }
+.p-l1 { left: 10px; top: 6px; width: 2px; height: 4px; background-color: #a5c5ae; }
+.p-l2 { left: 16px; top: 6px; width: 2px; height: 4px; background-color: #a5c5ae; }
+.p-l3 { left: 22px; top: 6px; width: 2px; height: 4px; background-color: #a5c5ae; }
+.p-l4 { left: 10px; top: 24px; width: 2px; height: 4px; background-color: #a5c5ae; }
+.p-l5 { left: 16px; top: 24px; width: 2px; height: 4px; background-color: #a5c5ae; }
+.p-l6 { left: 22px; top: 24px; width: 2px; height: 4px; background-color: #a5c5ae; }
+/* Module list: equalizer bars. */
+.e-bar { width: 3px; background-color: #6ef58c; transition: height 0.45s; }
+.e-b1 { left: 8px; top: 10px; height: 8px; }
+.e-b2 { left: 12px; top: 10px; height: 15px; }
+.e-b3 { left: 16px; top: 10px; height: 10px; }
+.e-b4 { left: 20px; top: 10px; height: 13px; }
+body.anim .e-b1 { height: 15px; }
+body.anim .e-b2 { height: 8px; }
+body.anim .e-b3 { height: 16px; }
+body.anim .e-b4 { height: 9px; }
+/* China hat master: stepped floating cone. */
+.h-cwrap { position: absolute; display: block; left: 0px; top: 0px; width: 34px; height: 34px; }
+.h-c1 { left: 10px; top: 10px; width: 14px; height: 4px; background-color: #6ef58c; }
+.h-c2 { left: 13px; top: 14px; width: 8px; height: 4px; background-color: #6ef58c; }
+.h-c3 { left: 15px; top: 18px; width: 4px; height: 4px; background-color: #6ef58c; }
+.h-glint { left: 19px; top: 11px; width: 2px; height: 3px; background-color: #c4ff62; }
+.h-cwrap { transition: transform 0.45s; }
+body.anim .h-cwrap { transform: translate(0px, -2px); }
+/* Trail master: three staggered dashes. */
+.t-b1 { left: 8px; top: 12px; width: 8px; height: 2px; border-radius: 1px; background-color: #6ef58c; }
+.t-b2 { left: 13px; top: 16px; width: 8px; height: 2px; border-radius: 1px; background-color: #6ef58c; }
+.t-b3 { left: 18px; top: 20px; width: 8px; height: 2px; border-radius: 1px; background-color: #6ef58c; }
+/* Jump rings master: two concentric ellipses. */
+.j-r1 {
+    left: 8px; top: 13px; width: 18px; height: 9px;
+    border-radius: 4px;
+    border: 1px #6ef58c;
+    transition: transform 0.45s;
+}
+body.anim .j-r1 { transform: scale(1.15); }
+.j-r2 {
+    left: 12px; top: 15px; width: 10px; height: 5px;
+    border-radius: 2px;
+    border: 1px #6ef58c99;
+}
+/* Katana master: tilted blade. */
+.kt-blade {
+    left: 9px; top: 17px; width: 16px; height: 2px;
+    background-color: #c4ff62;
+    transform: rotate(-35deg);
+    transform-origin: 2px 1px;
+    transition: transform 0.45s;
+}
+body.anim .kt-blade { transform: rotate(-50deg); }
+.kt-guard { left: 22px; top: 12px; width: 4px; height: 4px; border-radius: 2px; background-color: #6ef58c; }
+/* 3D preview: offset cubes. */
+.b-sq {
+    left: 9px; top: 12px; width: 11px; height: 11px;
+    border: 2px #a5c5ae; border-radius: 2px;
+}
+.b-top {
+    left: 14px; top: 8px; width: 11px; height: 11px;
+    border: 2px #6ef58c; border-radius: 2px;
+    transition: transform 0.45s;
+}
+body.anim .b-top { transform: translate(1px, 1px); }
+
 .switch {
     position: relative;
     width: 58px;
@@ -7141,6 +7133,59 @@ input[type="range"] sliderarrowdec, input[type="range"] sliderarrowinc {
 }
 #btn-layout { color: #89a792; cursor: pointer; transition: color 0.12s; }
 #btn-layout:hover { color: #6ef58c; }
+
+/* Collapsible settings sections in the Visuals window. */
+.sec {
+    display: block;
+    margin-top: 10px;
+    border: 1px #ffffff0f;
+    border-radius: 12px;
+    background-color: #ffffff05;
+}
+.sec-head {
+    height: 42px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 0 10px;
+    border-radius: 11px;
+    cursor: pointer;
+    transition: background-color 0.12s;
+}
+.sec-head:hover { background-color: #6ef58c0d; }
+.sec-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
+    background-color: #6ef58c;
+    margin-right: 10px;
+}
+.sec-title {
+    font-size: 16px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    color: #cfe3d6;
+}
+.sec-count {
+    font-size: 12px;
+    color: #5f7a68;
+    margin-left: 8px;
+}
+.sec-fold {
+    margin-left: auto;
+    width: 26px;
+    height: 26px;
+    font-size: 15px;
+    font-weight: bold;
+    color: #89a792;
+    background-color: #ffffff08;
+    border: 1px #ffffff12;
+    border-radius: 8px;
+    text-align: center;
+    line-height: 26px;
+}
+.sec-body { display: block; padding: 2px 8px 10px 8px; }
+.sec.folded .sec-body { display: none; }
 #tt-status {
     display: block;
     font-size: 14px;
@@ -7169,7 +7214,7 @@ static const char kMenuRml[] = R"RML(
         <span class="win-title">GAYCLIENT</span>
         <span class="win-sub">HOME</span>
         <span class="win-flex"/>
-        <button class="foldbtn" id="fold-0"><span class="foldcaret">▾</span></button>
+        <button class="foldbtn" id="fold-0"><span class="f-plus">+</span><span class="f-minus">–</span></button>
         <button class="iconbtn" id="btn-close">×</button>
     </div>
     <div class="win-body">
@@ -7178,17 +7223,17 @@ static const char kMenuRml[] = R"RML(
             <span class="brand-sub">GAME MENU · BEDROCK 1.1.5</span>
         </div>
         <button class="greenbtn" id="btn-hudeditor">Настроить HUD</button>
-        <div class="note">Окна тащатся за заголовок, колесо мыши прокручивает список, стрелка в углу сворачивает окно. <span id="btn-layout">Сбросить раскладку</span></div>
-        <div class="module-row"><div class="m-chip">F</div><div class="m-text"><div class="m-name">FPS</div><div class="m-desc">Счётчик кадров в секунду</div></div><button class="switch" id="sw-fps"><span class="knob"/></button></div>
-        <div class="module-row"><div class="m-chip">C</div><div class="m-text"><div class="m-name">CPS</div><div class="m-desc">Клики в секунду</div></div><button class="switch" id="sw-cps"><span class="knob"/></button></div>
-        <div class="module-row"><div class="m-chip">⏱</div><div class="m-text"><div class="m-name">Часы</div><div class="m-desc">Текущее время</div></div><button class="switch" id="sw-clock"><span class="knob"/></button></div>
-        <div class="module-row"><div class="m-chip">K</div><div class="m-text"><div class="m-name">Клавиши</div><div class="m-desc">Отображение нажатых клавиш</div></div><button class="switch" id="sw-keys"><span class="knob"/></button></div>
-        <div class="module-row"><div class="m-chip">G</div><div class="m-text"><div class="m-name">Водяной знак</div><div class="m-desc">Надпись GAYClient на экране</div></div><button class="switch" id="sw-watermark"><span class="knob"/></button></div>
-        <div class="module-row"><div class="m-chip">XY</div><div class="m-text"><div class="m-name">Координаты</div><div class="m-desc">Позиция в мире</div></div><button class="switch" id="sw-coords"><span class="knob"/></button></div>
-        <div class="module-row"><div class="m-chip">R</div><div class="m-text"><div class="m-name">Разрешение</div><div class="m-desc">Размер окна игры</div></div><button class="switch" id="sw-res"><span class="knob"/></button></div>
-        <div class="module-row"><div class="m-chip">%</div><div class="m-text"><div class="m-name">Производительность</div><div class="m-desc">Загрузка CPU и RAM</div></div><button class="switch" id="sw-perf"><span class="knob"/></button></div>
-        <div class="module-row"><div class="m-chip">☰</div><div class="m-text"><div class="m-name">Список модулей</div><div class="m-desc">Активные модули на экране</div></div><button class="switch" id="sw-modlist"><span class="knob"/></button></div>
-        <div class="foot">v1.2 · RmlUi</div>
+        <div class="note">Окна тащатся за заголовок, колесо мыши прокручивает список, стрелка в углу сворачивает окно. «Настроить HUD» прячет меню: тащи элементы HUD мышкой, выход — Esc. <span id="btn-layout">Сбросить раскладку</span></div>
+        <div class="module-row"><div class="m-ico"><span class="ip g-arc"/><span class="ip g-needle"/><span class="ip g-hub"/></div><div class="m-text"><div class="m-name">FPS</div><div class="m-desc">Счётчик кадров в секунду</div></div><button class="switch" id="sw-fps"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-ico"><span class="ip r-dot"/><span class="ip r-ring"/></div><div class="m-text"><div class="m-name">CPS</div><div class="m-desc">Клики в секунду</div></div><button class="switch" id="sw-cps"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-ico"><span class="ip c-face"/><span class="ip c-hour"/><span class="ip c-min"/></div><div class="m-text"><div class="m-name">Часы</div><div class="m-desc">Текущее время</div></div><button class="switch" id="sw-clock"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-ico"><span class="ip k-a"/><span class="ip k-b"/></div><div class="m-text"><div class="m-name">Клавиши</div><div class="m-desc">Отображение нажатых клавиш</div></div><button class="switch" id="sw-keys"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-ico"><span class="ip w-badge"/><span class="ip w-bar1"/><span class="ip w-bar2"/></div><div class="m-text"><div class="m-name">Водяной знак</div><div class="m-desc">Надпись GAYClient на экране</div></div><button class="switch" id="sw-watermark"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-ico"><span class="x-rot"><span class="ip x-ring"/><span class="ip x-dot"/><span class="ip x-t1"/><span class="ip x-t2"/><span class="ip x-t3"/><span class="ip x-t4"/></span></div><div class="m-text"><div class="m-name">Координаты</div><div class="m-desc">Позиция в мире</div></div><button class="switch" id="sw-coords"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-ico"><span class="ip v-scr"/><span class="ip v-stand"/><span class="ip v-base"/></div><div class="m-text"><div class="m-name">Разрешение</div><div class="m-desc">Размер окна игры</div></div><button class="switch" id="sw-res"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-ico"><span class="ip p-die"/><span class="ip p-core"/><span class="ip p-l1"/><span class="ip p-l2"/><span class="ip p-l3"/><span class="ip p-l4"/><span class="ip p-l5"/><span class="ip p-l6"/></div><div class="m-text"><div class="m-name">Производительность</div><div class="m-desc">Загрузка CPU и RAM</div></div><button class="switch" id="sw-perf"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-ico"><span class="ip e-bar e-b1"/><span class="ip e-bar e-b2"/><span class="ip e-bar e-b3"/><span class="ip e-bar e-b4"/></div><div class="m-text"><div class="m-name">Список модулей</div><div class="m-desc">Активные модули на экране</div></div><button class="switch" id="sw-modlist"><span class="knob"/></button></div>
+        <div class="foot">v1.3 · RmlUi</div>
     </div>
 </div>
 <div class="win" id="win-visuals">
@@ -7197,122 +7242,107 @@ static const char kMenuRml[] = R"RML(
         <span class="win-title">VISUALS</span>
         <span class="win-sub">ЭФФЕКТЫ</span>
         <span class="win-flex"/>
-        <button class="foldbtn" id="fold-1"><span class="foldcaret">▾</span></button>
+        <button class="foldbtn" id="fold-1"><span class="f-plus">+</span><span class="f-minus">–</span></button>
     </div>
     <div class="win-body">
-        <div class="module-row"><div class="m-chip">▼</div><div class="m-text"><div class="m-name">China Hat</div><div class="m-desc">Конус над головой</div></div><button class="switch" id="sw-chinahat"><span class="knob"/></button></div>
-        <div class="module-row"><div class="m-chip">≈</div><div class="m-text"><div class="m-name">След</div><div class="m-desc">Цветной след за игроком</div></div><button class="switch" id="sw-trail"><span class="knob"/></button></div>
-        <div class="module-row"><div class="m-chip">O</div><div class="m-text"><div class="m-name">Кольца прыжка</div><div class="m-desc">Круги при прыжке</div></div><button class="switch" id="sw-jump"><span class="knob"/></button></div>
-        <div class="module-row"><div class="m-chip">⚔</div><div class="m-text"><div class="m-name">Катана</div><div class="m-desc">Замена алмазного меча</div></div><button class="switch" id="sw-katana"><span class="knob"/></button></div>
-        <div class="module-row"><div class="m-chip">★</div><div class="m-text"><div class="m-name">Корона</div><div class="m-desc">3D-корона над головой</div></div><button class="switch" id="sw-crown"><span class="knob"/></button></div>
-        <div class="note">Главные выключатели. Тонкая настройка каждого эффекта — в его собственном окне.</div>
-    </div>
-</div>
-<div class="win" id="win-ch">
-    <div class="win-head" id="head-ch">
-        <span class="win-dot"/>
-        <span class="win-title">CHINA HAT</span>
-        <span class="win-flex"/>
-        <button class="foldbtn" id="fold-2"><span class="foldcaret">▾</span></button>
-    </div>
-    <div class="win-body">
-        <div class="slider-row"><div class="slider-label">Включение эффекта</div><button class="switch" id="sw-gfx-chinahat"><span class="knob"/></button></div>
-        <div class="slider-row"><div class="slider-label">Заливка конуса</div><button class="switch" id="sw-ch-fill"><span class="knob"/></button></div>
-        <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="switch" id="sw-ch-rainbow"><span class="knob"/></button></div>
-        <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-ch-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-ch-rainbow"/><div class="color-chip" id="chip-ch"/></div>
-        <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-ch-opacity" min="0" max="100" step="1" value="70"/><div class="slider-value" id="ro-ch-opacity"/></div>
-        <div class="slider-row"><div class="slider-label">Радиус</div><input type="range" id="sl-ch-radius" min="0.2" max="3" step="0.01" value="0.85"/><div class="slider-value" id="ro-ch-radius"/></div>
-        <div class="slider-row"><div class="slider-label">Высота конуса</div><input type="range" id="sl-ch-height" min="0.2" max="3" step="0.01" value="0.6"/><div class="slider-value" id="ro-ch-height"/></div>
-        <div class="slider-row"><div class="slider-label">Отступ от головы</div><input type="range" id="sl-ch-offset" min="0" max="2" step="0.01" value="0.1"/><div class="slider-value" id="ro-ch-offset"/></div>
-        <div class="slider-row"><div class="slider-label">Амплитуда плавания</div><input type="range" id="sl-ch-amp" min="0" max="1" step="0.01" value="0.05"/><div class="slider-value" id="ro-ch-amp"/></div>
-        <div class="slider-row"><div class="slider-label">Скорость плавания</div><input type="range" id="sl-ch-floatspeed" min="0" max="3" step="0.01" value="1"/><div class="slider-value" id="ro-ch-floatspeed"/></div>
-        <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-ch-r" min="0" max="1" step="0.01" value="0.16"/><div class="slider-value" id="ro-ch-r"/></div>
-        <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-ch-g" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-ch-g"/></div>
-        <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-ch-b" min="0" max="1" step="0.01" value="0.21"/><div class="slider-value" id="ro-ch-b"/></div>
-    </div>
-</div>
-<div class="win" id="win-tr">
-    <div class="win-head" id="head-tr">
-        <span class="win-dot"/>
-        <span class="win-title">СЛЕД</span>
-        <span class="win-flex"/>
-        <button class="foldbtn" id="fold-3"><span class="foldcaret">▾</span></button>
-    </div>
-    <div class="win-body">
-        <div class="slider-row"><div class="slider-label">Включение эффекта</div><button class="switch" id="sw-gfx-trail"><span class="knob"/></button></div>
-        <div class="slider-row"><div class="slider-label">Заливка</div><button class="switch" id="sw-tr-fill"><span class="knob"/></button></div>
-        <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="switch" id="sw-tr-rainbow"><span class="knob"/></button></div>
-        <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-tr-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-tr-rainbow"/><div class="color-chip" id="chip-tr"/></div>
-        <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-tr-opacity" min="0" max="100" step="1" value="60"/><div class="slider-value" id="ro-tr-opacity"/></div>
-        <div class="slider-row"><div class="slider-label">Высота следа</div><input type="range" id="sl-tr-height" min="0.2" max="3" step="0.01" value="1"/><div class="slider-value" id="ro-tr-height"/></div>
-        <div class="slider-row"><div class="slider-label">Время жизни следа</div><input type="range" id="sl-tr-life" min="0.2" max="4" step="0.05" value="1.5"/><div class="slider-value" id="ro-tr-life"/></div>
-        <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-tr-r" min="0" max="1" step="0.01" value="0.16"/><div class="slider-value" id="ro-tr-r"/></div>
-        <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-tr-g" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-tr-g"/></div>
-        <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-tr-b" min="0" max="1" step="0.01" value="0.21"/><div class="slider-value" id="ro-tr-b"/></div>
-    </div>
-</div>
-<div class="win" id="win-jr">
-    <div class="win-head" id="head-jr">
-        <span class="win-dot"/>
-        <span class="win-title">КОЛЬЦА</span>
-        <span class="win-sub">ПРЫЖОК</span>
-        <span class="win-flex"/>
-        <button class="foldbtn" id="fold-4"><span class="foldcaret">▾</span></button>
-    </div>
-    <div class="win-body">
-        <div class="slider-row"><div class="slider-label">Включение эффекта</div><button class="switch" id="sw-gfx-jump"><span class="knob"/></button></div>
-        <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="switch" id="sw-jr-rainbow"><span class="knob"/></button></div>
-        <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-jr-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-jr-rainbow"/><div class="color-chip" id="chip-jr"/></div>
-        <div class="slider-row"><div class="slider-label">Радиус</div><input type="range" id="sl-jr-radius" min="0.2" max="3" step="0.01" value="0.7"/><div class="slider-value" id="ro-jr-radius"/></div>
-        <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-jr-opacity" min="0" max="100" step="1" value="60"/><div class="slider-value" id="ro-jr-opacity"/></div>
-        <div class="slider-row"><div class="slider-label">Длительность</div><input type="range" id="sl-jr-duration" min="0.1" max="3" step="0.05" value="0.8"/><div class="slider-value" id="ro-jr-duration"/></div>
-        <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-jr-r" min="0" max="1" step="0.01" value="0.16"/><div class="slider-value" id="ro-jr-r"/></div>
-        <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-jr-g" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-jr-g"/></div>
-        <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-jr-b" min="0" max="1" step="0.01" value="0.21"/><div class="slider-value" id="ro-jr-b"/></div>
-    </div>
-</div>
-<div class="win" id="win-kt">
-    <div class="win-head" id="head-kt">
-        <span class="win-dot"/>
-        <span class="win-title">КАТАНА</span>
-        <span class="win-flex"/>
-        <button class="foldbtn" id="fold-5"><span class="foldcaret">▾</span></button>
-    </div>
-    <div class="win-body">
-        <div class="slider-row"><div class="slider-label">Включить катану</div><button class="switch" id="sw-kt-master"><span class="knob"/></button></div>
-        <div class="slider-row"><div class="slider-label">Размер</div><input type="range" id="sl-kt-scale" min="0.4" max="1" step="0.01" value="0.7"/><div class="slider-value" id="ro-kt-scale"/></div>
-        <div class="slider-row"><div class="slider-label">Наклон клинка</div><input type="range" id="sl-kt-tilt" min="0.2" max="1.55" step="0.01" value="0.9"/><div class="slider-value" id="ro-kt-tilt"/></div>
-        <div class="slider-row"><div class="slider-label">Смещение в сторону</div><input type="range" id="sl-kt-side" min="0" max="0.8" step="0.01" value="0.25"/><div class="slider-value" id="ro-kt-side"/></div>
-        <div class="slider-row"><div class="slider-label">Высота в руке</div><input type="range" id="sl-kt-height" min="0.6" max="1.8" step="0.01" value="1.1"/><div class="slider-value" id="ro-kt-height"/></div>
-        <div class="slider-row"><div class="slider-label">Смещение вперёд</div><input type="range" id="sl-kt-forward" min="-0.5" max="1" step="0.01" value="0.2"/><div class="slider-value" id="ro-kt-forward"/></div>
-        <div class="slider-row"><div class="slider-label">Непрозрачность</div><input type="range" id="sl-kt-opacity" min="0.3" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-kt-opacity"/></div>
-        <div class="slider-row"><div class="slider-label">Сторона (1-е лицо)</div><input type="range" id="sl-kt-fpside" min="0" max="0.8" step="0.01" value="0.3"/><div class="slider-value" id="ro-kt-fpside"/></div>
-        <div class="slider-row"><div class="slider-label">Вперёд (1-е лицо)</div><input type="range" id="sl-kt-fpforward" min="-0.3" max="1" step="0.01" value="0.25"/><div class="slider-value" id="ro-kt-fpforward"/></div>
-        <div id="tt-status">Katana: ожидание</div>
-        <div id="tt-diag">—</div>
-    </div>
-</div>
-<div class="win" id="win-cr">
-    <div class="win-head" id="head-cr">
-        <span class="win-dot"/>
-        <span class="win-title">КОРОНА</span>
-        <span class="win-flex"/>
-        <button class="foldbtn" id="fold-6"><span class="foldcaret">▾</span></button>
-    </div>
-    <div class="win-body">
-        <div class="slider-row"><div class="slider-label">Включить корону</div><button class="switch" id="sw-cr-master"><span class="knob"/></button></div>
-        <div class="slider-row"><div class="slider-label">Размер</div><input type="range" id="sl-cr-scale" min="0" max="2" step="0.01" value="1"/><div class="slider-value" id="ro-cr-scale"/></div>
-        <div class="slider-row"><div class="slider-label">Смещение</div><input type="range" id="sl-cr-offset" min="0" max="2" step="0.01" value="0.5"/><div class="slider-value" id="ro-cr-offset"/></div>
-        <div class="slider-row"><div class="slider-label">Непрозрачность</div><input type="range" id="sl-cr-opacity" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-cr-opacity"/></div>
-        <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-cr-r" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-cr-r"/></div>
-        <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-cr-g" min="0" max="1" step="0.01" value="0.8"/><div class="slider-value" id="ro-cr-g"/></div>
-        <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-cr-b" min="0" max="1" step="0.01" value="0.2"/><div class="slider-value" id="ro-cr-b"/></div>
+        <div class="module-row"><div class="m-ico"><span class="ip b-sq"/><span class="ip b-top"/></div><div class="m-text"><div class="m-name">3D превью</div><div class="m-desc">Портрет игрока справа</div></div><button class="switch" id="sw-preview"><span class="knob"/></button></div>
+        <div class="note">Главные выключатели. Тонкая настройка — в секциях ниже.</div>
+        <div class="module-row"><div class="m-ico"><span class="h-cwrap"><span class="ip h-c1"/><span class="ip h-c2"/><span class="ip h-c3"/><span class="ip h-glint"/></span></div><div class="m-text"><div class="m-name">China Hat</div><div class="m-desc">Конус над головой</div></div><button class="switch" id="sw-chinahat"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-ico"><span class="ip t-b1"/><span class="ip t-b2"/><span class="ip t-b3"/></div><div class="m-text"><div class="m-name">След</div><div class="m-desc">Цветной след за игроком</div></div><button class="switch" id="sw-trail"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-ico"><span class="ip j-r1"/><span class="ip j-r2"/></div><div class="m-text"><div class="m-name">Кольца прыжка</div><div class="m-desc">Круги при прыжке</div></div><button class="switch" id="sw-jump"><span class="knob"/></button></div>
+        <div class="module-row"><div class="m-ico"><span class="ip kt-blade"/><span class="ip kt-guard"/></div><div class="m-text"><div class="m-name">Катана</div><div class="m-desc">Замена алмазного меча</div></div><button class="switch" id="sw-katana"><span class="knob"/></button></div>
+        <div class="sec" id="sec-ch">
+            <div class="sec-head">
+                <span class="sec-dot"/>
+                <span class="sec-title">CHINA HAT</span>
+                <span class="sec-count">конус</span>
+                <span class="sec-fold"><span class="f-plus">+</span><span class="f-minus">–</span></span>
+            </div>
+            <div class="sec-body">
+                <div class="slider-row"><div class="slider-label">Включение эффекта</div><button class="switch" id="sw-gfx-chinahat"><span class="knob"/></button></div>
+                <div class="slider-row"><div class="slider-label">Заливка конуса</div><button class="switch" id="sw-ch-fill"><span class="knob"/></button></div>
+                <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="switch" id="sw-ch-rainbow"><span class="knob"/></button></div>
+                <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-ch-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-ch-rainbow"/><div class="color-chip" id="chip-ch"/></div>
+                <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-ch-opacity" min="0" max="100" step="1" value="70"/><div class="slider-value" id="ro-ch-opacity"/></div>
+                <div class="slider-row"><div class="slider-label">Радиус</div><input type="range" id="sl-ch-radius" min="0.2" max="3" step="0.01" value="0.85"/><div class="slider-value" id="ro-ch-radius"/></div>
+                <div class="slider-row"><div class="slider-label">Высота конуса</div><input type="range" id="sl-ch-height" min="0.2" max="3" step="0.01" value="0.6"/><div class="slider-value" id="ro-ch-height"/></div>
+                <div class="slider-row"><div class="slider-label">Отступ от головы</div><input type="range" id="sl-ch-offset" min="0" max="2" step="0.01" value="0.1"/><div class="slider-value" id="ro-ch-offset"/></div>
+                <div class="slider-row"><div class="slider-label">Амплитуда плавания</div><input type="range" id="sl-ch-amp" min="0" max="1" step="0.01" value="0.05"/><div class="slider-value" id="ro-ch-amp"/></div>
+                <div class="slider-row"><div class="slider-label">Скорость плавания</div><input type="range" id="sl-ch-floatspeed" min="0" max="3" step="0.01" value="1"/><div class="slider-value" id="ro-ch-floatspeed"/></div>
+                <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-ch-r" min="0" max="1" step="0.01" value="0.16"/><div class="slider-value" id="ro-ch-r"/></div>
+                <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-ch-g" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-ch-g"/></div>
+                <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-ch-b" min="0" max="1" step="0.01" value="0.21"/><div class="slider-value" id="ro-ch-b"/></div>
+            </div>
+        </div>
+        <div class="sec" id="sec-tr">
+            <div class="sec-head">
+                <span class="sec-dot"/>
+                <span class="sec-title">СЛЕД</span>
+                <span class="sec-count">trail</span>
+                <span class="sec-fold"><span class="f-plus">+</span><span class="f-minus">–</span></span>
+            </div>
+            <div class="sec-body">
+                <div class="slider-row"><div class="slider-label">Включение эффекта</div><button class="switch" id="sw-gfx-trail"><span class="knob"/></button></div>
+                <div class="slider-row"><div class="slider-label">Заливка</div><button class="switch" id="sw-tr-fill"><span class="knob"/></button></div>
+                <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="switch" id="sw-tr-rainbow"><span class="knob"/></button></div>
+                <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-tr-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-tr-rainbow"/><div class="color-chip" id="chip-tr"/></div>
+                <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-tr-opacity" min="0" max="100" step="1" value="60"/><div class="slider-value" id="ro-tr-opacity"/></div>
+                <div class="slider-row"><div class="slider-label">Высота следа</div><input type="range" id="sl-tr-height" min="0.2" max="3" step="0.01" value="1"/><div class="slider-value" id="ro-tr-height"/></div>
+                <div class="slider-row"><div class="slider-label">Время жизни следа</div><input type="range" id="sl-tr-life" min="0.2" max="4" step="0.05" value="1.5"/><div class="slider-value" id="ro-tr-life"/></div>
+                <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-tr-r" min="0" max="1" step="0.01" value="0.16"/><div class="slider-value" id="ro-tr-r"/></div>
+                <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-tr-g" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-tr-g"/></div>
+                <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-tr-b" min="0" max="1" step="0.01" value="0.21"/><div class="slider-value" id="ro-tr-b"/></div>
+            </div>
+        </div>
+        <div class="sec" id="sec-jr">
+            <div class="sec-head">
+                <span class="sec-dot"/>
+                <span class="sec-title">КОЛЬЦА ПРЫЖКА</span>
+                <span class="sec-count">jump</span>
+                <span class="sec-fold"><span class="f-plus">+</span><span class="f-minus">–</span></span>
+            </div>
+            <div class="sec-body">
+                <div class="slider-row"><div class="slider-label">Включение эффекта</div><button class="switch" id="sw-gfx-jump"><span class="knob"/></button></div>
+                <div class="slider-row"><div class="slider-label">Радужный режим</div><button class="switch" id="sw-jr-rainbow"><span class="knob"/></button></div>
+                <div class="slider-row"><div class="slider-label">Скорость радуги</div><input type="range" id="sl-jr-rainbow" min="0" max="100" step="1" value="30"/><div class="slider-value" id="ro-jr-rainbow"/><div class="color-chip" id="chip-jr"/></div>
+                <div class="slider-row"><div class="slider-label">Радиус</div><input type="range" id="sl-jr-radius" min="0.2" max="3" step="0.01" value="0.7"/><div class="slider-value" id="ro-jr-radius"/></div>
+                <div class="slider-row"><div class="slider-label">Прозрачность</div><input type="range" id="sl-jr-opacity" min="0" max="100" step="1" value="60"/><div class="slider-value" id="ro-jr-opacity"/></div>
+                <div class="slider-row"><div class="slider-label">Длительность</div><input type="range" id="sl-jr-duration" min="0.1" max="3" step="0.05" value="0.8"/><div class="slider-value" id="ro-jr-duration"/></div>
+                <div class="slider-row"><div class="slider-label">Цвет: красный</div><input type="range" id="sl-jr-r" min="0" max="1" step="0.01" value="0.16"/><div class="slider-value" id="ro-jr-r"/></div>
+                <div class="slider-row"><div class="slider-label">Цвет: зелёный</div><input type="range" id="sl-jr-g" min="0" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-jr-g"/></div>
+                <div class="slider-row"><div class="slider-label">Цвет: синий</div><input type="range" id="sl-jr-b" min="0" max="1" step="0.01" value="0.21"/><div class="slider-value" id="ro-jr-b"/></div>
+            </div>
+        </div>
+        <div class="sec" id="sec-kt">
+            <div class="sec-head">
+                <span class="sec-dot"/>
+                <span class="sec-title">КАТАНА</span>
+                <span class="sec-count">katana</span>
+                <span class="sec-fold"><span class="f-plus">+</span><span class="f-minus">–</span></span>
+            </div>
+            <div class="sec-body">
+                <div class="slider-row"><div class="slider-label">Включить катану</div><button class="switch" id="sw-kt-master"><span class="knob"/></button></div>
+                <div class="slider-row"><div class="slider-label">Размер</div><input type="range" id="sl-kt-scale" min="0.4" max="1" step="0.01" value="0.7"/><div class="slider-value" id="ro-kt-scale"/></div>
+                <div class="slider-row"><div class="slider-label">Наклон клинка</div><input type="range" id="sl-kt-tilt" min="0.2" max="1.55" step="0.01" value="0.9"/><div class="slider-value" id="ro-kt-tilt"/></div>
+                <div class="slider-row"><div class="slider-label">Смещение в сторону</div><input type="range" id="sl-kt-side" min="0" max="0.8" step="0.01" value="0.25"/><div class="slider-value" id="ro-kt-side"/></div>
+                <div class="slider-row"><div class="slider-label">Высота в руке</div><input type="range" id="sl-kt-height" min="0.6" max="1.8" step="0.01" value="1.1"/><div class="slider-value" id="ro-kt-height"/></div>
+                <div class="slider-row"><div class="slider-label">Смещение вперёд</div><input type="range" id="sl-kt-forward" min="-0.5" max="1" step="0.01" value="0.2"/><div class="slider-value" id="ro-kt-forward"/></div>
+                <div class="slider-row"><div class="slider-label">Непрозрачность</div><input type="range" id="sl-kt-opacity" min="0.3" max="1" step="0.01" value="1"/><div class="slider-value" id="ro-kt-opacity"/></div>
+                <div class="slider-row"><div class="slider-label">Сторона (1-е лицо)</div><input type="range" id="sl-kt-fpside" min="0" max="0.8" step="0.01" value="0.3"/><div class="slider-value" id="ro-kt-fpside"/></div>
+                <div class="slider-row"><div class="slider-label">Вперёд (1-е лицо)</div><input type="range" id="sl-kt-fpforward" min="-0.3" max="1" step="0.01" value="0.25"/><div class="slider-value" id="ro-kt-fpforward"/></div>
+                <div id="tt-status">Katana: ожидание</div>
+                <div id="tt-diag">—</div>
+            </div>
+        </div>
+        <div class="foot">v1.3 · RmlUi</div>
     </div>
 </div>
 </body>
 </rml>
 )RML";
+================================================================================
 КОНЕЦ ФАЙЛА: repair/src/menu_rml_data.h
+================================================================================
 ================================================================================================================================================================
 
 ================================================================================
